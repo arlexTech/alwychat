@@ -7,6 +7,7 @@ use futures_util::StreamExt;
 use matrix_sdk::{
     Client, Room, RoomState,
     latest_events::LatestEventValue,
+    notification_settings::RoomNotificationMode,
     ruma::{
         OwnedUserId,
         events::{AnyMessageLikeEventContent, AnySyncTimelineEvent, room::message::MessageType},
@@ -38,6 +39,9 @@ pub struct RoomSummary {
     pub is_dm: bool,
     pub is_invite: bool,
     pub is_favourite: bool,
+    /// Tagged low priority: shown under "Archived" (Element: "Low priority").
+    pub is_archived: bool,
+    pub is_muted: bool,
     pub is_encrypted: bool,
     pub unread_messages: u64,
     pub unread_mentions: u64,
@@ -187,6 +191,8 @@ async fn summarize(room: &Room) -> RoomSummary {
         is_dm,
         is_invite: room.state() == RoomState::Invited,
         is_favourite: room.is_favourite(),
+        is_archived: room.is_low_priority(),
+        is_muted: room.cached_user_defined_notification_mode() == Some(RoomNotificationMode::Mute),
         is_encrypted: room.encryption_state().is_encrypted(),
         unread_messages: room.num_unread_messages(),
         unread_mentions: room.num_unread_mentions(),
@@ -246,7 +252,7 @@ async fn member_name(room: &Room, user: &matrix_sdk::ruma::UserId) -> String {
 }
 
 /// One-line, human preview of a message, or `None` if it shouldn't appear in the list.
-fn preview(content: &AnyMessageLikeEventContent) -> Option<String> {
+pub(crate) fn preview(content: &AnyMessageLikeEventContent) -> Option<String> {
     Some(match content {
         AnyMessageLikeEventContent::RoomMessage(msg) => match &msg.msgtype {
             MessageType::Image(_) => "📷 Photo".to_owned(),
@@ -276,6 +282,58 @@ fn truncate(text: &str) -> String {
 }
 
 impl crate::Core {
+    fn room(&self, room_id: &str) -> Result<Room> {
+        let room_id = matrix_sdk::ruma::OwnedRoomId::try_from(room_id)
+            .map_err(|_| crate::Error::UnknownRoom)?;
+        self.client()?
+            .get_room(&room_id)
+            .ok_or(crate::Error::UnknownRoom)
+    }
+
+    /// Pin a chat to the top (the spec's favourite tag, shared with Element).
+    pub async fn set_pinned(&self, room_id: &str, pinned: bool) -> Result<()> {
+        self.room(room_id)?.set_is_favourite(pinned, None).await?;
+        Ok(())
+    }
+
+    /// Archive a chat (low-priority tag); a new message doesn't unarchive it.
+    pub async fn set_archived(&self, room_id: &str, archived: bool) -> Result<()> {
+        self.room(room_id)?
+            .set_is_low_priority(archived, None)
+            .await?;
+        Ok(())
+    }
+
+    /// Mute (no notifications or badges) or restore the default notification mode.
+    pub async fn set_muted(&self, room_id: &str, muted: bool) -> Result<()> {
+        let room = self.room(room_id)?;
+        let settings = room.client().notification_settings().await;
+        let result = if muted {
+            settings
+                .set_room_notification_mode(room.room_id(), RoomNotificationMode::Mute)
+                .await
+        } else {
+            settings
+                .delete_user_defined_room_rules(room.room_id())
+                .await
+        };
+        result.map_err(|e| crate::Error::Sync(e.to_string()))?;
+        // The push-rule change only reaches the room's cached mode on a later sync, and that
+        // alone doesn't refresh the chat list: update it now so the row changes right away.
+        if muted {
+            room.update_cached_user_defined_notification_mode(RoomNotificationMode::Mute);
+        } else {
+            room.clear_user_defined_notification_mode();
+        }
+        Ok(())
+    }
+
+    /// Flag a chat as unread (or clear the flag) without touching read receipts.
+    pub async fn set_marked_unread(&self, room_id: &str, unread: bool) -> Result<()> {
+        self.room(room_id)?.set_unread_flag(unread).await?;
+        Ok(())
+    }
+
     /// Start streaming the chat list to `sink`. Replaces any previous subscription.
     pub fn subscribe_chat_list(
         &self,

@@ -22,6 +22,18 @@ pub enum Error {
     Sync(String),
     #[error("invalid media URI: {0}")]
     InvalidMedia(String),
+    #[error("this chat isn't available")]
+    UnknownRoom,
+    #[error("this message isn't available")]
+    UnknownEvent,
+    #[error("this chat isn't open")]
+    ChatNotOpen,
+    #[error("timeline: {0}")]
+    Timeline(String),
+    #[error("encryption: {0}")]
+    Encryption(String),
+    #[error("no verification in progress")]
+    NoVerification,
     #[error("not logged in")]
     NotLoggedIn,
     #[error("local storage: {0}")]

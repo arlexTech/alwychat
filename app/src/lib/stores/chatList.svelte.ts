@@ -19,6 +19,13 @@ class ChatList {
     }
   }
 
+  /** Apply a change we know succeeded before the core re-emits the row (some, like
+   *  mute, only show up there on a later update). The next diff overwrites it. */
+  patch(roomId: string, change: Partial<RoomSummary>) {
+    const i = this.rooms.findIndex((r) => r.id === roomId);
+    if (i >= 0) this.rooms[i] = { ...this.rooms[i], ...change };
+  }
+
   reset() {
     this.rooms = [];
     this.loaded = false;

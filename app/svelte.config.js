@@ -8,6 +8,10 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
   preprocess: vitePreprocess(),
+  // Inject component CSS from JS instead of separate virtual CSS modules: with Vite 8 and
+  // vite-plugin-svelte 7.3, those modules sometimes resolve to the raw .svelte source,
+  // breaking layout and scoping ("failed to load virtual css module").
+  vitePlugin: { emitCss: false },
   kit: {
     adapter: adapter({
       fallback: "index.html",

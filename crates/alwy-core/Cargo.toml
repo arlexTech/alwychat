@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+ammonia.workspace = true
 matrix-sdk.workspace = true
 matrix-sdk-ui.workspace = true
 eyeball-im.workspace = true

@@ -10,7 +10,8 @@ repository = "https://github.com/arlexTech/alwychat"
 
 [workspace.dependencies]
 alwy-core = { path = "crates/alwy-core" }
-matrix-sdk = { version = "0.19", features = ["bundled-sqlite", "local-server"] }
+ammonia = "4"
+matrix-sdk = { version = "0.19", features = ["bundled-sqlite", "local-server", "markdown"] }
 matrix-sdk-ui = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -36,6 +37,12 @@ opt-level = 3
 panic = "abort"
 strip = true
 
+# Line numbers only: readable panics/backtraces without gigabytes of debug info.
+[profile.dev]
+debug = "line-tables-only"
+
 # Crypto and image code is unusably slow unoptimised; keep dev builds snappy.
 [profile.dev.package."*"]
 opt-level = 2
+# No debug info for dependencies: it made target/ grow past 30 GB.
+debug = false

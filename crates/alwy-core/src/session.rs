@@ -5,7 +5,10 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -15,6 +18,7 @@ use matrix_sdk::{
         ClientId, OAuthSession, UserSession,
         registration::{ApplicationType, ClientMetadata, Localized, OAuthGrantType},
     },
+    encryption::{BackupDownloadStrategy, EncryptionSettings},
     ruma::serde::Raw,
     utils::{
         UrlOrQuery,
@@ -33,6 +37,8 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const CLIENT_URI: &str = "https://github.com/arlexTech/alwychat";
 const SESSION_FILE: &str = "session.json";
 const STORE_DIR: &str = "store";
+/// Created by matrix-sdk-sqlite inside `STORE_DIR`; holds this device's keys.
+const CRYPTO_DB: &str = "matrix-sdk-crypto.sqlite3";
 
 const REDIRECT_PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>AlwyChat</title>
 <body style="font-family:system-ui;background:#0f1115;color:#e8eaf0;display:grid;place-items:center;height:100vh;margin:0">
@@ -60,9 +66,16 @@ struct StoredSession {
 /// App-wide handle to the Matrix account. One per process.
 /// Feature modules (rooms, media, …) add their own `impl Core` blocks.
 pub struct Core {
-    data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
     pub(crate) active: Mutex<Option<Active>>,
+    /// Called when the server revokes our session (signed out elsewhere, token reuse…).
+    on_session_ended: Arc<Mutex<Option<SessionEndedHandler>>>,
+    pub(crate) media: Arc<crate::media::MediaRegistry>,
+    pub(crate) settings: Arc<Mutex<crate::settings::Settings>>,
+    pub(crate) on_notification: Arc<Mutex<Option<crate::notifications::NotificationHandler>>>,
 }
+
+type SessionEndedHandler = Box<dyn Fn() + Send + Sync>;
 
 /// Everything that only exists while signed in.
 pub(crate) struct Active {
@@ -70,14 +83,30 @@ pub(crate) struct Active {
     pub sync: Arc<SyncService>,
     /// Background tasks feeding the UI; aborted on sign-out or re-subscribe.
     pub tasks: Vec<tokio::task::AbortHandle>,
+    pub chat: Option<crate::timeline::OpenChat>,
+    pub verifications: Arc<crate::encryption::Verifications>,
+    pub encryption_task: Option<tokio::task::AbortHandle>,
+    /// Cleared when this session is torn down, so late token refreshes can't rewrite
+    /// `session.json` after it was deleted (that would restore onto an empty store).
+    pub may_persist: Arc<AtomicBool>,
 }
 
 impl Core {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
+        let data_dir = data_dir.into();
         Self {
-            data_dir: data_dir.into(),
+            settings: Arc::new(Mutex::new(crate::settings::Settings::load(&data_dir))),
+            on_notification: Arc::default(),
+            data_dir,
             active: Mutex::new(None),
+            on_session_ended: Arc::default(),
+            media: Arc::default(),
         }
+    }
+
+    /// `handler` runs when the server ends the session; the UI should sign out locally.
+    pub fn on_session_ended(&self, handler: impl Fn() + Send + Sync + 'static) {
+        *self.on_session_ended.lock().unwrap() = Some(Box::new(handler));
     }
 
     pub fn client(&self) -> Result<Client> {
@@ -101,6 +130,14 @@ impl Core {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
+
+        // Restoring a session onto a missing store would recreate this device with new keys
+        // under its old device ID, breaking encryption for it. Treat it as signed out instead.
+        if !self.data_dir.join(STORE_DIR).join(CRYPTO_DB).exists() {
+            warn!("session file without encryption store, discarding it");
+            tokio::fs::remove_file(&path).await?;
+            return Ok(None);
+        }
 
         let client = self
             .build_client(Server::Url(&stored.homeserver), &stored.store_passphrase)
@@ -169,11 +206,25 @@ impl Core {
         Ok(account(&client).await)
     }
 
+    /// Stop using a session the server ended, *without* deleting anything: the store keeps
+    /// this device's keys in case the report was spurious, and the next sign-in wipes it.
+    pub async fn end_session(&self) {
+        let active = self.active.lock().unwrap().take();
+        if let Some(active) = active {
+            active.may_persist.store(false, Ordering::SeqCst);
+            active.tasks.iter().for_each(|t| t.abort());
+            active.encryption_task.iter().for_each(|t| t.abort());
+            active.sync.stop().await;
+        }
+    }
+
     /// Sign out on the server (best effort) and delete all local data.
     pub async fn logout(&self) -> Result<()> {
         let active = self.active.lock().unwrap().take();
         if let Some(active) = active {
+            active.may_persist.store(false, Ordering::SeqCst);
             active.tasks.iter().for_each(|t| t.abort());
+            active.encryption_task.iter().for_each(|t| t.abort());
             active.sync.stop().await;
             if let Err(e) = active.client.oauth().logout().await {
                 warn!("server-side logout failed, wiping locally anyway: {e}");
@@ -192,6 +243,13 @@ impl Core {
         Ok(builder
             .sqlite_store(self.data_dir.join(STORE_DIR), Some(passphrase))
             .handle_refresh_tokens()
+            // Same as Element X: fetch missing room keys from the key backup when a message
+            // can't be decrypted, and keep backing up our own keys.
+            .with_encryption_settings(EncryptionSettings {
+                auto_enable_cross_signing: true,
+                backup_download_strategy: BackupDownloadStrategy::AfterDecryptionFailure,
+                auto_enable_backups: true,
+            })
             .build()
             .await?)
     }
@@ -199,18 +257,61 @@ impl Core {
     /// Start syncing, store the client and keep the session file up to date when tokens rotate.
     async fn activate(&self, client: Client, passphrase: String) -> Result<()> {
         let path = self.data_dir.join(SESSION_FILE);
-        persist(&path, &client, &passphrase);
+        persist(&path, &client, &passphrase)?;
+        let may_persist = Arc::new(AtomicBool::new(true));
+        let allowed = may_persist.clone();
+
+        // Refresh tokens rotate and the old one dies: save the new pair *inside* the refresh,
+        // before it's used, so a crash or restart can never leave a stale token on disk
+        // (MAS revokes the whole session when a used refresh token comes back).
+        client.set_session_callbacks(
+            Box::new(|client| {
+                client
+                    .session_tokens()
+                    .ok_or_else(|| "no session tokens".into())
+            }),
+            Box::new(move |client| {
+                if !allowed.load(Ordering::SeqCst) {
+                    warn!("tokens refreshed after sign-out, not saving");
+                    return Ok(());
+                }
+                info!("tokens refreshed, saving session");
+                Ok(persist(&path, &client, &passphrase)?)
+            }),
+        )?;
 
         let mut changes = client.subscribe_to_session_changes();
-        let watched = client.clone();
+        let ended = self.on_session_ended.clone();
+        let checked = client.clone();
         tokio::spawn(async move {
             while let Ok(change) = changes.recv().await {
-                match change {
-                    SessionChange::TokensRefreshed => persist(&path, &watched, &passphrase),
-                    SessionChange::UnknownToken(_) => warn!("session revoked by the server"),
+                let SessionChange::UnknownToken(info) = change else {
+                    continue;
+                };
+                // The SDK also sends this for refresh failures that aren't a sign-out ("this
+                // isn't necessarily correct", matrix-sdk client/futures.rs). Ask the server.
+                warn!(
+                    soft_logout = info.soft_logout,
+                    "server may have ended the session, checking"
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                match checked.whoami().await {
+                    Ok(_) => warn!("session is fine, ignoring the signal"),
+                    Err(e) if is_unknown_token(&e) => {
+                        warn!("session ended by the server");
+                        if let Some(handler) = ended.lock().unwrap().as_ref() {
+                            handler();
+                        }
+                        return;
+                    }
+                    Err(e) => warn!("couldn't check the session ({e}), keeping it"),
                 }
             }
         });
+
+        let verifications = crate::encryption::Verifications::install(&client);
+        crate::notifications::install(&client, self.on_notification.clone(), self.settings.clone())
+            .await;
 
         // The event cache feeds timelines and chat-list previews; it must run before sync starts.
         client
@@ -229,6 +330,10 @@ impl Core {
             client,
             sync,
             tasks: Vec::new(),
+            chat: None,
+            verifications,
+            encryption_task: None,
+            may_persist,
         });
         Ok(())
     }
@@ -245,6 +350,13 @@ impl Core {
             _ => Ok(()),
         }
     }
+}
+
+fn is_unknown_token(e: &matrix_sdk::HttpError) -> bool {
+    matches!(
+        e.client_api_error_kind(),
+        Some(matrix_sdk::ruma::api::error::ErrorKind::UnknownToken { .. })
+    ) || matches!(e, matrix_sdk::HttpError::RefreshToken(_))
 }
 
 enum Server<'a> {
@@ -282,10 +394,10 @@ async fn account(client: &Client) -> Account {
     }
 }
 
-fn persist(path: &Path, client: &Client, passphrase: &str) {
+fn persist(path: &Path, client: &Client, passphrase: &str) -> std::io::Result<()> {
     let Some(oauth) = client.oauth().full_session() else {
         warn!("no OAuth session to persist");
-        return;
+        return Ok(());
     };
     let stored = StoredSession {
         homeserver: client.homeserver(),
@@ -293,9 +405,9 @@ fn persist(path: &Path, client: &Client, passphrase: &str) {
         user: oauth.user,
         store_passphrase: passphrase.to_owned(),
     };
-    if let Err(e) = write_private(path, &serde_json::to_vec(&stored).expect("serializable")) {
+    write_private(path, &serde_json::to_vec(&stored).expect("serializable")).inspect_err(|e| {
         warn!("couldn't save session: {e}");
-    }
+    })
 }
 
 /// Atomic write, readable by the current user only.

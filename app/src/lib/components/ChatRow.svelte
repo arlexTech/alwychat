@@ -3,8 +3,17 @@
   import { shortTime } from "$lib/format";
   import Avatar from "./Avatar.svelte";
 
-  let { room, selected = false, onclick }: { room: RoomSummary; selected?: boolean; onclick: () => void } =
-    $props();
+  let {
+    room,
+    selected = false,
+    onclick,
+    oncontextmenu,
+  }: {
+    room: RoomSummary;
+    selected?: boolean;
+    onclick: () => void;
+    oncontextmenu?: (event: MouseEvent) => void;
+  } = $props();
 
   const unread = $derived(room.unread_messages > 0 || room.marked_unread || room.is_invite);
   const preview = $derived.by(() => {
@@ -15,11 +24,13 @@
   });
 </script>
 
-<button class="row" class:selected class:unread {onclick}>
+<button class="row" class:selected class:unread class:muted={room.is_muted} data-room={room.id} {onclick} {oncontextmenu}>
   <Avatar name={room.name} mxc={room.avatar} size={52} />
   <div class="body">
     <div class="line">
       <span class="name">{room.name}</span>
+      {#if room.is_muted}<span class="icon" title="Muted">🔕</span>{/if}
+      {#if room.is_favourite}<span class="icon" title="Pinned">📌</span>{/if}
       <span class="time">{shortTime(room.latest?.timestamp)}</span>
     </div>
     <div class="line">
@@ -119,5 +130,14 @@
     height: 10px;
     border-radius: 50%;
     background: var(--accent);
+  }
+  .icon {
+    flex: none;
+    font-size: 0.75rem;
+    opacity: 0.8;
+  }
+  .muted .badge {
+    background: var(--surface-hover);
+    color: var(--muted);
   }
 </style>

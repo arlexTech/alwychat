@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
-  import { hasBackend, login, logout, restoreSession, type Account } from "$lib/backend";
+  import { endSession, hasBackend, login, logout, onSessionEnded, restoreSession, type Account } from "$lib/backend";
   import ChatsScreen from "$lib/components/ChatsScreen.svelte";
 
   type View = "loading" | "signed-out" | "waiting" | "signed-in";
@@ -13,6 +13,13 @@
 
   onMount(async () => {
     if (!hasBackend) return void (view = "signed-out");
+    // Never a full sign-out here: that would delete this device's keys on a false alarm.
+    onSessionEnded(async () => {
+      await endSession().catch(() => {});
+      account = null;
+      view = "signed-out";
+      error = "Your session ended. Please sign in again.";
+    });
     try {
       account = await restoreSession();
     } catch (e) {

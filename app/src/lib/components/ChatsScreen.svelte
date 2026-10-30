@@ -2,49 +2,101 @@
   import { onMount } from "svelte";
   import { flip } from "svelte/animate";
   import { fade } from "svelte/transition";
-  import type { Account, RoomSummary } from "$lib/backend";
+  import {
+    setArchived,
+    setMarkedUnread,
+    setMuted,
+    setPinned,
+    type Account,
+    type RoomSummary,
+  } from "$lib/backend";
+  import { chat } from "$lib/stores/chat.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
+  import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
   import ChatRow from "./ChatRow.svelte";
+  import ChatView from "./ChatView.svelte";
+  import EncryptionSheet from "./EncryptionSheet.svelte";
+  import SettingsSheet from "./SettingsSheet.svelte";
 
   let { account, onSignOut }: { account: Account; onSignOut: () => void } = $props();
 
-  type Filter = "all" | "unread" | "people" | "groups" | "favourites";
+  type Filter = "all" | "unread" | "people" | "groups" | "pinned" | "archived";
   const filters: { id: Filter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "unread", label: "Unread" },
     { id: "people", label: "People" },
     { id: "groups", label: "Groups" },
-    { id: "favourites", label: "Favourites" },
+    { id: "pinned", label: "Pinned" },
+    { id: "archived", label: "Archived" },
   ];
 
   let filter = $state<Filter>("all");
   let query = $state("");
   let selectedId = $state<string | null>(null);
   let menuOpen = $state(false);
+  let settingsOpen = $state(false);
+  /** Right-click menu on a chat row. */
+  let rowMenu = $state<{ room: RoomSummary; x: number; y: number } | null>(null);
+  let actionError = $state<string | null>(null);
 
   const myName = $derived(account.display_name ?? account.user_id.slice(1).split(":")[0]);
   const selected = $derived(chatList.rooms.find((r) => r.id === selectedId) ?? null);
 
+  // Archived chats only appear under "Archived" (and in search).
   const matches: Record<Filter, (r: RoomSummary) => boolean> = {
-    all: () => true,
-    unread: (r) => r.unread_messages > 0 || r.marked_unread || r.is_invite,
-    people: (r) => r.is_dm,
-    groups: (r) => !r.is_dm,
-    favourites: (r) => r.is_favourite,
+    all: (r) => !r.is_archived,
+    unread: (r) => !r.is_archived && (r.unread_messages > 0 || r.marked_unread || r.is_invite),
+    people: (r) => !r.is_archived && r.is_dm,
+    groups: (r) => !r.is_archived && !r.is_dm,
+    pinned: (r) => r.is_favourite,
+    archived: (r) => r.is_archived,
   };
 
   const visible = $derived.by(() => {
     const q = query.trim().toLocaleLowerCase();
-    return chatList.rooms.filter(
-      (r) => matches[filter](r) && (!q || r.name.toLocaleLowerCase().includes(q)),
-    );
+    const list = q
+      ? chatList.rooms.filter((r) => r.name.toLocaleLowerCase().includes(q))
+      : chatList.rooms.filter(matches[filter]);
+    // Pinned chats first; otherwise keep the core's order (most recent activity).
+    return [...list.filter((r) => r.is_favourite), ...list.filter((r) => !r.is_favourite)];
   });
+
+  function openRowMenu(event: MouseEvent, room: RoomSummary) {
+    event.preventDefault();
+    rowMenu = { room, x: Math.min(event.clientX, innerWidth - 220), y: Math.min(event.clientY, innerHeight - 200) };
+  }
+
+  async function rowAction(
+    action: (room: RoomSummary) => Promise<void>,
+    change: (room: RoomSummary) => Partial<RoomSummary>,
+  ) {
+    if (!rowMenu) return;
+    const room = rowMenu.room;
+    rowMenu = null;
+    actionError = null;
+    try {
+      await action(room);
+      chatList.patch(room.id, change(room));
+    } catch (e) {
+      actionError = String(e);
+    }
+  }
 
   onMount(() => {
     chatList.start();
-    return () => chatList.reset();
+    encryption.start().catch((e) => console.warn("encryption status unavailable", e));
+    return () => {
+      chatList.reset();
+      chat.close();
+      encryption.reset();
+    };
   });
+
+  function closeChat() {
+    selectedId = null;
+    chat.close();
+  }
 </script>
 
 <div class="shell" class:has-selection={selected}>
@@ -60,10 +112,18 @@
             <strong>{myName}</strong>
             <span>{account.user_id}</span>
           </div>
+          <button class="plain" onclick={() => ((settingsOpen = true), (menuOpen = false))}>⚙️ Settings</button>
           <button onclick={onSignOut}>Sign out</button>
         </div>
       {/if}
     </header>
+
+    {#if encryption.locked}
+      <button class="unlock-banner" onclick={() => (encryption.sheetOpen = true)} transition:fade>
+        <span>🔒</span>
+        <span><strong>Unlock your messages</strong><small>Verify this device to read encrypted history</small></span>
+      </button>
+    {/if}
 
     <input class="search" type="search" placeholder="Search" bind:value={query} />
 
@@ -72,6 +132,8 @@
         <button class:active={filter === f.id} onclick={() => (filter = f.id)}>{f.label}</button>
       {/each}
     </nav>
+
+    {#if actionError}<p class="state error small">{actionError}</p>{/if}
 
     <div class="rows">
       {#if chatList.error}
@@ -85,7 +147,12 @@
       {:else}
         {#each visible as room (room.id)}
           <div animate:flip={{ duration: 220 }}>
-            <ChatRow {room} selected={room.id === selectedId} onclick={() => (selectedId = room.id)} />
+            <ChatRow
+              {room}
+              selected={room.id === selectedId}
+              onclick={() => (selectedId = room.id)}
+              oncontextmenu={(e) => openRowMenu(e, room)}
+            />
           </div>
         {/each}
       {/if}
@@ -94,20 +161,46 @@
 
   <section class="chat-pane">
     {#if selected}
-      <header class="chat-header">
-        <button class="back" onclick={() => (selectedId = null)} aria-label="Back">‹</button>
-        <Avatar name={selected.name} mxc={selected.avatar} size={40} />
-        <div>
-          <strong>{selected.name}</strong>
-          {#if selected.is_encrypted}<span class="sub">🔒 End-to-end encrypted</span>{/if}
-        </div>
-      </header>
-      <div class="placeholder">Messages arrive in the next step ✨</div>
+      <ChatView room={selected} onBack={closeChat} />
     {:else}
       <div class="placeholder">Select a chat to start messaging</div>
     {/if}
   </section>
 </div>
+
+{#if encryption.sheetOpen}
+  <EncryptionSheet />
+{/if}
+
+{#if settingsOpen}
+  <SettingsSheet onClose={() => (settingsOpen = false)} />
+{/if}
+
+{#if rowMenu}
+  {@const r = rowMenu.room}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="menu-catcher" onclick={() => (rowMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (rowMenu = null))}></div>
+  <div class="row-menu" style:left="{rowMenu.x}px" style:top="{rowMenu.y}px" transition:fade={{ duration: 100 }}>
+    <button onclick={() => rowAction((c) => setPinned(c.id, !c.is_favourite), (c) => ({ is_favourite: !c.is_favourite, is_archived: false }))}>
+      📌 {r.is_favourite ? "Unpin" : "Pin"}
+    </button>
+    <button onclick={() => rowAction((c) => setMuted(c.id, !c.is_muted), (c) => ({ is_muted: !c.is_muted }))}>
+      {r.is_muted ? "🔔 Unmute" : "🔕 Mute"}
+    </button>
+    <button
+      onclick={() =>
+        rowAction(
+          (c) => setMarkedUnread(c.id, !(c.marked_unread || c.unread_messages > 0)),
+          (c) => ({ marked_unread: !(c.marked_unread || c.unread_messages > 0) }),
+        )}
+    >
+      {r.marked_unread || r.unread_messages > 0 ? "✓ Mark as read" : "● Mark as unread"}
+    </button>
+    <button onclick={() => rowAction((c) => setArchived(c.id, !c.is_archived), (c) => ({ is_archived: !c.is_archived, is_favourite: false }))}>
+      🗄️ {r.is_archived ? "Unarchive" : "Archive"}
+    </button>
+  </div>
+{/if}
 
 <style>
   .shell {
@@ -238,26 +331,26 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
   }
-  .chat-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+  .unlock-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 16px 10px;
+    padding: 10px 14px;
+    border: 1px solid color-mix(in srgb, var(--accent-a) 45%, transparent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--accent-a) 14%, var(--surface));
+    text-align: left;
+    cursor: pointer;
   }
-  .chat-header div {
+  .unlock-banner span:last-child {
     display: flex;
     flex-direction: column;
   }
-  .sub {
-    font-size: 0.8rem;
+  .unlock-banner small {
     color: var(--muted);
-  }
-  .back {
-    display: none;
-    border: none;
-    background: none;
-    font-size: 2rem;
-    line-height: 1;
-    cursor: pointer;
   }
   .placeholder {
     flex: 1;
@@ -280,8 +373,40 @@
     .shell.has-selection .chat-pane {
       display: flex;
     }
-    .back {
-      display: block;
-    }
+  }
+  .menu button.plain {
+    color: inherit;
+  }
+  .state.small {
+    padding: 4px 16px;
+    font-size: 0.85rem;
+  }
+  .menu-catcher {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+  }
+  .row-menu {
+    position: fixed;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  }
+  .row-menu button {
+    padding: 9px 10px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .row-menu button:hover {
+    background: var(--surface-hover);
   }
 </style>

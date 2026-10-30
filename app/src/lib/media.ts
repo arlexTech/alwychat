@@ -11,3 +11,9 @@ export function mediaUrl(mxc: string | null | undefined, size: number): string |
     ? `http://media.localhost/${path}?size=${px}`
     : `media://localhost/${path}?size=${px}`;
 }
+
+/** URL of a timeline message's media (decrypted by the core). `thumb` asks for a preview size. */
+export function eventMediaUrl(key: string, thumb = false): string {
+  const path = `_event/${encodeURIComponent(key)}${thumb ? "?thumb=1" : ""}`;
+  return usesHttpScheme ? `http://media.localhost/${path}` : `media://localhost/${path}`;
+}
