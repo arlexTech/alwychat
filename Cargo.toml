@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/alwy-core", "app/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/alex/alwychat"
+
+[workspace.dependencies]
+alwy-core = { path = "crates/alwy-core" }
+matrix-sdk = { version = "0.19", features = ["bundled-sqlite", "local-server"] }
+matrix-sdk-ui = "0.19"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "fs"] }
+rand = "0.9"
+eyeball-im = "0.9"
+futures-util = "0.3"
+url = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Crypto and image code is unusably slow unoptimised; keep dev builds snappy.
+[profile.dev.package."*"]
+opt-level = 2

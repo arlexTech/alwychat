@@ -1,0 +1,47 @@
+/* Design tokens — Element X calm × Messenger warmth. Light theme comes later via [data-theme]. */
+:root {
+  --bg: #0e1014;
+  --surface: #15181f;
+  --surface-2: #1c2029;
+  --surface-hover: #20242e;
+  --border: #242936;
+  --text: #eceef3;
+  --muted: #8b91a1;
+  --accent-a: #7b5cff;
+  --accent-b: #ff5c8a;
+  --accent: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  --danger: #ff6b6b;
+  --radius: 14px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
