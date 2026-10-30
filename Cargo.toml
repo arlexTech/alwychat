@@ -6,7 +6,7 @@ members = ["crates/alwy-core", "app/src-tauri"]
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/alex/alwychat"
+repository = "https://github.com/arlexTech/alwychat"
 
 [workspace.dependencies]
 alwy-core = { path = "crates/alwy-core" }

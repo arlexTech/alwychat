@@ -30,7 +30,7 @@ use url::Url;
 use crate::{Error, Result};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const CLIENT_URI: &str = "https://github.com/alex/alwychat";
+const CLIENT_URI: &str = "https://github.com/arlexTech/alwychat";
 const SESSION_FILE: &str = "session.json";
 const STORE_DIR: &str = "store";
 
