@@ -3,6 +3,7 @@
   import { openExternal, type MessageEntry } from "$lib/backend";
   import { clockTime } from "$lib/format";
   import { eventMediaUrl } from "$lib/media";
+  import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
 
   let {
@@ -60,6 +61,9 @@
   const PREVIEW_MAX = 300;
 
   let pickerOpen = $state(false);
+  $effect(() => {
+    if (menuOpen || pickerOpen) return onBack(() => ((menuOpen = false), (pickerOpen = false)));
+  });
   let menuOpen = $state(false);
 
   const c = $derived(msg.content);

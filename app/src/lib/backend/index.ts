@@ -1,10 +1,19 @@
 // The only module allowed to call Tauri's invoke(). Everything else imports from here.
+import { onBackButtonPress } from "@tauri-apps/api/app";
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 /** False when the UI is opened in a plain browser (e.g. localhost:1420): there is no Rust core there. */
 export const hasBackend = isTauri();
+
+export const isAndroid = /Android/.test(navigator.userAgent);
+
+/** Take over Android's back gesture until the returned function is called (then the default runs). */
+export async function interceptBack(handler: () => void): Promise<() => Promise<void>> {
+  const listener = await onBackButtonPress(handler);
+  return () => listener.unregister();
+}
 
 // Copy uncaught interface errors to the Rust log (visible in the `tauri dev` terminal).
 if (hasBackend) {

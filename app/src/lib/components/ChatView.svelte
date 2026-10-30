@@ -25,6 +25,7 @@
   import MentionSuggestions from "./MentionSuggestions.svelte";
   import { MentionAutocomplete } from "$lib/mentions.svelte";
   import { saveToGallery } from "$lib/save";
+  import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
 
   let { room, onBack }: { room: RoomSummary; onBack: () => void } = $props();
@@ -57,6 +58,23 @@
   let chatHd = $state<boolean | null>(null);
   let confirmDelete = $state<MessageEntry | null>(null);
   let history = $state<{ revisions: Revision[] | null; error: string | null } | null>(null);
+
+  // Android back closes these before the chat itself.
+  $effect(() => {
+    if (viewer) return closeOnBack(() => (viewer = null));
+  });
+  $effect(() => {
+    if (history) return closeOnBack(() => (history = null));
+  });
+  $effect(() => {
+    if (chatMenuOpen) return closeOnBack(() => (chatMenuOpen = false));
+  });
+  $effect(() => {
+    if (editing) return closeOnBack(cancelEdit);
+  });
+  $effect(() => {
+    if (replyTo) return closeOnBack(() => (replyTo = null));
+  });
   let scroller: HTMLDivElement;
   let input: HTMLTextAreaElement;
 

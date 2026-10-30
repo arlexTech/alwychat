@@ -121,11 +121,48 @@ async fn edit_history(
 }
 
 /// Save a message's media: photos and videos to ~/Pictures/AlwyChat, other files to Downloads.
+/// On Android they go through MediaStore so the Gallery sees them (see GalleryPlugin.kt).
 #[tauri::command]
 async fn save_media(
     app: tauri::AppHandle,
     core: State<'_, Core>,
     media: String,
+    to_gallery: bool,
+) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| e.to_string())?
+            .join("saving");
+        let path = core
+            .save_event_media(&media, &dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        let saved: android::Saved = app
+            .state::<android::Gallery>()
+            .0
+            .run_mobile_plugin_async(
+                "save",
+                android::SaveArgs {
+                    path: path.display().to_string(),
+                    to_gallery,
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(saved.path);
+    }
+    #[cfg(not(target_os = "android"))]
+    save_to_folder(&app, &core, &media, to_gallery).await
+}
+
+#[cfg(not(target_os = "android"))]
+async fn save_to_folder(
+    app: &tauri::AppHandle,
+    core: &Core,
+    media: &str,
     to_gallery: bool,
 ) -> Result<String, String> {
     let paths = app.path();
@@ -136,7 +173,7 @@ async fn save_media(
     }
     .map_err(|e| e.to_string())?;
     let path = core
-        .save_event_media(&media, &dir)
+        .save_event_media(media, &dir)
         .await
         .map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
@@ -348,68 +385,70 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_deep_link::init())
-        .setup(|app| {
-            #[cfg(target_os = "android")]
-            init_android_tls()?;
-            let data_dir = app.path().app_data_dir()?;
-            let core = Core::new(data_dir);
-            let handle = app.handle().clone();
-            core.on_session_ended(move || {
-                let _ = handle.emit("session-ended", ());
-            });
-            let handle = app.handle().clone();
-            core.on_notification(move |n| {
-                // Only when the window isn't in front: otherwise the chat list already shows it.
-                let focused = handle
-                    .get_webview_window("main")
-                    .and_then(|w| w.is_focused().ok())
-                    .unwrap_or(false);
-                if focused {
-                    return;
-                }
-                let title = if n.is_dm {
-                    n.sender_name
-                } else {
-                    format!("{} · {}", n.sender_name, n.room_name)
-                };
-                if let Err(e) = handle
-                    .notification()
-                    .builder()
-                    .title(title)
-                    .body(n.body)
-                    .show()
-                {
-                    tracing::warn!("couldn't show notification: {e}");
-                }
-            });
-            app.manage(core);
-            // Mobile sign-in comes back as com.alwy.chat:/callback?code=…
-            #[cfg(mobile)]
-            {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                let handle = app.handle().clone();
-                app.deep_link().on_open_url(move |event| {
-                    for url in event.urls() {
-                        if url.scheme() == alwy_core::session::REDIRECT_SCHEME
-                            && !handle.state::<Core>().handle_login_redirect(url)
-                        {
-                            tracing::warn!("sign-in redirect with no sign-in in progress");
-                        }
-                    }
-                });
-            }
-            // No tray library → no tray (building one would abort the app), just minimise on close.
-            #[cfg(desktop)]
-            {
-                let tray = has_tray_host() && has_tray_library();
-                if tray {
-                    setup_tray(app)?;
-                }
-                app.manage(TrayHost(tray));
-            }
-            Ok(())
+        .plugin(tauri_plugin_deep_link::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::gallery_plugin());
+    let builder = builder.setup(|app| {
+        #[cfg(target_os = "android")]
+        init_android_tls()?;
+        let data_dir = app.path().app_data_dir()?;
+        let core = Core::new(data_dir);
+        let handle = app.handle().clone();
+        core.on_session_ended(move || {
+            let _ = handle.emit("session-ended", ());
         });
+        let handle = app.handle().clone();
+        core.on_notification(move |n| {
+            // Only when the window isn't in front: otherwise the chat list already shows it.
+            let focused = handle
+                .get_webview_window("main")
+                .and_then(|w| w.is_focused().ok())
+                .unwrap_or(false);
+            if focused {
+                return;
+            }
+            let title = if n.is_dm {
+                n.sender_name
+            } else {
+                format!("{} · {}", n.sender_name, n.room_name)
+            };
+            if let Err(e) = handle
+                .notification()
+                .builder()
+                .title(title)
+                .body(n.body)
+                .show()
+            {
+                tracing::warn!("couldn't show notification: {e}");
+            }
+        });
+        app.manage(core);
+        // Mobile sign-in comes back as com.alwy.chat:/callback?code=…
+        #[cfg(mobile)]
+        {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if url.scheme() == alwy_core::session::REDIRECT_SCHEME
+                        && !handle.state::<Core>().handle_login_redirect(url)
+                    {
+                        tracing::warn!("sign-in redirect with no sign-in in progress");
+                    }
+                }
+            });
+        }
+        // No tray library → no tray (building one would abort the app), just minimise on close.
+        #[cfg(desktop)]
+        {
+            let tray = has_tray_host() && has_tray_library();
+            if tray {
+                setup_tray(app)?;
+            }
+            app.manage(TrayHost(tray));
+        }
+        Ok(())
+    });
     #[cfg(desktop)]
     let builder = builder
         // Closing the window keeps AlwyChat running (and notifying): hidden in the tray when
@@ -660,4 +699,34 @@ fn respond_with_range(
         None => builder.body(bytes),
     }
     .expect("valid response")
+}
+
+/// Android-only native bits (Kotlin side in gen/android/app/src/main/java/com/alwy/chat).
+#[cfg(target_os = "android")]
+mod android {
+    use tauri::{Manager, Wry, plugin::PluginHandle};
+
+    pub struct Gallery(pub PluginHandle<Wry>);
+
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SaveArgs {
+        pub path: String,
+        pub to_gallery: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct Saved {
+        pub path: String,
+    }
+
+    pub fn gallery_plugin() -> tauri::plugin::TauriPlugin<Wry> {
+        tauri::plugin::Builder::new("alwy-gallery")
+            .setup(|app, api| {
+                let handle = api.register_android_plugin("com.alwy.chat", "GalleryPlugin")?;
+                app.manage(Gallery(handle));
+                Ok(())
+            })
+            .build()
+    }
 }

@@ -16,6 +16,7 @@
   import Avatar from "./Avatar.svelte";
   import ChatRow from "./ChatRow.svelte";
   import ChatView from "./ChatView.svelte";
+  import { onBack } from "$lib/back.svelte";
   import EncryptionSheet from "./EncryptionSheet.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
 
@@ -39,6 +40,23 @@
   /** Right-click menu on a chat row. */
   let rowMenu = $state<{ room: RoomSummary; x: number; y: number } | null>(null);
   let actionError = $state<string | null>(null);
+
+  // Android back: close menus and sheets first, then the open chat.
+  $effect(() => {
+    if (selected) return onBack(closeChat);
+  });
+  $effect(() => {
+    if (settingsOpen) return onBack(() => (settingsOpen = false));
+  });
+  $effect(() => {
+    if (encryption.sheetOpen) return onBack(() => (encryption.sheetOpen = false));
+  });
+  $effect(() => {
+    if (menuOpen) return onBack(() => (menuOpen = false));
+  });
+  $effect(() => {
+    if (rowMenu) return onBack(() => (rowMenu = null));
+  });
 
   const myName = $derived(account.display_name ?? account.user_id.slice(1).split(":")[0]);
   const selected = $derived(chatList.rooms.find((r) => r.id === selectedId) ?? null);
@@ -205,10 +223,13 @@
 <style>
   .shell {
     display: grid;
-    grid-template-columns: minmax(300px, 380px) 1fr;
+    /* minmax(0, …): a bare 1fr won't shrink below its widest row (long previews). */
+    grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
     height: 100vh;
+    height: 100dvh;
   }
   .list-pane {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -286,6 +307,9 @@
     overflow-x: auto;
     scrollbar-width: none;
   }
+  .chips::-webkit-scrollbar {
+    display: none; /* Android WebView ignores scrollbar-width */
+  }
   .chips button {
     flex: none;
     padding: 6px 14px;
@@ -362,7 +386,7 @@
   /* Phone layout: one pane at a time. */
   @media (max-width: 720px) {
     .shell {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
     .chat-pane {
       display: none;
