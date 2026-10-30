@@ -110,6 +110,8 @@ export type MessageContent =
       height: number | null;
       blurhash: string | null;
       caption: string | null;
+      /** Album (com.alwy.chat.gallery) this photo was sent in. */
+      gallery: GalleryRef | null;
     }
   | {
       kind: "video";
@@ -185,6 +187,30 @@ export interface Revision {
 export const editHistory = (roomId: string, eventId: string) =>
   invoke<Revision[]>("edit_history", { roomId, eventId });
 
+export interface GalleryRef {
+  id: string;
+  index: number;
+  count: number;
+}
+
+/** Send a photo/video/file to the open chat (bytes as a raw IPC body, metadata in headers). */
+export async function sendFile(
+  roomId: string,
+  file: File,
+  meta: { caption?: string | null; gallery?: GalleryRef | null } = {},
+) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const info = { filename: file.name || "file", mime: file.type || null, caption: meta.caption ?? null, gallery: meta.gallery ?? null };
+  return invoke<void>("send_file", bytes, {
+    headers: { "x-room": encodeURIComponent(roomId), "x-file": encodeURIComponent(JSON.stringify(info)) },
+  });
+}
+
+/** The chat's own HD choice; null = follow the app default. */
+export const chatMediaHd = (roomId: string) => invoke<boolean | null>("chat_media_hd", { roomId });
+export const setChatMediaHd = (roomId: string, hd: boolean | null) =>
+  invoke<void>("set_chat_media_hd", { roomId, hd });
+
 /** Saves to ~/Pictures/AlwyChat (photos/videos) or Downloads; resolves to the file path. */
 export const saveMedia = (media: string, toGallery: boolean) =>
   invoke<string>("save_media", { media, toGallery });
@@ -206,6 +232,8 @@ export interface Settings {
   send_read_receipts: boolean;
   send_typing: boolean;
   notifications: boolean;
+  /** Photos in original quality by default (chats can override). */
+  hd_media: boolean;
 }
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke<void>("set_settings", { settings });

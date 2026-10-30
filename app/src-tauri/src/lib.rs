@@ -127,6 +127,45 @@ async fn save_media(
     Ok(path.display().to_string())
 }
 
+/// Send a photo/video/file to the open chat. Body: raw bytes. Headers: `x-room` and
+/// `x-file` (URI-encoded JSON `OutgoingFile`), since headers must be ASCII.
+#[tauri::command]
+async fn send_file(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw file bytes".into());
+    };
+    let header = |name: &str| -> Result<String, String> {
+        let value = request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| format!("missing {name}"))?;
+        Ok(percent_encoding::percent_decode_str(value)
+            .decode_utf8_lossy()
+            .into_owned())
+    };
+    let room_id = header("x-room")?;
+    let file: alwy_core::upload::OutgoingFile =
+        serde_json::from_str(&header("x-file")?).map_err(|e| e.to_string())?;
+    core.send_file(&room_id, file, bytes.clone())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn chat_media_hd(core: State<'_, Core>, room_id: String) -> alwy_core::Result<Option<bool>> {
+    core.chat_media_hd(&room_id).await
+}
+
+#[tauri::command]
+async fn set_chat_media_hd(
+    core: State<'_, Core>,
+    room_id: String,
+    hd: Option<bool>,
+) -> alwy_core::Result<()> {
+    core.set_chat_media_hd(&room_id, hd).await
+}
+
 #[tauri::command]
 async fn get_settings(core: State<'_, Core>) -> alwy_core::Result<Settings> {
     Ok(core.settings())
@@ -345,6 +384,9 @@ pub fn run() {
             delete_message,
             edit_history,
             save_media,
+            send_file,
+            chat_media_hd,
+            set_chat_media_hd,
             get_settings,
             set_settings,
             set_pinned,

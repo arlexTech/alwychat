@@ -11,6 +11,7 @@ pub mod rooms;
 pub mod session;
 pub mod settings;
 pub mod timeline;
+pub mod upload;
 
 pub use error::{Error, Result};
 pub use session::{Account, Core};

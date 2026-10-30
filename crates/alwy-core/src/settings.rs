@@ -18,6 +18,8 @@ pub struct Settings {
     pub send_typing: bool,
     /// Desktop notifications for new messages.
     pub notifications: bool,
+    /// Send photos in original quality by default (chats can override). Off: compressed.
+    pub hd_media: bool,
 }
 
 impl Default for Settings {
@@ -26,6 +28,7 @@ impl Default for Settings {
             send_read_receipts: true,
             send_typing: true,
             notifications: true,
+            hd_media: false,
         }
     }
 }

@@ -1,15 +1,23 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { fade, scale } from "svelte/transition";
   import { saveMedia } from "$lib/backend";
   import { eventMediaUrl } from "$lib/media";
 
-  let {
-    media,
-    kind,
-    caption,
-    onClose,
-  }: { media: string; kind: "image" | "video"; caption: string | null; onClose: () => void } = $props();
+  type Item = { media: string; kind: "image" | "video"; caption: string | null };
+  let { items, index: start = 0, onClose }: { items: Item[]; index?: number; onClose: () => void } = $props();
+
+  // The album position starts where the user clicked, then the viewer owns it.
+  let index = $state(untrack(() => start));
+  const item = $derived(items[index]);
+  const media = $derived(item.media);
+  const kind = $derived(item.kind);
+  const caption = $derived(item.caption);
+
+  function step(delta: number) {
+    index = (index + delta + items.length) % items.length;
+    status = null;
+  }
 
   let status = $state<string | null>(null);
   let saving = $state(false);
@@ -27,7 +35,11 @@
   }
 
   onMount(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight" && items.length > 1) step(1);
+      else if (e.key === "ArrowLeft" && items.length > 1) step(-1);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
@@ -40,7 +52,14 @@
     <button onclick={onClose} aria-label="Close">✕</button>
   </div>
 
+  {#if items.length > 1}
+    <button class="nav prev" onclick={(e) => (e.stopPropagation(), step(-1))} aria-label="Previous">‹</button>
+    <button class="nav next" onclick={(e) => (e.stopPropagation(), step(1))} aria-label="Next">›</button>
+    <span class="counter">{index + 1} / {items.length}</span>
+  {/if}
+
   <div class="stage" transition:scale={{ duration: 200, start: 0.92 }}>
+    {#key media}
     {#if kind === "image"}
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <img src={eventMediaUrl(media)} alt={caption ?? ""} onclick={(e) => e.stopPropagation()} />
@@ -48,6 +67,7 @@
       <!-- svelte-ignore a11y_media_has_caption -->
       <video src={eventMediaUrl(media)} controls autoplay onclick={(e) => e.stopPropagation()}></video>
     {/if}
+    {/key}
   </div>
 
   {#if caption}<p class="caption">{caption}</p>{/if}
@@ -104,5 +124,36 @@
   }
   .status {
     font-size: 0.85rem;
+  }
+  .nav {
+    position: absolute;
+    top: 50%;
+    z-index: 1;
+    width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 0.12);
+    color: white;
+    font-size: 2rem;
+    line-height: 1;
+    cursor: pointer;
+    translate: 0 -50%;
+  }
+  .nav:hover {
+    background: rgb(255 255 255 / 0.22);
+  }
+  .prev {
+    left: 16px;
+  }
+  .next {
+    right: 16px;
+  }
+  .counter {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    color: rgb(255 255 255 / 0.8);
+    font-size: 0.9rem;
   }
 </style>

@@ -26,6 +26,7 @@ use crate::{
     Error, Result, html,
     media::{EventMedia, MediaRegistry},
     rooms::ListDiff,
+    upload::GalleryRef,
 };
 
 /// Events fetched per back-pagination request.
@@ -112,6 +113,8 @@ pub enum MessageContent {
         height: Option<u32>,
         blurhash: Option<String>,
         caption: Option<String>,
+        /// Album this photo belongs to (`com.alwy.chat.gallery`), if sent as one.
+        gallery: Option<GalleryRef>,
     },
     Video {
         media: String,
@@ -328,7 +331,7 @@ impl crate::Core {
         Ok(())
     }
 
-    fn timeline(&self, room_id: &str) -> Result<Arc<Timeline>> {
+    pub(crate) fn timeline(&self, room_id: &str) -> Result<Arc<Timeline>> {
         self.with_active(|a| {
             a.chat
                 .as_ref()
@@ -625,6 +628,7 @@ impl Mapper {
                     height: info.and_then(|i| i.height).map(uint),
                     blurhash: info.and_then(|i| i.blurhash.clone()),
                     caption: c.caption().map(ToOwned::to_owned),
+                    gallery: gallery_of(event),
                 }
             }
             MessageType::Video(c) => {
@@ -700,6 +704,12 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
             html: None,
         },
     }
+}
+
+/// `com.alwy.chat.gallery` from the event's content (absent on local echoes until sent).
+fn gallery_of(event: &EventTimelineItem) -> Option<GalleryRef> {
+    let content: serde_json::Value = event.original_json()?.get_field("content").ok()??;
+    serde_json::from_value(content.get("com.alwy.chat.gallery")?.clone()).ok()
 }
 
 /// The items a diff carries, if any.

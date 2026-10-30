@@ -282,7 +282,7 @@ fn truncate(text: &str) -> String {
 }
 
 impl crate::Core {
-    fn room(&self, room_id: &str) -> Result<Room> {
+    pub(crate) fn room(&self, room_id: &str) -> Result<Room> {
         let room_id = matrix_sdk::ruma::OwnedRoomId::try_from(room_id)
             .map_err(|_| crate::Error::UnknownRoom)?;
         self.client()?

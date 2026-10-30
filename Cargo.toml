@@ -11,6 +11,8 @@ repository = "https://github.com/arlexTech/alwychat"
 [workspace.dependencies]
 alwy-core = { path = "crates/alwy-core" }
 ammonia = "4"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+mime = "0.3"
 matrix-sdk = { version = "0.19", features = ["bundled-sqlite", "local-server", "markdown"] }
 matrix-sdk-ui = "0.19"
 serde = { version = "1", features = ["derive"] }

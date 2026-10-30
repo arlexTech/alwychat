@@ -20,6 +20,7 @@
     onHistory,
     onOpenMedia,
     onSaveFile,
+    album = null,
   }: {
     msg: MessageEntry;
     /** First / last of a run of messages from the same sender: drives corners, name and avatar. */
@@ -35,9 +36,20 @@
     onEdit: () => void;
     onDelete: () => void;
     onHistory: () => void;
-    onOpenMedia: () => void;
+    /** Index of the photo/video opened (always 0 outside albums). */
+    onOpenMedia: (index: number) => void;
     onSaveFile: () => void;
+    /** Several photos drawn as one grid; `msg` is the first. */
+    album?: MessageEntry[] | null;
   } = $props();
+
+  /** Grid cells: up to 4 photos, the last one showing "+N" when there are more. */
+  const ALBUM_CELLS = 4;
+  const albumMedia = $derived(
+    (album ?? []).flatMap((m) => (m.content.kind === "image" ? [m.content.media] : [])),
+  );
+  /** Read receipts sit under the album's last photo. */
+  const seenBy = $derived(album?.at(-1)?.seen_by ?? msg.seen_by);
 
   const QUICK = ["❤️", "😂", "😮", "😢", "😡", "👍"];
   /** Largest side of an image/video preview in the timeline, in CSS px. */
@@ -79,6 +91,7 @@
 
   /** Preview box for photos/videos/stickers, keeping the aspect ratio. */
   const box = $derived.by(() => {
+    if (album && album.length > 1) return { w: PREVIEW_MAX, h: albumMedia.length === 2 ? PREVIEW_MAX / 2 : PREVIEW_MAX };
     if (c.kind !== "image" && c.kind !== "video" && c.kind !== "sticker") return null;
     const max = c.kind === "sticker" ? 160 : PREVIEW_MAX;
     const w = c.width ?? 4;
@@ -107,8 +120,10 @@
 
   const muted = $derived(["redacted", "unable_to_decrypt", "unsupported"].includes(c.kind));
   const big = $derived(msg.only_emojis && c.kind === "text" && !msg.reply_to);
-  /** Photos, videos and stickers are drawn without a bubble background. */
-  const bare = $derived((c.kind === "image" || c.kind === "video") && !text && !msg.reply_to || c.kind === "sticker");
+  /** Photos, videos, albums and stickers are drawn without a bubble background. */
+  const bare = $derived(
+    ((c.kind === "image" || c.kind === "video") && !text && !msg.reply_to) || c.kind === "sticker",
+  );
   const remote = $derived(msg.item_id.startsWith("$"));
   const canReact = $derived(!muted && remote);
   const hasMenu = $derived(msg.can_edit || msg.can_delete || (msg.is_edited && remote));
@@ -169,13 +184,24 @@
           </button>
         {/if}
 
-        {#if box && (c.kind === "image" || c.kind === "video" || c.kind === "sticker")}
+        {#if album && album.length > 1}
+          <div class="album" class:two={albumMedia.length === 2} class:three={albumMedia.length === 3} style:width="{box?.w}px" style:height="{box?.h}px">
+            {#each albumMedia.slice(0, ALBUM_CELLS) as media, i (media)}
+              <button class="cell" onclick={() => onOpenMedia(i)} aria-label="Open photo {i + 1} of {albumMedia.length}">
+                <img src={eventMediaUrl(media, true)} alt="" decoding="async" loading="lazy" />
+                {#if i === ALBUM_CELLS - 1 && albumMedia.length > ALBUM_CELLS}
+                  <span class="more">+{albumMedia.length - ALBUM_CELLS}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {:else if box && (c.kind === "image" || c.kind === "video" || c.kind === "sticker")}
           <button
             class="media"
             class:loaded={mediaLoaded}
             style:width="{box.w}px"
             style:height="{box.h}px"
-            onclick={() => c.kind !== "sticker" && onOpenMedia()}
+            onclick={() => c.kind !== "sticker" && onOpenMedia(0)}
             aria-label={c.kind === "video" ? "Play video" : c.kind === "image" ? "Open photo" : c.body}
           >
             {#if mediaFailed}
@@ -199,7 +225,7 @@
             <span class="file-icon">📄</span>
             <span class="file-meta">
               <strong>{c.filename}</strong>
-              <small>{formatSize(c.size)} · Save</small>
+              <small>{c.size != null ? `${formatSize(c.size)} · ` : ""}Save</small>
             </span>
           </button>
         {/if}
@@ -262,12 +288,12 @@
       <span class="status error">Not sent</span>
     {/if}
 
-    {#if msg.seen_by.length}
-      <div class="seen" title="Seen by {msg.seen_by.map((r) => r.name).join(', ')}">
-        {#each msg.seen_by.slice(0, 5) as r (r.name)}
+    {#if seenBy.length}
+      <div class="seen" title="Seen by {seenBy.map((r) => r.name).join(', ')}">
+        {#each seenBy.slice(0, 5) as r (r.name)}
           <span in:scale={{ duration: 200, start: 0.4 }}><Avatar name={r.name} mxc={r.avatar} size={14} /></span>
         {/each}
-        {#if msg.seen_by.length > 5}<small>+{msg.seen_by.length - 5}</small>{/if}
+        {#if seenBy.length > 5}<small>+{seenBy.length - 5}</small>{/if}
       </div>
     {/if}
   </div>
@@ -716,5 +742,47 @@
   .seen small {
     font-size: 0.7rem;
     color: var(--muted);
+  }
+  .album {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-auto-rows: 1fr;
+    gap: 3px;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .album.two {
+    grid-template-rows: 1fr;
+  }
+  /* Three photos: one wide on top, two below (Messenger). */
+  .album.three .cell:first-child {
+    grid-column: span 2;
+  }
+  .cell {
+    position: relative;
+    padding: 0;
+    border: none;
+    background: var(--surface-hover);
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.2s var(--ease);
+  }
+  .cell:hover img {
+    transform: scale(1.04);
+  }
+  .more {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgb(0 0 0 / 0.5);
+    color: white;
+    font-size: 1.5rem;
+    font-weight: 600;
   }
 </style>

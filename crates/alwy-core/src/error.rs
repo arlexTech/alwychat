@@ -34,6 +34,8 @@ pub enum Error {
     Encryption(String),
     #[error("no verification in progress")]
     NoVerification,
+    #[error("couldn't send the file: {0}")]
+    Upload(String),
     #[error("not logged in")]
     NotLoggedIn,
     #[error("local storage: {0}")]

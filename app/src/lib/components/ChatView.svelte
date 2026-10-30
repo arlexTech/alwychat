@@ -2,12 +2,15 @@
   import { tick, untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import {
+    chatMediaHd,
     deleteMessage,
     editHistory,
     editMessage,
     markRead,
     saveMedia,
+    sendFile,
     sendMessage,
+    setChatMediaHd,
     setTyping,
     toggleReaction,
     type MessageEntry,
@@ -38,7 +41,16 @@
   let editing = $state<MessageEntry | null>(null);
   let sendError = $state<string | null>(null);
   let toast = $state<string | null>(null);
-  let viewer = $state<{ media: string; kind: "image" | "video"; caption: string | null } | null>(null);
+  type ViewerItem = { media: string; kind: "image" | "video"; caption: string | null };
+  let viewer = $state<{ items: ViewerItem[]; index: number } | null>(null);
+  /** Files picked, dropped or pasted, waiting for Send. */
+  let pending = $state<{ file: File; url: string | null }[]>([]);
+  let dragging = $state(false);
+  let sendingFiles = $state(false);
+  let fileInput: HTMLInputElement;
+  let chatMenuOpen = $state(false);
+  /** This chat's HD choice: null = app default. */
+  let chatHd = $state<boolean | null>(null);
   let confirmDelete = $state<MessageEntry | null>(null);
   let history = $state<{ revisions: Revision[] | null; error: string | null } | null>(null);
   let scroller: HTMLDivElement;
@@ -50,7 +62,13 @@
     replyTo = null;
     editing = null;
     sendError = null;
-    untrack(() => chat.open(id));
+    untrack(() => {
+      clearPending();
+      chatMenuOpen = false;
+      chat.open(id);
+    });
+    chatHd = null;
+    chatMediaHd(id).then((hd) => room.id === id && (chatHd = hd)).catch(() => {});
     return () => stopTyping(id);
   });
 
@@ -81,8 +99,19 @@
     setTimeout(() => toast === message && (toast = null), 3500);
   }
 
+  /** Photos from one sender closer than this are shown as one album, even without a tag. */
+  const BURST_GAP_MS = 60_000;
+
   type Row =
-    | { kind: "message"; key: string; msg: MessageEntry; first: boolean; last: boolean }
+    | {
+        kind: "message";
+        key: string;
+        msg: MessageEntry;
+        first: boolean;
+        last: boolean;
+        /** Several photos shown as one grid (com.alwy.chat.gallery, or a burst). */
+        album: MessageEntry[] | null;
+      }
     | { kind: "day"; key: string; label: string }
     | { kind: "notice"; key: string; text: string }
     | { kind: "unread"; key: string }
@@ -94,12 +123,16 @@
       switch (e.type) {
         case "message": {
           const prev = out.at(-1);
+          if (prev?.kind === "message" && joinsAlbum(prev.album?.at(-1) ?? prev.msg, e)) {
+            prev.album = [...(prev.album ?? [prev.msg]), e];
+            break;
+          }
           const joins =
             prev?.kind === "message" &&
             prev.msg.sender === e.sender &&
             e.timestamp - prev.msg.timestamp < GROUP_GAP_MS;
           if (joins) prev.last = false;
-          out.push({ kind: "message", key: e.key, msg: e, first: !joins, last: true });
+          out.push({ kind: "message", key: e.key, msg: e, first: !joins, last: true, album: null });
           break;
         }
         case "date_divider":
@@ -120,6 +153,14 @@
     if (out.at(-1)?.kind === "unread") out.pop();
     return out;
   });
+
+  function joinsAlbum(a: MessageEntry, b: MessageEntry) {
+    const ca = a.content;
+    const cb = b.content;
+    if (ca.kind !== "image" || cb.kind !== "image" || a.sender !== b.sender || b.reply_to) return false;
+    if (ca.gallery && cb.gallery) return ca.gallery.id === cb.gallery.id;
+    return !ca.caption && !cb.caption && b.timestamp - a.timestamp < BURST_GAP_MS;
+  }
 
   // The list is laid out bottom-up (column-reverse): scrollTop 0 is the newest message,
   // and the browser keeps that anchor while older messages are prepended.
@@ -145,6 +186,7 @@
   async function send(event?: SubmitEvent) {
     event?.preventDefault();
     const body = draft.trim();
+    if (pending.length && !editing) return sendAttachments(body);
     if (!body) return;
     if (editing) return saveEdit(editing, body);
     stopTyping(room.id);
@@ -160,6 +202,86 @@
     } catch (e) {
       sendError = String(e);
       draft ||= body;
+    }
+  }
+
+  // ── Attachments ──────────────────────────────────────────────────────────
+  function addFiles(files: Iterable<File>) {
+    for (const file of files) {
+      const url = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
+      pending.push({ file, url });
+    }
+    input?.focus();
+  }
+
+  function removePending(i: number) {
+    const [p] = pending.splice(i, 1);
+    if (p?.url) URL.revokeObjectURL(p.url);
+  }
+
+  function clearPending() {
+    for (const p of pending) if (p.url) URL.revokeObjectURL(p.url);
+    pending = [];
+  }
+
+  /** Photos go out as one album; a single file takes the text as caption, else it's sent first. */
+  async function sendAttachments(text: string) {
+    const files = pending.map((p) => p.file);
+    clearPending();
+    draft = "";
+    sendError = null;
+    stopTyping(room.id);
+    await tick();
+    autosize();
+    scroller.scrollTo({ top: 0, behavior: "smooth" });
+    sendingFiles = true;
+    try {
+      if (text && files.length > 1) await sendMessage(room.id, text, null);
+      const photos = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/gif").length;
+      const galleryId = photos > 1 ? crypto.randomUUID() : null;
+      let index = 0;
+      // One at a time: the send queue keeps them in order and the album stays together.
+      for (const file of files) {
+        const isPhoto = file.type.startsWith("image/") && file.type !== "image/gif";
+        const gallery = galleryId && isPhoto ? { id: galleryId, index: index++, count: photos } : null;
+        await sendFile(room.id, file, { caption: files.length === 1 ? text : null, gallery });
+      }
+    } catch (e) {
+      sendError = String(e);
+    } finally {
+      sendingFiles = false;
+    }
+  }
+
+  function onPaste(event: ClipboardEvent) {
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (files.length) {
+      event.preventDefault();
+      addFiles(files);
+    }
+  }
+
+  function onDragOver(event: DragEvent) {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    dragging = true;
+  }
+
+  function onDrop(event: DragEvent) {
+    event.preventDefault();
+    dragging = false;
+    if (event.dataTransfer?.files.length) addFiles(event.dataTransfer.files);
+  }
+
+  async function chooseHd(hd: boolean | null) {
+    chatMenuOpen = false;
+    const previous = chatHd;
+    chatHd = hd;
+    try {
+      await setChatMediaHd(room.id, hd);
+    } catch (e) {
+      chatHd = previous;
+      flash(`Couldn't save: ${e}`);
     }
   }
 
@@ -216,11 +338,13 @@
     }
   }
 
-  function openMedia(msg: MessageEntry) {
-    const c = msg.content;
-    if (c.kind === "image" || c.kind === "video") {
-      viewer = { media: c.media, kind: c.kind, caption: c.caption };
+  function openMedia(msgs: MessageEntry[], index: number) {
+    const items: ViewerItem[] = [];
+    for (const m of msgs) {
+      const c = m.content;
+      if (c.kind === "image" || c.kind === "video") items.push({ media: c.media, kind: c.kind, caption: c.caption });
     }
+    if (items.length) viewer = { items, index: Math.min(index, items.length - 1) };
   }
 
   async function saveFile(msg: MessageEntry) {
@@ -309,9 +433,29 @@
     <strong>{room.name}</strong>
     {#if room.is_encrypted}<span class="sub">🔒 End-to-end encrypted</span>{/if}
   </div>
+  <button class="chat-menu-button" onclick={() => (chatMenuOpen = !chatMenuOpen)} aria-label="Chat options">⋯</button>
+  {#if chatMenuOpen}
+    <div class="chat-menu" transition:fade={{ duration: 100 }}>
+      <p>Photos sent in this chat</p>
+      <button class:active={chatHd === null} onclick={() => chooseHd(null)}>App default</button>
+      <button class:active={chatHd === true} onclick={() => chooseHd(true)}>Always HD</button>
+      <button class:active={chatHd === false} onclick={() => chooseHd(false)}>Always compressed</button>
+    </div>
+  {/if}
 </header>
 
-<div class="scroller" bind:this={scroller} onscroll={onScroll}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="scroller"
+  bind:this={scroller}
+  onscroll={onScroll}
+  ondragover={onDragOver}
+  ondragleave={(e) => e.currentTarget === e.target && (dragging = false)}
+  ondrop={onDrop}
+>
+  {#if dragging}
+    <div class="drop-hint" transition:fade={{ duration: 120 }}>Drop to send</div>
+  {/if}
   <div class="timeline">
     {#if chat.error}
       <p class="center error">{chat.error}</p>
@@ -336,7 +480,8 @@
             onEdit={() => startEdit(row.msg)}
             onDelete={() => (confirmDelete = row.msg)}
             onHistory={() => showHistory(row.msg)}
-            onOpenMedia={() => openMedia(row.msg)}
+            album={row.album}
+            onOpenMedia={(i) => openMedia(row.album ?? [row.msg], i)}
             onSaveFile={() => saveFile(row.msg)}
           />
         </div>
@@ -382,18 +527,41 @@
       <button type="button" onclick={() => (replyTo = null)} aria-label="Cancel reply">×</button>
     </div>
   {/if}
+  {#if pending.length}
+    <div class="pending" transition:fly={{ y: 8, duration: 160 }}>
+      {#each pending as p, i (p)}
+        <div class="pending-item">
+          {#if p.url}<img src={p.url} alt="" />{:else}<span class="pending-file">📄<small>{p.file.name}</small></span>{/if}
+          <button type="button" onclick={() => removePending(i)} aria-label="Remove {p.file.name}">×</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+  {#if sendingFiles}<p class="send-status">Sending…</p>{/if}
   {#if sendError}<p class="send-error">{sendError}</p>{/if}
   <div class="bar">
+    <button type="button" class="attach" onclick={() => fileInput.click()} aria-label="Attach photos or files">📎</button>
+    <input
+      bind:this={fileInput}
+      type="file"
+      multiple
+      hidden
+      onchange={(e) => {
+        addFiles(e.currentTarget.files ?? []);
+        e.currentTarget.value = "";
+      }}
+    />
     <textarea
       bind:this={input}
       bind:value={draft}
       oninput={onInput}
       onblur={() => stopTyping(room.id)}
+      onpaste={onPaste}
       onkeydown={onKeydown}
       rows="1"
-      placeholder="Message"
+      placeholder={pending.length ? "Add a caption" : "Message"}
     ></textarea>
-    {#if draft.trim() || editing}
+    {#if draft.trim() || editing || pending.length}
       <button class="send" aria-label={editing ? "Save edit" : "Send"} transition:fly={{ x: 8, duration: 140 }}
         >{editing ? "✓" : "➤"}</button
       >
@@ -411,7 +579,7 @@
 {#if toast}<div class="toast" transition:fly={{ y: 12, duration: 180 }}>{toast}</div>{/if}
 
 {#if viewer}
-  <MediaViewer {...viewer} onClose={() => (viewer = null)} />
+  <MediaViewer items={viewer.items} index={viewer.index} onClose={() => (viewer = null)} />
 {/if}
 
 {#if confirmDelete}
@@ -454,6 +622,7 @@
 
 <style>
   .chat-header {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -757,6 +926,141 @@
     outline: 1px solid var(--accent-a);
   }
   .revisions small {
+    color: var(--muted);
+  }
+  .chat-menu-button {
+    margin-left: auto;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    font-size: 1.3rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .chat-menu-button:hover {
+    background: var(--surface-2);
+  }
+  .chat-menu {
+    position: absolute;
+    top: 56px;
+    right: 12px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  }
+  .chat-menu p {
+    margin: 4px 10px 6px;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .chat-menu button {
+    padding: 8px 10px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .chat-menu button:hover {
+    background: var(--surface-hover);
+  }
+  .chat-menu button.active::after {
+    content: " ✓";
+    color: var(--accent-b);
+  }
+  .scroller {
+    position: relative;
+  }
+  .drop-hint {
+    position: sticky;
+    inset: 0;
+    z-index: 10;
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    border: 2px dashed var(--accent-a);
+    border-radius: 16px;
+    margin: 8px;
+    background: rgb(123 92 255 / 0.12);
+    font-size: 1.1rem;
+    pointer-events: none;
+  }
+  .attach {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+  }
+  .attach:hover {
+    background: var(--surface-2);
+  }
+  .pending {
+    display: flex;
+    gap: 8px;
+    margin: 0 4px 8px;
+    overflow-x: auto;
+  }
+  .pending-item {
+    position: relative;
+    flex: none;
+    width: 72px;
+    height: 72px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--surface-2);
+  }
+  .pending-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .pending-file {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 4px;
+    font-size: 1.4rem;
+  }
+  .pending-file small {
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 0.65rem;
+    text-align: center;
+  }
+  .pending-item button {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgb(0 0 0 / 0.6);
+    color: white;
+    font-size: 0.85rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .send-status {
+    margin: 0 8px 6px;
+    font-size: 0.8rem;
     color: var(--muted);
   }
 </style>

@@ -8,6 +8,14 @@
   let settings = $state<Settings | null>(null);
   let error = $state<string | null>(null);
 
+  const media: { key: keyof Settings; label: string; hint: string }[] = [
+    {
+      key: "hd_media",
+      label: "Send photos in HD",
+      hint: "Original quality by default. Off: photos are compressed (faster, smaller). Each chat can override this.",
+    },
+  ];
+
   const toggles: { key: keyof Settings; label: string; hint: string }[] = [
     {
       key: "send_read_receipts",
@@ -52,6 +60,16 @@
   <h3>Privacy</h3>
   {#if settings}
     {#each toggles as t (t.key)}
+      <label class="toggle">
+        <span>
+          <strong>{t.label}</strong>
+          <small>{t.hint}</small>
+        </span>
+        <input type="checkbox" role="switch" checked={settings[t.key]} onchange={() => toggle(t.key)} />
+      </label>
+    {/each}
+    <h3 class="section">Media</h3>
+    {#each media as t (t.key)}
       <label class="toggle">
         <span>
           <strong>{t.label}</strong>
@@ -158,5 +176,8 @@
   }
   .error {
     color: var(--danger);
+  }
+  h3.section {
+    margin-top: 18px;
   }
 </style>
