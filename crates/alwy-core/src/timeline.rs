@@ -8,9 +8,7 @@ use matrix_sdk::room::edit::EditedContent;
 use matrix_sdk::ruma::{
     OwnedEventId, OwnedRoomId, OwnedTransactionId, OwnedUserId,
     api::client::receipt::create_receipt::v3::ReceiptType,
-    events::room::message::{
-        MessageType, RoomMessageEventContent, RoomMessageEventContentWithoutRelation,
-    },
+    events::room::message::{MessageType, RoomMessageEventContent},
 };
 use matrix_sdk_ui::timeline::{
     EventSendState, EventTimelineItem, MembershipChange, MsgLikeKind, RoomExt, Timeline,
@@ -25,6 +23,7 @@ use matrix_sdk::ruma::events::room::MediaSource;
 use crate::{
     Error, Result, html,
     media::{EventMedia, MediaRegistry},
+    mentions::{self, MentionInput},
     rooms::ListDiff,
     upload::GalleryRef,
 };
@@ -82,6 +81,8 @@ pub struct MessageEntry {
     pub send_state: Option<SendState>,
     /// People (not us) whose latest read receipt is on this message.
     pub seen_by: Vec<Reader>,
+    /// Mentions us (or @room), per our push rules.
+    pub mentions_me: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,15 +235,16 @@ impl crate::Core {
             .map_err(timeline_err)
     }
 
-    /// Send a Markdown message, optionally as a reply to `reply_to` (an event ID).
+    /// Send a Markdown message with mention pills, optionally as a reply to `reply_to` (an event ID).
     pub async fn send_message(
         &self,
         room_id: &str,
         body: &str,
+        mentions: &[MentionInput],
         reply_to: Option<&str>,
     ) -> Result<()> {
         let timeline = self.timeline(room_id)?;
-        let content = RoomMessageEventContentWithoutRelation::text_markdown(body);
+        let content = mentions::compose(body, mentions);
         match reply_to {
             Some(id) => {
                 let event_id = OwnedEventId::try_from(id).map_err(|_| Error::UnknownEvent)?;
@@ -278,10 +280,16 @@ impl crate::Core {
         Ok(())
     }
 
-    /// Replace the text of one of our messages (Markdown).
-    pub async fn edit_message(&self, room_id: &str, item_id: &str, body: &str) -> Result<()> {
+    /// Replace the text of one of our messages (Markdown, with mention pills).
+    pub async fn edit_message(
+        &self,
+        room_id: &str,
+        item_id: &str,
+        body: &str,
+        mentions: &[MentionInput],
+    ) -> Result<()> {
         let timeline = self.timeline(room_id)?;
-        let content = RoomMessageEventContentWithoutRelation::text_markdown(body);
+        let content = mentions::compose(body, mentions);
         timeline
             .edit(
                 &parse_item_id(item_id)?,
@@ -533,6 +541,7 @@ impl Mapper {
                         .filter(|u| **u != own_id)
                         .map(|u| self.reader(u))
                         .collect(),
+                    mentions_me: event.is_highlighted(),
                 }))
             }
             TimelineItemContent::MembershipChange(change) => match membership_text(change.change())

@@ -22,6 +22,9 @@
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
   import MediaViewer from "./MediaViewer.svelte";
+  import MentionSuggestions from "./MentionSuggestions.svelte";
+  import { MentionAutocomplete } from "$lib/mentions.svelte";
+  import { saveToGallery } from "$lib/save";
   import MessageBubble from "./MessageBubble.svelte";
 
   let { room, onBack }: { room: RoomSummary; onBack: () => void } = $props();
@@ -36,6 +39,7 @@
   const TYPING_IDLE_MS = 5_000;
 
   let draft = $state("");
+  const mention = new MentionAutocomplete();
   let replyTo = $state<MessageEntry | null>(null);
   /** The message being edited: the composer then replaces its text instead of sending. */
   let editing = $state<MessageEntry | null>(null);
@@ -59,6 +63,7 @@
   $effect(() => {
     const id = room.id;
     draft = "";
+    untrack(() => mention.reset(id, !room.is_dm));
     replyTo = null;
     editing = null;
     sendError = null;
@@ -77,6 +82,7 @@
   let typingIdle: ReturnType<typeof setTimeout> | undefined;
   function onInput() {
     autosize();
+    mention.update(input.value, input.selectionStart ?? input.value.length);
     if (editing) return;
     if (!draft.trim()) return stopTyping(room.id);
     const now = Date.now();
@@ -191,6 +197,8 @@
     if (editing) return saveEdit(editing, body);
     stopTyping(room.id);
     const reply = replyTo?.item_id ?? null;
+    const mentions = mention.picked;
+    mention.clear();
     draft = "";
     replyTo = null;
     sendError = null;
@@ -198,7 +206,7 @@
     autosize();
     scroller.scrollTo({ top: 0, behavior: "smooth" });
     try {
-      await sendMessage(room.id, body, reply);
+      await sendMessage(room.id, body, reply, mentions);
     } catch (e) {
       sendError = String(e);
       draft ||= body;
@@ -286,13 +294,15 @@
   }
 
   async function saveEdit(msg: MessageEntry, body: string) {
+    const mentions = mention.picked;
+    mention.clear();
     editing = null;
     draft = "";
     await tick();
     autosize();
     if (body === editableText(msg)) return;
     try {
-      await editMessage(room.id, msg.item_id, body);
+      await editMessage(room.id, msg.item_id, body, mentions);
     } catch (e) {
       sendError = String(e);
     }
@@ -310,6 +320,7 @@
   }
 
   function cancelEdit() {
+    mention.clear();
     editing = null;
     draft = "";
     tick().then(autosize);
@@ -347,6 +358,14 @@
     if (items.length) viewer = { items, index: Math.min(index, items.length - 1) };
   }
 
+  async function saveVisualMedia(msgs: MessageEntry[]) {
+    const media = msgs.flatMap((m) =>
+      m.content.kind === "image" || m.content.kind === "video" ? [m.content.media] : [],
+    );
+    flash(media.length > 1 ? `Saving ${media.length} items…` : "Saving…");
+    flash(await saveToGallery(media));
+  }
+
   async function saveFile(msg: MessageEntry) {
     const c = msg.content;
     if (c.kind !== "file") return;
@@ -358,7 +377,30 @@
     }
   }
 
+  function pickMention(s?: Parameters<MentionAutocomplete["pick"]>[1]) {
+    const next = mention.pick(draft, s);
+    draft = next.draft;
+    tick().then(() => {
+      input.setSelectionRange(next.caret, next.caret);
+      autosize();
+    });
+  }
+
   function onKeydown(event: KeyboardEvent) {
+    if (mention.open && !event.isComposing) {
+      const keys: Record<string, () => void> = {
+        ArrowDown: () => mention.move(1),
+        ArrowUp: () => mention.move(-1),
+        Enter: () => pickMention(),
+        Tab: () => pickMention(),
+        Escape: () => (mention.query = null),
+      };
+      if (event.key in keys && !(event.key === "Enter" && event.shiftKey)) {
+        event.preventDefault();
+        keys[event.key]();
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       send();
@@ -483,6 +525,7 @@
             album={row.album}
             onOpenMedia={(i) => openMedia(row.album ?? [row.msg], i)}
             onSaveFile={() => saveFile(row.msg)}
+            onSaveToGallery={() => saveVisualMedia(row.album ?? [row.msg])}
           />
         </div>
       {:else if row.kind === "day"}
@@ -537,6 +580,9 @@
       {/each}
     </div>
   {/if}
+  {#if mention.open}
+    <MentionSuggestions suggestions={mention.suggestions} index={mention.index} onPick={pickMention} />
+  {/if}
   {#if sendingFiles}<p class="send-status">Sending…</p>{/if}
   {#if sendError}<p class="send-error">{sendError}</p>{/if}
   <div class="bar">
@@ -555,7 +601,8 @@
       bind:this={input}
       bind:value={draft}
       oninput={onInput}
-      onblur={() => stopTyping(room.id)}
+      onblur={() => (stopTyping(room.id), (mention.query = null))}
+      onclick={() => mention.update(input.value, input.selectionStart ?? input.value.length)}
       onpaste={onPaste}
       onkeydown={onKeydown}
       rows="1"

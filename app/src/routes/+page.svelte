@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
-  import { endSession, hasBackend, login, logout, onSessionEnded, restoreSession, type Account } from "$lib/backend";
+  import { cancelLogin, endSession, hasBackend, login, logout, onSessionEnded, restoreSession, type Account } from "$lib/backend";
   import ChatsScreen from "$lib/components/ChatsScreen.svelte";
 
   type View = "loading" | "signed-out" | "waiting" | "signed-in";
@@ -36,9 +36,14 @@
       account = await login(server.trim());
       view = "signed-in";
     } catch (e) {
-      error = String(e);
+      if (view === "waiting") error = String(e);
       view = "signed-out";
     }
+  }
+
+  function cancelSignIn() {
+    view = "signed-out";
+    cancelLogin().catch(() => {});
   }
 
   async function signOut() {
@@ -84,6 +89,7 @@
           <div class="spinner" aria-hidden="true"></div>
           <p>Finish signing in in your browser…</p>
           <p class="muted">This window will update by itself.</p>
+          <button class="ghost" onclick={cancelSignIn}>Cancel</button>
         </div>
       {/if}
     </section>
@@ -145,6 +151,11 @@
   }
   .waiting {
     text-align: center;
+  }
+  .ghost {
+    margin-top: 1.5rem;
+    background: #181b22;
+    border: 1px solid #2a2f3a;
   }
   .spinner {
     width: 36px;

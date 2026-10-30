@@ -31,6 +31,7 @@ export interface Account {
 
 export const restoreSession = () => invoke<Account | null>("restore_session");
 export const login = (server: string) => invoke<Account>("login", { server });
+export const cancelLogin = () => invoke<void>("cancel_login");
 export const logout = () => invoke<void>("logout");
 /** Stop using a session the server ended, keeping local data (unlike logout). */
 export const endSession = () => invoke<void>("end_session");
@@ -150,6 +151,8 @@ export interface MessageEntry {
   send_state: "sending" | "failed" | null;
   /** Others whose latest read receipt is this message. */
   seen_by: { name: string; avatar: string | null }[];
+  /** Mentions us (or @room). */
+  mentions_me: boolean;
 }
 
 export type TimelineEntry = { key: string } & (
@@ -175,8 +178,8 @@ export function openChat(
 
 export const setTyping = (roomId: string, typing: boolean) =>
   invoke<void>("set_typing", { roomId, typing });
-export const editMessage = (roomId: string, itemId: string, body: string) =>
-  invoke<void>("edit_message", { roomId, itemId, body });
+export const editMessage = (roomId: string, itemId: string, body: string, mentions: MentionInput[]) =>
+  invoke<void>("edit_message", { roomId, itemId, body, mentions });
 export const deleteMessage = (roomId: string, itemId: string) =>
   invoke<void>("delete_message", { roomId, itemId });
 
@@ -241,8 +244,25 @@ export const setSettings = (settings: Settings) => invoke<void>("set_settings", 
 export const closeChat = () => invoke<void>("close_chat");
 /** Resolves to true once the start of the room is reached. */
 export const loadOlder = (roomId: string) => invoke<boolean>("load_older", { roomId });
-export const sendMessage = (roomId: string, body: string, replyTo: string | null) =>
-  invoke<void>("send_message", { roomId, body, replyTo });
+/** A mention picked in the composer; `text` is what the draft shows (e.g. "@Léa"). */
+export interface MentionInput {
+  user_id: string;
+  text: string;
+}
+
+export interface Member {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+}
+
+export const sendMessage = (
+  roomId: string,
+  body: string,
+  replyTo: string | null,
+  mentions: MentionInput[] = [],
+) => invoke<void>("send_message", { roomId, body, mentions, replyTo });
+export const roomMembers = (roomId: string) => invoke<Member[]>("room_members", { roomId });
 export const toggleReaction = (roomId: string, itemId: string, key: string) =>
   invoke<void>("toggle_reaction", { roomId, itemId, key });
 export const markRead = (roomId: string) => invoke<void>("mark_read", { roomId });

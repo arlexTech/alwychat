@@ -2,16 +2,18 @@
 #![recursion_limit = "256"]
 
 use alwy_core::{
-    Account, Core,
+    Account, Core, LoginRedirect,
     discovery::{self, ServerInfo},
     encryption::{EncryptionStatus, VerificationUpdate},
+    mentions::{Member, MentionInput},
     rooms::{ListDiff, RoomSummary},
     settings::Settings,
     timeline::{Revision, TimelineEntry},
 };
+use tauri::{Emitter, Manager, State, http, ipc::Channel};
+#[cfg(desktop)]
 use tauri::{
-    Emitter, Manager, State, WindowEvent, http,
-    ipc::Channel,
+    WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -34,12 +36,23 @@ async fn login(
     core: State<'_, Core>,
     server: String,
 ) -> alwy_core::Result<Account> {
-    core.login(&server, |url| {
+    // Mobile apps are paused while the browser is in front: no loopback server there.
+    let redirect = if cfg!(mobile) {
+        LoginRedirect::AppScheme
+    } else {
+        LoginRedirect::Loopback
+    };
+    core.login(&server, redirect, |url| {
         app.opener()
             .open_url(url.as_str(), None::<&str>)
             .map_err(|e| e.to_string())
     })
     .await
+}
+
+#[tauri::command]
+fn cancel_login(core: State<'_, Core>) {
+    core.cancel_login();
 }
 
 // Async so it runs on the Tokio runtime: the core spawns the stream task from here.
@@ -83,8 +96,10 @@ async fn edit_message(
     room_id: String,
     item_id: String,
     body: String,
+    mentions: Vec<MentionInput>,
 ) -> alwy_core::Result<()> {
-    core.edit_message(&room_id, &item_id, &body).await
+    core.edit_message(&room_id, &item_id, &body, &mentions)
+        .await
 }
 
 #[tauri::command]
@@ -219,10 +234,16 @@ async fn send_message(
     core: State<'_, Core>,
     room_id: String,
     body: String,
+    mentions: Vec<MentionInput>,
     reply_to: Option<String>,
 ) -> alwy_core::Result<()> {
-    core.send_message(&room_id, &body, reply_to.as_deref())
+    core.send_message(&room_id, &body, &mentions, reply_to.as_deref())
         .await
+}
+
+#[tauri::command]
+async fn room_members(core: State<'_, Core>, room_id: String) -> alwy_core::Result<Vec<Member>> {
+    core.room_members(&room_id).await
 }
 
 #[tauri::command]
@@ -305,7 +326,16 @@ pub fn run() {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "info,matrix_sdk=warn".into())
     };
+    #[cfg(target_os = "android")]
+    {
+        use tracing_subscriber::prelude::*;
+        tracing_subscriber::registry()
+            .with(filter())
+            .with(paranoid_android::layer("AlwyChat"))
+            .init();
+    }
     // ALWYCHAT_LOG_FILE: log to a file (e.g. when the app is launched by a test driver).
+    #[cfg(not(target_os = "android"))]
     match std::env::var_os("ALWYCHAT_LOG_FILE").map(std::fs::File::create) {
         Some(Ok(file)) => tracing_subscriber::fmt()
             .with_env_filter(filter())
@@ -315,10 +345,13 @@ pub fn run() {
         _ => tracing_subscriber::fmt().with_env_filter(filter()).init(),
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            init_android_tls()?;
             let data_dir = app.path().app_data_dir()?;
             let core = Core::new(data_dir);
             let handle = app.handle().clone();
@@ -351,10 +384,34 @@ pub fn run() {
                 }
             });
             app.manage(core);
-            app.manage(TrayHost(has_tray_host()));
-            setup_tray(app)?;
+            // Mobile sign-in comes back as com.alwy.chat:/callback?code=…
+            #[cfg(mobile)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        if url.scheme() == alwy_core::session::REDIRECT_SCHEME
+                            && !handle.state::<Core>().handle_login_redirect(url)
+                        {
+                            tracing::warn!("sign-in redirect with no sign-in in progress");
+                        }
+                    }
+                });
+            }
+            // No tray library → no tray (building one would abort the app), just minimise on close.
+            #[cfg(desktop)]
+            {
+                let tray = has_tray_host() && has_tray_library();
+                if tray {
+                    setup_tray(app)?;
+                }
+                app.manage(TrayHost(tray));
+            }
             Ok(())
-        })
+        });
+    #[cfg(desktop)]
+    let builder = builder
         // Closing the window keeps AlwyChat running (and notifying): hidden in the tray when
         // the desktop has one, otherwise minimised so it can't get lost. Quit from the tray.
         .on_window_event(|window, event| {
@@ -366,7 +423,8 @@ pub fn run() {
                     let _ = window.minimize();
                 }
             }
-        })
+        });
+    builder
         .register_asynchronous_uri_scheme_protocol("media", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -377,6 +435,7 @@ pub fn run() {
             discover_server,
             restore_session,
             login,
+            cancel_login,
             subscribe_chat_list,
             open_chat,
             set_typing,
@@ -396,6 +455,7 @@ pub fn run() {
             close_chat,
             load_older,
             send_message,
+            room_members,
             toggle_reaction,
             mark_read,
             subscribe_encryption,
@@ -412,6 +472,23 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// matrix-sdk's HTTP client checks certificates with Android's own verifier, reached over JNI:
+/// hand it the JVM and app context before any request (else the first request panics).
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+fn init_android_tls() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ndk_context::android_context();
+    // SAFETY: tao fills ndk-context with the process' JavaVM and the activity before setup runs;
+    // both stay valid for the life of the process (the verifier keeps a global ref).
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+        let context = unsafe { jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+        rustls_platform_verifier::android::init_with_env(env, context)
+    })?;
+    Ok(())
+}
+
+#[cfg(desktop)]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Open AlwyChat", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -440,9 +517,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(desktop)]
 /// Whether the desktop can show our tray icon.
 struct TrayHost(bool);
 
+#[cfg(desktop)]
 /// Linux tray icons need a StatusNotifier host (KDE, most desktops; GNOME only with the
 /// AppIndicator extension). Other platforms always have a tray.
 fn has_tray_host() -> bool {
@@ -464,6 +543,35 @@ fn has_tray_host() -> bool {
     true
 }
 
+#[cfg(desktop)]
+/// Linux tray icons are drawn through libayatana-appindicator (or the older libappindicator),
+/// loaded at runtime: tauri panics if neither is installed, so look for the file first.
+fn has_tray_library() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        const LIBS: [&str; 2] = ["libayatana-appindicator3.so.1", "libappindicator3.so.1"];
+        let env_dirs = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let dirs = env_dirs.split(':').filter(|d| !d.is_empty()).chain([
+            "/usr/lib",
+            "/usr/lib64",
+            "/usr/local/lib",
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib/aarch64-linux-gnu",
+            "/app/lib", // Flatpak
+        ]);
+        let found = dirs
+            .flat_map(|dir| LIBS.map(|lib| std::path::Path::new(dir).join(lib)))
+            .any(|path| path.exists());
+        if !found {
+            tracing::info!("no appindicator library: running without a tray icon");
+        }
+        found
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
+#[cfg(desktop)]
 fn show_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();

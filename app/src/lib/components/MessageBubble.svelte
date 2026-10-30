@@ -20,6 +20,7 @@
     onHistory,
     onOpenMedia,
     onSaveFile,
+    onSaveToGallery,
     album = null,
   }: {
     msg: MessageEntry;
@@ -39,6 +40,8 @@
     /** Index of the photo/video opened (always 0 outside albums). */
     onOpenMedia: (index: number) => void;
     onSaveFile: () => void;
+    /** Save this message's photo/video, or the whole album, to the gallery. */
+    onSaveToGallery: () => void;
     /** Several photos drawn as one grid; `msg` is the first. */
     album?: MessageEntry[] | null;
   } = $props();
@@ -51,6 +54,7 @@
   /** Read receipts sit under the album's last photo. */
   const seenBy = $derived(album?.at(-1)?.seen_by ?? msg.seen_by);
 
+  const MENTION_LINK = /^https:\/\/matrix\.to\/#\/[@!#]/;
   const QUICK = ["❤️", "😂", "😮", "😢", "😡", "👍"];
   /** Largest side of an image/video preview in the timeline, in CSS px. */
   const PREVIEW_MAX = 300;
@@ -114,7 +118,8 @@
     const link = target.closest<HTMLAnchorElement>("a[href]");
     if (link) {
       event.preventDefault();
-      openExternal(link.href).catch(() => {});
+      // Mention pills point to matrix.to: no browser trip for those (profiles come later).
+      if (!MENTION_LINK.test(link.href)) openExternal(link.href).catch(() => {});
     }
   }
 
@@ -126,7 +131,60 @@
   );
   const remote = $derived(msg.item_id.startsWith("$"));
   const canReact = $derived(!muted && remote);
-  const hasMenu = $derived(msg.can_edit || msg.can_delete || (msg.is_edited && remote));
+  const albumSize = $derived(album && album.length > 1 ? album.length : 0);
+  const canSaveToGallery = $derived(albumSize > 0 || ((c.kind === "image" || c.kind === "video") && !muted));
+  const hasMenu = $derived(
+    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery,
+  );
+
+  // Right-click (desktop) or long-press (touch) opens the same menu as ⋯.
+  let pressTimer: ReturnType<typeof setTimeout> | undefined;
+  let pressOrigin = { x: 0, y: 0 };
+  function openMenu(event: Event) {
+    if (!hasMenu) return;
+    event.preventDefault();
+    pickerOpen = false;
+    menuOpen = true;
+  }
+  function pressStart(event: PointerEvent) {
+    if (event.pointerType !== "touch") return;
+    pressOrigin = { x: event.clientX, y: event.clientY };
+    if (hasMenu) {
+      pressTimer = setTimeout(() => {
+        navigator.vibrate?.(10);
+        openMenu(event);
+      }, 450);
+    }
+  }
+  function pressEnd() {
+    clearTimeout(pressTimer);
+    if (swiping) {
+      if (swipeX >= SWIPE_REPLY) onReply();
+      swiping = false;
+      swipeX = 0;
+    }
+  }
+
+  // Swipe right to reply (touch). Horizontal moves are ours; vertical ones scroll the timeline.
+  const SWIPE_REPLY = 56;
+  const SWIPE_MAX = 80;
+  let swiping = $state(false);
+  let swipeX = $state(0);
+  function pressMove(event: PointerEvent) {
+    if (event.pointerType !== "touch") return;
+    const dx = event.clientX - pressOrigin.x;
+    const dy = event.clientY - pressOrigin.y;
+    if (Math.hypot(dx, dy) > 10) clearTimeout(pressTimer);
+    if (!swiping && msg.can_reply && dx > 12 && dx > Math.abs(dy) * 1.5) {
+      swiping = true;
+      (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    }
+    if (!swiping) return;
+    // Rubber band past the max, a tick when crossing the threshold.
+    const next = dx <= SWIPE_MAX ? Math.max(0, dx) : SWIPE_MAX + (dx - SWIPE_MAX) * 0.2;
+    if (swipeX < SWIPE_REPLY && next >= SWIPE_REPLY) navigator.vibrate?.(8);
+    swipeX = next;
+  }
 
   function react(key: string) {
     pickerOpen = false;
@@ -165,17 +223,28 @@
     {/if}
 
     <div class="line">
+      {#if swipeX > 0}
+        <span class="swipe-reply" style:opacity={Math.min(1, swipeX / SWIPE_REPLY)} style:scale={swipeX >= SWIPE_REPLY ? 1.15 : 0.8 + (swipeX / SWIPE_REPLY) * 0.2}>↩</span>
+      {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="bubble"
         class:big
         class:bare
         class:muted
+        class:mentions-me={msg.mentions_me && !msg.is_own}
         class:has-media={box}
         class:sending={msg.send_state === "sending"}
         class:failed={msg.send_state === "failed"}
         title={clockTime(msg.timestamp)}
         ondblclick={() => canReact && react(quickReaction)}
+        class:swiping
+        style:transform={swipeX ? `translateX(${swipeX}px)` : undefined}
+        oncontextmenu={openMenu}
+        onpointerdown={pressStart}
+        onpointerup={pressEnd}
+        onpointercancel={pressEnd}
+        onpointermove={pressMove}
       >
         {#if msg.reply_to}
           <button class="quote" onclick={() => onJumpTo(msg.reply_to!.event_id)}>
@@ -267,6 +336,9 @@
       {/if}
       {#if menuOpen}
         <div class="menu" transition:fade={{ duration: 100 }}>
+          {#if canSaveToGallery}
+            <button onclick={() => pick(onSaveToGallery)}>⬇ {albumSize ? `Save all (${albumSize})` : "Save"}</button>
+          {/if}
           {#if msg.can_edit}<button onclick={() => pick(onEdit)}>✏️ Edit</button>{/if}
           {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}>🕘 Edit history</button>{/if}
           {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}>🗑️ Delete</button>{/if}
@@ -354,7 +426,10 @@
     overflow-wrap: anywhere;
     line-height: 1.35;
     user-select: text;
-    transition: opacity 0.2s var(--ease);
+    touch-action: pan-y;
+    transition:
+      opacity 0.2s var(--ease),
+      transform 0.25s var(--ease);
   }
   .first .bubble {
     border-top-left-radius: var(--r);
@@ -784,5 +859,37 @@
     color: white;
     font-size: 1.5rem;
     font-weight: 600;
+  }
+  .bubble.swiping {
+    transition: none;
+  }
+  .swipe-reply {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    translate: 0 -50%;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--surface-2);
+    color: var(--text);
+    pointer-events: none;
+    transition: scale 0.15s var(--ease);
+  }
+  /* Mention pills (links to matrix.to users/rooms in formatted bodies). */
+  .bubble :global(a[href^="https://matrix.to/#/@"]),
+  .bubble :global(a[href^="https://matrix.to/#/!"]),
+  .bubble :global(a[href^="https://matrix.to/#/#"]) {
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgb(123 92 255 / 0.22);
+    color: inherit;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .bubble.mentions-me {
+    box-shadow: 0 0 0 2px var(--accent-b);
   }
 </style>

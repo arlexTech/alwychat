@@ -1,7 +1,9 @@
 //! Sign-in through the homeserver's OAuth 2.0 service (MAS), session persistence and sign-out.
 //!
 //! Desktop flow (RFC 8252): a one-shot HTTP server on 127.0.0.1 receives the browser redirect.
-//! Mobile will use a custom-scheme redirect instead.
+//! Mobile flow: the browser redirects to `com.alwy.chat:/callback`, the OS reopens the app
+//! with that URL and the shell hands it to [`Core::handle_login_redirect`]. (A loopback server
+//! can't work there: the app is paused while the browser is in front.)
 
 use std::{
     path::{Path, PathBuf},
@@ -28,13 +30,17 @@ use matrix_sdk::{
 use matrix_sdk_ui::sync_service::SyncService;
 use rand::distr::{Alphanumeric, SampleString};
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{Error, Result};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const CLIENT_URI: &str = "https://github.com/arlexTech/alwychat";
+/// MAS only accepts a custom-scheme redirect whose reversed scheme is under this host.
+const CLIENT_URI: &str = "https://arlextech.github.io/alwychat";
+/// Mobile redirect target, declared to the OS by the deep-link plugin (tauri.conf.json).
+pub const REDIRECT_SCHEME: &str = "com.alwy.chat";
 const SESSION_FILE: &str = "session.json";
 const STORE_DIR: &str = "store";
 /// Created by matrix-sdk-sqlite inside `STORE_DIR`; holds this device's keys.
@@ -73,6 +79,17 @@ pub struct Core {
     pub(crate) media: Arc<crate::media::MediaRegistry>,
     pub(crate) settings: Arc<Mutex<crate::settings::Settings>>,
     pub(crate) on_notification: Arc<Mutex<Option<crate::notifications::NotificationHandler>>>,
+    /// Ends the sign-in in progress: the redirect URL (mobile), or `None` to cancel.
+    pending_login: Mutex<Option<oneshot::Sender<Option<Url>>>>,
+}
+
+/// Where the browser sends the user back after signing in.
+#[derive(Debug, Clone, Copy)]
+pub enum LoginRedirect {
+    /// One-shot HTTP server on 127.0.0.1 (desktop).
+    Loopback,
+    /// `com.alwy.chat:/callback`, delivered through [`Core::handle_login_redirect`] (mobile).
+    AppScheme,
 }
 
 type SessionEndedHandler = Box<dyn Fn() + Send + Sync>;
@@ -101,6 +118,7 @@ impl Core {
             active: Mutex::new(None),
             on_session_ended: Arc::default(),
             media: Arc::default(),
+            pending_login: Mutex::default(),
         }
     }
 
@@ -156,12 +174,17 @@ impl Core {
     pub async fn login(
         &self,
         server: &str,
+        redirect: LoginRedirect,
         open_url: impl FnOnce(&Url) -> std::result::Result<(), String>,
     ) -> Result<Account> {
+        info!(server, "signing in");
+        // Never wipe the store under a running session (it would keep syncing into deleted files).
+        self.end_session().await;
         // A fresh login always starts from an empty store: keys from another account must not leak in.
         self.wipe_local_data().await?;
         let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 48);
         let client = self.build_client(Server::Name(server), &passphrase).await?;
+        info!("client built");
         let oauth = client.oauth();
 
         match oauth.server_metadata().await {
@@ -170,10 +193,34 @@ impl Core {
             Err(e) => return Err(Error::OAuth(e.to_string())),
         }
 
-        let (redirect_uri, redirect) = LocalServerBuilder::new()
-            .response(LocalServerResponse::Html(REDIRECT_PAGE.to_owned()))
-            .spawn()
-            .await?;
+        info!("server metadata ok");
+        let (finish, finished) = oneshot::channel();
+        // A newer sign-in replaces (and so cancels) an older one.
+        *self.pending_login.lock().unwrap() = Some(finish);
+
+        let (redirect_uri, loopback) = match redirect {
+            LoginRedirect::Loopback => {
+                let (uri, server) = LocalServerBuilder::new()
+                    .response(LocalServerResponse::Html(REDIRECT_PAGE.to_owned()))
+                    .spawn()
+                    .await?;
+                (uri, Some(server))
+            }
+            LoginRedirect::AppScheme => (
+                Url::parse(&format!("{REDIRECT_SCHEME}:/callback")).expect("valid constant URL"),
+                None,
+            ),
+        };
+        info!(%redirect_uri, "registering");
+        let callback = async move {
+            match loopback {
+                Some(server) => tokio::select! {
+                    query = server => query.map(|q| UrlOrQuery::Query(q.0)),
+                    _ = finished => None,
+                },
+                None => finished.await.ok().flatten().map(UrlOrQuery::Url),
+            }
+        };
 
         let auth = oauth
             .login(
@@ -186,10 +233,13 @@ impl Core {
             .await
             .map_err(|e| Error::OAuth(e.to_string()))?;
 
+        info!(?redirect, "opening the sign-in page");
         open_url(&auth.url).map_err(Error::Browser)?;
+        info!("waiting for the sign-in redirect");
 
-        let query = match tokio::time::timeout(LOGIN_TIMEOUT, redirect).await {
-            Ok(Some(query)) => query,
+        // No need to clear `pending_login` afterwards: a stale sender just fails to send.
+        let callback = match tokio::time::timeout(LOGIN_TIMEOUT, callback).await {
+            Ok(Some(callback)) => callback,
             Ok(None) => {
                 oauth.abort_login(&auth.state).await;
                 return Err(Error::LoginCancelled);
@@ -199,11 +249,28 @@ impl Core {
                 return Err(Error::LoginTimedOut);
             }
         };
-        oauth.finish_login(UrlOrQuery::Query(query.0)).await?;
+        oauth.finish_login(callback).await?;
 
         self.activate(client.clone(), passphrase).await?;
         info!(user = ?client.user_id(), "signed in");
         Ok(account(&client).await)
+    }
+
+    /// The OS opened the app with our redirect URL (mobile sign-in). Returns whether a
+    /// sign-in was waiting for it.
+    pub fn handle_login_redirect(&self, url: Url) -> bool {
+        info!("sign-in redirect received");
+        match self.pending_login.lock().unwrap().take() {
+            Some(finish) => finish.send(Some(url)).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Give up on the sign-in in progress (the user came back without finishing it).
+    pub fn cancel_login(&self) {
+        if let Some(finish) = self.pending_login.lock().unwrap().take() {
+            let _ = finish.send(None);
+        }
     }
 
     /// Stop using a session the server ended, *without* deleting anything: the store keeps

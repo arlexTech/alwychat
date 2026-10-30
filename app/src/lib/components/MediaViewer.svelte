@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { fade, scale } from "svelte/transition";
-  import { saveMedia } from "$lib/backend";
   import { eventMediaUrl } from "$lib/media";
+  import { saveToGallery } from "$lib/save";
 
   type Item = { media: string; kind: "image" | "video"; caption: string | null };
   let { items, index: start = 0, onClose }: { items: Item[]; index?: number; onClose: () => void } = $props();
@@ -22,16 +22,10 @@
   let status = $state<string | null>(null);
   let saving = $state(false);
 
-  async function save() {
+  async function save(all: boolean) {
     saving = true;
-    try {
-      const path = await saveMedia(media, true);
-      status = `Saved to ${path.replace(/^\/home\/[^/]+/, "~")}`;
-    } catch (e) {
-      status = `Couldn't save: ${e}`;
-    } finally {
-      saving = false;
-    }
+    status = await saveToGallery(all ? items.map((i) => i.media) : [media]);
+    saving = false;
   }
 
   onMount(() => {
@@ -48,7 +42,10 @@
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="viewer" transition:fade={{ duration: 160 }} onclick={onClose}>
   <div class="bar" onclick={(e) => e.stopPropagation()}>
-    <button onclick={save} disabled={saving}>{saving ? "Saving…" : "⬇ Save"}</button>
+    <button onclick={() => save(false)} disabled={saving}>{saving ? "Saving…" : "⬇ Save"}</button>
+    {#if items.length > 1}
+      <button onclick={() => save(true)} disabled={saving}>⬇ Save all ({items.length})</button>
+    {/if}
     <button onclick={onClose} aria-label="Close">✕</button>
   </div>
 

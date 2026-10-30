@@ -6,6 +6,7 @@ pub mod encryption;
 pub mod error;
 mod html;
 pub mod media;
+pub mod mentions;
 pub mod notifications;
 pub mod rooms;
 pub mod session;
@@ -14,4 +15,4 @@ pub mod timeline;
 pub mod upload;
 
 pub use error::{Error, Result};
-pub use session::{Account, Core};
+pub use session::{Account, Core, LoginRedirect};
