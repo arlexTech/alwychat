@@ -52,7 +52,7 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
       put("oemPowerManager", Build.MANUFACTURER.lowercase().let { m ->
         listOf("oneplus", "oppo", "realme", "xiaomi", "redmi", "poco", "huawei", "honor", "vivo", "samsung")
           .firstOrNull { m.contains(it) }
-      } ?: JSObject.NULL)
+      } ?: org.json.JSONObject.NULL)
       // Unknown counts as fine: a failed check shouldn't nag the user.
       put(
         "backgroundData",
