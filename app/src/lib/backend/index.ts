@@ -218,6 +218,30 @@ export async function sendFile(
   });
 }
 
+/** A file chosen in Android's system picker, copied into the app's cache until it's sent. */
+export interface Picked {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
+/** Android: open the photo picker ("media") or the document picker ("files"). */
+export const pickFiles = (kind: "media" | "files") => invoke<Picked[]>("pick_files", { kind });
+
+/** Android: send a picked file (the webview can't hand raw bytes to Rust there). */
+export function sendPicked(
+  roomId: string,
+  picked: Picked,
+  meta: { caption?: string | null; gallery?: GalleryRef | null } = {},
+) {
+  const file = { filename: picked.name, mime: picked.mime, caption: meta.caption ?? null, gallery: meta.gallery ?? null };
+  return invoke<void>("send_picked", { roomId, path: picked.path, file });
+}
+
+export const discardPicked = (picked: Picked) =>
+  invoke<void>("discard_picked", { path: picked.path }).catch(() => {});
+
 /** The chat's own HD choice; null = follow the app default. */
 export const chatMediaHd = (roomId: string) => invoke<boolean | null>("chat_media_hd", { roomId });
 export const setChatMediaHd = (roomId: string, hd: boolean | null) =>

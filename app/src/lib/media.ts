@@ -12,6 +12,12 @@ export function mediaUrl(mxc: string | null | undefined, size: number): string |
     : `media://localhost/${path}?size=${px}`;
 }
 
+/** Preview of a file picked in Android's picker (served from the app cache by the core). */
+export function pickedMediaUrl(path: string): string {
+  const name = encodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+  return usesHttpScheme ? `http://media.localhost/_picked/${name}` : `media://localhost/_picked/${name}`;
+}
+
 /** URL of a timeline message's media (decrypted by the core). `thumb` asks for a preview size. */
 export function eventMediaUrl(key: string, thumb = false): string {
   const path = `_event/${encodeURIComponent(key)}${thumb ? "?thumb=1" : ""}`;

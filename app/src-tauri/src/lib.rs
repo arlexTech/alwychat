@@ -204,6 +204,81 @@ async fn send_file(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R
         .map_err(|e| e.to_string())
 }
 
+/// Files chosen in the system picker (Android) are copied here, sent from here, then deleted.
+fn picked_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("picked"))
+}
+
+/// A path the UI got from `pick_files`, refused if it points anywhere else.
+fn picked_file(app: &tauri::AppHandle, path: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from(path);
+    if path.parent() != Some(picked_dir(app)?.as_path()) {
+        return Err("not a picked file".into());
+    }
+    Ok(path)
+}
+
+/// One file from the system picker, copied into `picked_dir`.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Picked {
+    path: String,
+    name: String,
+    mime: String,
+    size: u64,
+}
+
+/// Open the system photo picker (`kind` = "media") or document picker ("files").
+#[tauri::command]
+async fn pick_files(app: tauri::AppHandle, kind: String) -> Result<Vec<Picked>, String> {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Deserialize)]
+        struct PickResult {
+            files: Vec<Picked>,
+        }
+        let dir = picked_dir(&app)?.display().to_string();
+        let result: PickResult = app
+            .state::<android::Gallery>()
+            .0
+            .run_mobile_plugin_async("pick", serde_json::json!({ "kind": kind, "dir": dir }))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(result.files)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, kind);
+        Err("the system picker is only used on Android".into())
+    }
+}
+
+/// Send a picked file (Android: the webview can't pass raw bytes to Rust), then delete it.
+#[tauri::command]
+async fn send_picked(
+    app: tauri::AppHandle,
+    core: State<'_, Core>,
+    room_id: String,
+    path: String,
+    file: alwy_core::upload::OutgoingFile,
+) -> Result<(), String> {
+    let path = picked_file(&app, &path)?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let result = core.send_file(&room_id, file, bytes).await;
+    let _ = std::fs::remove_file(&path);
+    result.map_err(|e| e.to_string())
+}
+
+/// The user removed a picked file before sending it.
+#[tauri::command]
+async fn discard_picked(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let path = picked_file(&app, &path)?;
+    std::fs::remove_file(path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn chat_media_hd(core: State<'_, Core>, room_id: String) -> alwy_core::Result<Option<bool>> {
     core.chat_media_hd(&room_id).await
@@ -423,6 +498,10 @@ pub fn run() {
             }
         });
         app.manage(core);
+        // Picked files left over from a previous run were never sent.
+        if let Ok(dir) = picked_dir(app.handle()) {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         // Mobile sign-in comes back as com.alwy.chat:/callback?code=…
         #[cfg(mobile)]
         {
@@ -483,6 +562,9 @@ pub fn run() {
             edit_history,
             save_media,
             send_file,
+            pick_files,
+            send_picked,
+            discard_picked,
             chat_media_hd,
             set_chat_media_hd,
             get_settings,
@@ -635,6 +717,9 @@ async fn serve_media(
             .find_map(|kv| kv.strip_prefix(name)?.strip_prefix('='))
     };
 
+    if let Some(name) = uri.path().strip_prefix("/_picked/") {
+        return serve_picked(app, request, name);
+    }
     let result = match uri.path().strip_prefix("/_event/") {
         Some(key) => {
             let key = percent_encoding::percent_decode_str(key).decode_utf8_lossy();
@@ -659,6 +744,29 @@ async fn serve_media(
                 .body(Vec::new())
                 .expect("valid response")
         }
+    }
+}
+
+/// `media://localhost/_picked/<file name>`: preview of a file waiting to be sent.
+fn serve_picked(
+    app: &tauri::AppHandle,
+    request: &http::Request<Vec<u8>>,
+    name: &str,
+) -> http::Response<Vec<u8>> {
+    let name = percent_encoding::percent_decode_str(name).decode_utf8_lossy();
+    // File name only: no way out of the picked folder.
+    let bytes = std::path::Path::new(name.as_ref())
+        .file_name()
+        .and_then(|n| std::fs::read(picked_dir(app).ok()?.join(n)).ok());
+    match bytes {
+        Some(bytes) => {
+            let mime = alwy_core::media::sniff(&bytes).to_owned();
+            respond_with_range(request, bytes, &mime)
+        }
+        None => http::Response::builder()
+            .status(http::StatusCode::NOT_FOUND)
+            .body(Vec::new())
+            .expect("valid response"),
     }
 }
 

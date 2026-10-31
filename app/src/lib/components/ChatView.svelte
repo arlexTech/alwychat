@@ -4,16 +4,21 @@
   import {
     chatMediaHd,
     deleteMessage,
+    discardPicked,
     editHistory,
+    isAndroid,
     editMessage,
     markRead,
+    pickFiles,
     saveMedia,
     sendFile,
     sendMessage,
+    sendPicked,
     setChatMediaHd,
     setTyping,
     toggleReaction,
     type MessageEntry,
+    type Picked,
     type Revision,
     type RoomSummary,
   } from "$lib/backend";
@@ -24,6 +29,7 @@
   import MediaViewer from "./MediaViewer.svelte";
   import MentionSuggestions from "./MentionSuggestions.svelte";
   import { MentionAutocomplete } from "$lib/mentions.svelte";
+  import { pickedMediaUrl } from "$lib/media";
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
@@ -49,7 +55,9 @@
   type ViewerItem = { media: string; kind: "image" | "video"; caption: string | null };
   let viewer = $state<{ items: ViewerItem[]; index: number } | null>(null);
   /** Files picked, dropped or pasted, waiting for Send. */
-  let pending = $state<{ file: File; url: string | null }[]>([]);
+  /** Attachments waiting in the composer: a browser File (desktop) or a picked file (Android). */
+  type Pending = { name: string; mime: string; url: string | null; file?: File; picked?: Picked };
+  let pending = $state<Pending[]>([]);
   let dragging = $state(false);
   let sendingFiles = $state(false);
   let fileInput: HTMLInputElement;
@@ -235,24 +243,37 @@
   function addFiles(files: Iterable<File>) {
     for (const file of files) {
       const url = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
-      pending.push({ file, url });
+      pending.push({ name: file.name, mime: file.type, url, file });
     }
     input?.focus();
   }
 
+  /** Android: the system photo picker or document picker, several items at once. */
+  async function pick(kind: "media" | "files") {
+    try {
+      for (const picked of await pickFiles(kind)) {
+        const url = picked.mime.startsWith("image/") ? pickedMediaUrl(picked.path) : null;
+        pending.push({ name: picked.name, mime: picked.mime, url, picked });
+      }
+    } catch (e) {
+      sendError = String(e);
+    }
+  }
+
   function removePending(i: number) {
     const [p] = pending.splice(i, 1);
-    if (p?.url) URL.revokeObjectURL(p.url);
+    if (p?.file && p.url) URL.revokeObjectURL(p.url);
+    if (p?.picked) void discardPicked(p.picked);
   }
 
   function clearPending() {
-    for (const p of pending) if (p.url) URL.revokeObjectURL(p.url);
+    for (const p of pending) if (p.file && p.url) URL.revokeObjectURL(p.url);
     pending = [];
   }
 
   /** Photos go out as one album; a single file takes the text as caption, else it's sent first. */
   async function sendAttachments(text: string) {
-    const files = pending.map((p) => p.file);
+    const files = [...pending];
     clearPending();
     draft = "";
     sendError = null;
@@ -263,14 +284,16 @@
     sendingFiles = true;
     try {
       if (text && files.length > 1) await sendMessage(room.id, text, null);
-      const photos = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/gif").length;
+      const isPhoto = (f: Pending) => f.mime.startsWith("image/") && f.mime !== "image/gif";
+      const photos = files.filter(isPhoto).length;
       const galleryId = photos > 1 ? crypto.randomUUID() : null;
       let index = 0;
       // One at a time: the send queue keeps them in order and the album stays together.
-      for (const file of files) {
-        const isPhoto = file.type.startsWith("image/") && file.type !== "image/gif";
-        const gallery = galleryId && isPhoto ? { id: galleryId, index: index++, count: photos } : null;
-        await sendFile(room.id, file, { caption: files.length === 1 ? text : null, gallery });
+      for (const f of files) {
+        const gallery = galleryId && isPhoto(f) ? { id: galleryId, index: index++, count: photos } : null;
+        const meta = { caption: files.length === 1 ? text : null, gallery };
+        if (f.picked) await sendPicked(room.id, f.picked, meta);
+        else if (f.file) await sendFile(room.id, f.file, meta);
       }
     } catch (e) {
       sendError = String(e);
@@ -592,8 +615,8 @@
     <div class="pending" transition:fly={{ y: 8, duration: 160 }}>
       {#each pending as p, i (p)}
         <div class="pending-item">
-          {#if p.url}<img src={p.url} alt="" />{:else}<span class="pending-file">📄<small>{p.file.name}</small></span>{/if}
-          <button type="button" onclick={() => removePending(i)} aria-label="Remove {p.file.name}">×</button>
+          {#if p.url}<img src={p.url} alt="" />{:else}<span class="pending-file">{p.mime.startsWith("video/") ? "🎬" : "📄"}<small>{p.name}</small></span>{/if}
+          <button type="button" onclick={() => removePending(i)} aria-label="Remove {p.name}">×</button>
         </div>
       {/each}
     </div>
@@ -604,7 +627,12 @@
   {#if sendingFiles}<p class="send-status">Sending…</p>{/if}
   {#if sendError}<p class="send-error">{sendError}</p>{/if}
   <div class="bar">
-    <button type="button" class="attach" onclick={() => fileInput.click()} aria-label="Attach photos or files">📎</button>
+    {#if isAndroid}
+      <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos">🖼️</button>
+      <button type="button" class="attach" onclick={() => pick("files")} aria-label="Files">📎</button>
+    {:else}
+      <button type="button" class="attach" onclick={() => fileInput.click()} aria-label="Attach photos or files">📎</button>
+    {/if}
     <input
       bind:this={fileInput}
       type="file"
