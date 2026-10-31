@@ -1,5 +1,5 @@
 <script lang="ts">
-  import FileIcon from "@lucide/svelte/icons/file";
+  import Plus from "@lucide/svelte/icons/plus";
   import ChartBar from "@lucide/svelte/icons/chart-bar";
   import PollCreator from "./PollCreator.svelte";
   import Pin from "@lucide/svelte/icons/pin";
@@ -819,13 +819,23 @@
       <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos"><Image size={24} /></button>
     {/if}
     <div class="attach-wrap">
-      <button type="button" class="attach" onclick={() => (attachOpen = !attachOpen)} aria-label="Attach" aria-expanded={attachOpen}>
-        <Paperclip size={22} />
+      <button
+        type="button"
+        class="attach plus"
+        class:open={attachOpen}
+        onclick={() => (attachOpen = !attachOpen)}
+        aria-label="More: files, poll"
+        aria-expanded={attachOpen}
+      >
+        <Plus size={26} />
       </button>
       {#if attachOpen}
+        <!-- Any tap outside closes the menu. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="attach-catcher" onclick={() => (attachOpen = false)}></div>
         <div class="attach-menu" transition:fade={{ duration: 100 }}>
           <button type="button" onclick={() => ((attachOpen = false), isAndroid ? pick("files") : fileInput.click())}>
-            <FileIcon size={18} />{isAndroid ? "File" : "Photos or files"}
+            <Paperclip size={18} />{isAndroid ? "File" : "Photos or files"}
           </button>
           <button type="button" onclick={() => ((attachOpen = false), (pollOpen = true))}><ChartBar size={18} />Poll</button>
         </div>
@@ -1397,6 +1407,17 @@
   }
   .attach-wrap {
     position: relative;
+  }
+  .attach-catcher {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+  }
+  .plus :global(svg) {
+    transition: transform 0.2s var(--ease);
+  }
+  .plus.open :global(svg) {
+    transform: rotate(45deg);
   }
   .attach-menu {
     position: absolute;

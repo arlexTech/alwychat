@@ -359,6 +359,11 @@
         </div>
       {/if}
       <!-- Anchored to the bubble's outer edge so they always open into the chat, never under the list. -->
+      {#if pickerOpen || menuOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="outside" onclick={() => ((menuOpen = false), (pickerOpen = false))}></div>
+        
+      {/if}
       {#if pickerOpen}
         <div class="picker" transition:scale={{ duration: 140, start: 0.8 }}>
           {#each QUICK as key (key)}
@@ -948,5 +953,11 @@
   }
   .bubble.mentions-me {
     box-shadow: 0 0 0 2px var(--accent-b);
+  }
+  /* Tap anywhere else to close the open menu. */
+  .outside {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
   }
 </style>

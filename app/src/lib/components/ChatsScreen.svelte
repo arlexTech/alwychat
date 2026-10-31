@@ -172,6 +172,9 @@
       </button>
       <h1>Chats</h1>
       {#if menuOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="outside" onclick={() => (menuOpen = false)}></div>
+        
         <div class="menu" transition:fade={{ duration: 120 }}>
           <div class="menu-who">
             <strong>{myName}</strong>
@@ -491,5 +494,11 @@
   }
   .row-menu button:hover {
     background: var(--surface-hover);
+  }
+  /* Tap anywhere else to close the open menu. */
+  .outside {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
   }
 </style>
