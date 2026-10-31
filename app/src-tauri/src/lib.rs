@@ -131,6 +131,28 @@ async fn report_activity(core: State<'_, Core>, active: bool) -> alwy_core::Resu
 }
 
 #[tauri::command]
+async fn join_call(
+    core: State<'_, Core>,
+    room_id: String,
+    video: bool,
+) -> alwy_core::Result<alwy_core::rtc::CallConnection> {
+    core.join_call(&room_id, video).await
+}
+
+#[tauri::command]
+async fn leave_call(core: State<'_, Core>) -> alwy_core::Result<()> {
+    core.leave_call().await
+}
+
+#[tauri::command]
+async fn call_participants(
+    core: State<'_, Core>,
+    room_id: String,
+) -> alwy_core::Result<Vec<Member>> {
+    core.call_participants(&room_id).await
+}
+
+#[tauri::command]
 async fn set_typing(core: State<'_, Core>, room_id: String, typing: bool) -> alwy_core::Result<()> {
     core.set_typing(&room_id, typing).await
 }
@@ -622,6 +644,9 @@ pub fn run() {
             subscribe_chat_list,
             open_chat,
             set_typing,
+            join_call,
+            leave_call,
+            call_participants,
             presence,
             report_activity,
             set_quick_reaction,

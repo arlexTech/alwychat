@@ -33,6 +33,7 @@
   import { pickedMediaUrl } from "$lib/media";
   import { VoiceRecorder } from "$lib/recorder.svelte";
   import { presence } from "$lib/stores/presence.svelte";
+  import { call } from "$lib/stores/call.svelte";
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatCustomizeSheet from "./ChatCustomizeSheet.svelte";
   import { saveToGallery } from "$lib/save";
@@ -586,8 +587,17 @@
       <span class="sub">🔒 End-to-end encrypted</span>
     {/if}
   </div>
+  <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call">📞</button>
+  <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call">🎥</button>
   <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Customise chat">⋯</button>
 </header>
+{#if room.in_call.length && call.roomId !== room.id}
+  <button class="call-banner" onclick={() => call.join(room, false)} transition:fade={{ duration: 150 }}>
+    <span class="call-dot"></span>
+    <span>{room.in_call.length} in the call</span>
+    <strong>Join</strong>
+  </button>
+{/if}
 {#if chatMenuOpen}
   <ChatCustomizeSheet roomId={room.id} hd={chatHd} onChooseHd={chooseHd} onClose={() => (chatMenuOpen = false)} />
 {/if}
@@ -820,6 +830,33 @@
   }
   .sub.online {
     color: #31d158;
+  }
+  .call-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 12px 0;
+    padding: 9px 14px;
+    border: none;
+    border-radius: 14px;
+    background: color-mix(in srgb, #31d158 18%, var(--surface));
+    text-align: left;
+    cursor: pointer;
+  }
+  .call-banner span:nth-child(2) {
+    flex: 1;
+  }
+  .call-banner strong {
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: #1f9d48;
+    color: white;
+  }
+  .call-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #31d158;
   }
   .back {
     display: none;

@@ -33,6 +33,7 @@
   <div class="body">
     <div class="line">
       <span class="name">{room.name}</span>
+      {#if room.in_call.length}<span class="icon in-call" title="{room.in_call.length} in the call">📞 {room.in_call.length}</span>{/if}
       {#if room.is_muted}<span class="icon" title="Muted">🔕</span>{/if}
       {#if room.is_favourite}<span class="icon" title="Pinned">📌</span>{/if}
       <span class="time">{shortTime(room.latest?.timestamp)}</span>
@@ -159,5 +160,10 @@
     border: 3px solid var(--surface);
     border-radius: 50%;
     background: #31d158;
+  }
+  .in-call {
+    color: #31d158;
+    font-size: 0.8rem;
+    white-space: nowrap;
   }
 </style>

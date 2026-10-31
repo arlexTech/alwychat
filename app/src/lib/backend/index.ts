@@ -61,6 +61,8 @@ export interface RoomSummary {
   avatar: string | null;
   is_dm: boolean;
   dm_user: string | null;
+  /** Users in the room's call right now. */
+  in_call: string[];
   is_invite: boolean;
   is_favourite: boolean;
   /** Low-priority tag: shown under "Archived". */
@@ -183,6 +185,12 @@ export type TimelineEntry = { key: string } & (
   | { type: "timeline_start" }
   | { type: "hidden" }
 );
+
+/** Join (or start) the room's call: returns where to connect with livekit-client. */
+export const joinCall = (roomId: string, video: boolean) =>
+  invoke<{ url: string; jwt: string }>("join_call", { roomId, video });
+export const leaveCall = () => invoke<void>("leave_call");
+export const callParticipants = (roomId: string) => invoke<Member[]>("call_participants", { roomId });
 
 export interface Presence {
   user_id: string;

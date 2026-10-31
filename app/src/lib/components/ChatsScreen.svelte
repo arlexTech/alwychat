@@ -12,6 +12,8 @@
   } from "$lib/backend";
   import { chat } from "$lib/stores/chat.svelte";
   import { presence } from "$lib/stores/presence.svelte";
+  import { call } from "$lib/stores/call.svelte";
+  import CallView from "./CallView.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
@@ -45,7 +47,11 @@
   /** The open chat's shared theme colours. */
   const theme = $derived(themeById(chat.style?.theme));
 
-  // Android back: close menus and sheets first, then the open chat.
+  // Android back: a full-screen call shrinks to its pill first.
+  $effect(() => {
+    if (call.active && !call.minimized) return onBack(() => (call.minimized = true));
+  });
+  // Then menus and sheets, then the open chat.
   $effect(() => {
     if (selected) return onBack(closeChat);
   });
@@ -239,6 +245,8 @@
     </button>
   </div>
 {/if}
+
+<CallView />
 
 <style>
   .shell {

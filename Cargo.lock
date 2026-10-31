@@ -78,6 +78,7 @@ dependencies = [
  "mime",
  "ogg",
  "rand 0.9.5",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

@@ -11,6 +11,7 @@ pub mod mentions;
 pub mod notifications;
 pub mod presence;
 pub mod rooms;
+pub mod rtc;
 pub mod session;
 pub mod settings;
 pub mod timeline;

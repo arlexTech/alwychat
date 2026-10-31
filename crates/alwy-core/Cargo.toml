@@ -10,6 +10,8 @@ ammonia.workspace = true
 image.workspace = true
 mime.workspace = true
 ogg = "0.9"
+# lk-jwt-service (LiveKit tokens for calls); TLS comes from matrix-sdk's reqwest features.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 matrix-sdk.workspace = true
 matrix-sdk-ui.workspace = true
 eyeball-im.workspace = true

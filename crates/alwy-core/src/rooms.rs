@@ -39,6 +39,8 @@ pub struct RoomSummary {
     pub is_dm: bool,
     /// The other person of a 1:1 chat (for the nickname shown as its title).
     pub dm_user: Option<String>,
+    /// Users in the room's call right now (MatrixRTC), for call badges and voice channels.
+    pub in_call: Vec<String>,
     pub is_invite: bool,
     pub is_favourite: bool,
     /// Tagged low priority: shown under "Archived" (Element: "Low priority").
@@ -198,6 +200,16 @@ async fn summarize(room: &Room) -> RoomSummary {
                     .find_map(|t| t.as_user_id().map(ToString::to_string))
             })
             .flatten(),
+        in_call: {
+            let mut users: Vec<String> = room
+                .active_room_call_participants()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            users.sort();
+            users.dedup();
+            users
+        },
         is_invite: room.state() == RoomState::Invited,
         is_favourite: room.is_favourite(),
         is_archived: room.is_low_priority(),

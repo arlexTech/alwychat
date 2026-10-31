@@ -79,6 +79,8 @@ pub struct Core {
     pub(crate) media: Arc<crate::media::MediaRegistry>,
     pub(crate) settings: Arc<Mutex<crate::settings::Settings>>,
     pub(crate) on_notification: Arc<Mutex<Option<crate::notifications::NotificationHandler>>>,
+    /// The call we're in, if any.
+    pub(crate) call: tokio::sync::Mutex<Option<crate::rtc::ActiveCall>>,
     /// Ends the sign-in in progress: the redirect URL (mobile), or `None` to cancel.
     pending_login: Mutex<Option<oneshot::Sender<Option<Url>>>>,
 }
@@ -119,6 +121,7 @@ impl Core {
             on_session_ended: Arc::default(),
             media: Arc::default(),
             pending_login: Mutex::default(),
+            call: tokio::sync::Mutex::default(),
         }
     }
 
@@ -287,6 +290,9 @@ impl Core {
 
     /// Sign out on the server (best effort) and delete all local data.
     pub async fn logout(&self) -> Result<()> {
+        if let Err(e) = self.leave_call().await {
+            warn!("couldn't leave the call before signing out: {e}");
+        }
         let active = self.active.lock().unwrap().take();
         if let Some(active) = active {
             active.may_persist.store(false, Ordering::SeqCst);

@@ -28,6 +28,8 @@ pub enum Error {
     UnknownEvent,
     #[error("this person isn't in the chat")]
     UnknownUser,
+    #[error("call: {0}")]
+    Call(String),
     #[error("this chat isn't open")]
     ChatNotOpen,
     #[error("timeline: {0}")]
