@@ -145,6 +145,15 @@ async fn forward_messages(
 }
 
 #[tauri::command]
+async fn decline_call(
+    core: State<'_, AppCore>,
+    room_id: String,
+    notification_id: String,
+) -> alwy_core::Result<()> {
+    core.decline_call(&room_id, &notification_id).await
+}
+
+#[tauri::command]
 async fn create_poll(
     core: State<'_, AppCore>,
     room_id: String,
@@ -870,6 +879,10 @@ pub fn run() {
             let _ = handle.emit("session-ended", ());
         });
         let handle = app.handle().clone();
+        core.on_call_signal(move |signal| {
+            let _ = handle.emit("call-signal", signal);
+        });
+        let handle = app.handle().clone();
         core.on_notification(move |n| {
             // Only when the window isn't in front: otherwise the chat list already shows it.
             let focused = if cfg!(mobile) {
@@ -978,6 +991,7 @@ pub fn run() {
             create_poll,
             forward_messages,
             file_action,
+            decline_call,
             vote_poll,
             end_poll,
             setup_push,

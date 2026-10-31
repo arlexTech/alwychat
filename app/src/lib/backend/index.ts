@@ -47,6 +47,25 @@ export const endSession = () => invoke<void>("end_session");
 /** The server ended our session (signed out elsewhere, revoked…). Returns an unsubscribe function. */
 export const onSessionEnded = (handler: () => void) => listen("session-ended", handler);
 
+/** An incoming ring, or the answer to ours. */
+export type CallSignal =
+  | {
+      kind: "ring";
+      room_id: string;
+      notification_id: string;
+      caller_name: string;
+      caller_avatar: string | null;
+      video: boolean;
+      /** ms since epoch. */
+      expires_at: number;
+    }
+  | { kind: "declined"; room_id: string };
+
+export const onCallSignal = (handler: (signal: CallSignal) => void) =>
+  listen<CallSignal>("call-signal", (e) => handler(e.payload));
+export const declineCall = (roomId: string, notificationId: string) =>
+  invoke<void>("decline_call", { roomId, notificationId });
+
 /** A notification was tapped: open this chat. */
 export const onOpenRoom = (handler: (roomId: string) => void) =>
   listen<string>("open-room", (e) => handler(e.payload));

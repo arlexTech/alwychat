@@ -7,7 +7,21 @@ import {
   type Participant,
   type RemoteTrack,
 } from "livekit-client";
-import { joinCall, leaveCall, roomMembers, type Member, type RoomSummary } from "$lib/backend";
+import {
+  declineCall,
+  joinCall,
+  leaveCall,
+  onCallSignal,
+  roomMembers,
+  type CallSignal,
+  type Member,
+  type RoomSummary,
+} from "$lib/backend";
+import { startRinging, stopRinging } from "$lib/ringtone";
+
+type Ring = Extract<CallSignal, { kind: "ring" }>;
+/** A 1:1 call nobody answers ends after this. */
+const NO_ANSWER_MS = 45_000;
 
 export interface Tile {
   /** LiveKit identity: "@user:server:DEVICE". */
@@ -41,6 +55,59 @@ class CallStore {
   /** Shrunk to a pill so the chats stay usable during the call. */
   minimized = $state(false);
   tiles = $state<Tile[]>([]);
+  /** Someone is calling us. */
+  incoming = $state<Ring | null>(null);
+  /** We're calling someone in a 1:1 chat and they haven't joined yet. */
+  calling = $state(false);
+  #ringEnd: ReturnType<typeof setTimeout> | undefined;
+  #noAnswer: ReturnType<typeof setTimeout> | undefined;
+  #listening = false;
+  /** Short message after a call ends on its own ("No answer", "Call declined"). */
+  notice = $state<string | null>(null);
+
+  #tell(message: string) {
+    this.notice = message;
+    setTimeout(() => this.notice === message && (this.notice = null), 4000);
+  }
+
+  /** Listen for rings and declines. Call once after sign-in. */
+  listen() {
+    if (this.#listening) return;
+    this.#listening = true;
+    void onCallSignal((signal) => {
+      if (signal.kind === "ring") this.#ring(signal);
+      else if (signal.room_id === this.roomId && this.calling) {
+        void this.leave().then(() => this.#tell("Call declined"));
+      }
+    });
+  }
+
+  #ring(ring: Ring) {
+    if (this.active || this.incoming) return;
+    this.incoming = ring;
+    startRinging();
+    clearTimeout(this.#ringEnd);
+    this.#ringEnd = setTimeout(() => this.stopRing(), Math.max(0, ring.expires_at - Date.now()));
+  }
+
+  /** The ring ended without an answer here (timeout, caller hung up, answered elsewhere). */
+  stopRing() {
+    clearTimeout(this.#ringEnd);
+    stopRinging();
+    this.incoming = null;
+  }
+
+  async accept(room: RoomSummary) {
+    const video = this.incoming?.video ?? false;
+    this.stopRing();
+    await this.join(room, video, false);
+  }
+
+  async decline() {
+    const ring = this.incoming;
+    this.stopRing();
+    if (ring) await declineCall(ring.room_id, ring.notification_id).catch(() => {});
+  }
 
   #lk: Room | null = null;
   #members = new Map<string, Member>();
@@ -51,9 +118,17 @@ class CallStore {
     return this.roomId !== null;
   }
 
-  async join(room: RoomSummary, video: boolean) {
+  /** `ringing`: we start it (1:1 chats ring the other person; the core sends the ring). */
+  async join(room: RoomSummary, video: boolean, ringing = true) {
     if (this.roomId === room.id) return void (this.minimized = false);
+    if (this.incoming?.room_id === room.id) this.stopRing();
     await this.leave();
+    this.calling = ringing && room.is_dm && room.in_call.length === 0;
+    if (this.calling) {
+      this.#noAnswer = setTimeout(() => {
+        if (this.calling && this.roomId === room.id) void this.leave().then(() => this.#tell("No answer"));
+      }, NO_ANSWER_MS);
+    }
     this.roomId = room.id;
     this.roomName = room.name;
     this.status = "connecting";
@@ -104,6 +179,8 @@ class CallStore {
   }
 
   async leave() {
+    clearTimeout(this.#noAnswer);
+    this.calling = false;
     const lk = this.#lk;
     this.#lk = null;
     const wasIn = this.roomId !== null;
@@ -184,6 +261,11 @@ class CallStore {
   #sync() {
     const lk = this.#lk;
     if (!lk) return;
+    // Someone joined: we're no longer just calling.
+    if (this.calling && lk.remoteParticipants.size > 0) {
+      this.calling = false;
+      clearTimeout(this.#noAnswer);
+    }
     this.tiles = [
       this.#tile(lk.localParticipant, true),
       ...[...lk.remoteParticipants.values()].map((p) => this.#tile(p, false)),

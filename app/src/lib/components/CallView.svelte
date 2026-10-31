@@ -28,13 +28,22 @@
   }
 
   const statusText = $derived(
-    call.status === "connecting" ? "Connecting…" : call.status === "reconnecting" ? "Reconnecting…" : null,
+    call.status === "connecting"
+      ? "Connecting…"
+      : call.status === "reconnecting"
+        ? "Reconnecting…"
+        : call.calling
+          ? "Calling…"
+          : null,
   );
   /** Screen shares get the big spot. */
   const featured = $derived(call.tiles.find((t) => t.screen) ?? null);
   const canShareScreen = !isAndroid && !!navigator.mediaDevices?.getDisplayMedia;
 </script>
 
+{#if call.notice && !call.active}
+  <div class="notice" transition:fly={{ y: -16, duration: 180 }}>{call.notice}</div>
+{/if}
 {#if call.active && call.minimized}
   <button class="pill" onclick={() => (call.minimized = false)} transition:fly={{ y: -16, duration: 180 }}>
     <span class="dot"></span>
@@ -290,5 +299,16 @@
     opacity: 0.85;
     font-size: 0.85rem;
     white-space: nowrap;
+  }
+  .notice {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    z-index: 60;
+    translate: -50% 0;
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
   }
 </style>

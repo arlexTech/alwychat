@@ -21,6 +21,7 @@
   import { presence } from "$lib/stores/presence.svelte";
   import { call } from "$lib/stores/call.svelte";
   import CallView from "./CallView.svelte";
+  import IncomingCall from "./IncomingCall.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
@@ -137,6 +138,7 @@
     chatList.start();
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
     presence.start();
+    call.listen();
     // Tapped notifications open their chat (cold start, or while running).
     launchRoom().then((id) => id && (selectedId = id), () => {});
     const stopOpenRoom = onOpenRoom((id) => (selectedId = id));
@@ -271,6 +273,7 @@
 {/if}
 
 <CallView />
+<IncomingCall />
 
 <style>
   .shell {
