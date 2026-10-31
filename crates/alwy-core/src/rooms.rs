@@ -266,7 +266,8 @@ pub(crate) fn preview(content: &AnyMessageLikeEventContent) -> Option<String> {
         AnyMessageLikeEventContent::RoomMessage(msg) => match &msg.msgtype {
             MessageType::Image(_) => "📷 Photo".to_owned(),
             MessageType::Video(_) => "🎬 Video".to_owned(),
-            MessageType::Audio(_) => "🎤 Audio".to_owned(),
+            MessageType::Audio(a) if a.voice.is_some() => "🎤 Voice message".to_owned(),
+            MessageType::Audio(_) => "🎵 Audio".to_owned(),
             MessageType::File(f) => format!("📎 {}", f.filename()),
             MessageType::Location(_) => "📍 Location".to_owned(),
             MessageType::Emote(e) => format!("* {}", e.body),

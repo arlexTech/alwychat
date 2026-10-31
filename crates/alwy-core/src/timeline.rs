@@ -138,7 +138,17 @@ pub enum MessageContent {
         width: Option<u32>,
         height: Option<u32>,
     },
-    /// Audio and locations: a label until they get their own rendering.
+    /// Voice messages (Element/FluffyChat) and other audio files.
+    Audio {
+        media: String,
+        duration_ms: Option<u64>,
+        /// Loudness bars, 0–1024 (MSC1767); empty if the sender didn't include one.
+        waveform: Vec<u16>,
+        is_voice: bool,
+        filename: String,
+        size: Option<u64>,
+    },
+    /// Locations: a label until they get their own rendering.
     Media {
         label: String,
     },
@@ -528,7 +538,10 @@ impl Mapper {
                 });
                 let send_state = match event.send_state() {
                     Some(EventSendState::NotSentYet { .. }) => Some(SendState::Sending),
-                    Some(EventSendState::SendingFailed { .. }) => Some(SendState::Failed),
+                    Some(EventSendState::SendingFailed { error, .. }) => {
+                        warn!("message not sent: {error}");
+                        Some(SendState::Failed)
+                    }
                     _ => None,
                 };
                 EntryKind::Message(Box::new(MessageEntry {
@@ -682,6 +695,37 @@ impl Mapper {
                     caption: c.caption().map(ToOwned::to_owned),
                 }
             }
+            MessageType::Audio(c) => {
+                let info = c.info.as_deref();
+                register(
+                    &c.source,
+                    None,
+                    info.and_then(|i| i.mimetype.clone()),
+                    c.filename(),
+                );
+                MessageContent::Audio {
+                    media: key.clone(),
+                    duration_ms: c
+                        .audio
+                        .as_ref()
+                        .map(|a| a.duration)
+                        .or(info.and_then(|i| i.duration))
+                        .map(|d| d.as_millis() as u64),
+                    waveform: c
+                        .audio
+                        .as_ref()
+                        .map(|a| {
+                            a.waveform
+                                .iter()
+                                .map(|v| u16::try_from(u64::from(v.get())).unwrap_or(1024))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    is_voice: c.voice.is_some(),
+                    filename: c.filename().to_owned(),
+                    size: info.and_then(|i| i.size).map(u64::from),
+                }
+            }
             MessageType::File(c) => {
                 let info = c.info.as_deref();
                 register(
@@ -728,7 +772,8 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
         },
         MessageType::Image(_) => media("📷 Photo"),
         MessageType::Video(_) => media("🎬 Video"),
-        MessageType::Audio(_) => media("🎤 Audio"),
+        MessageType::Audio(a) if a.voice.is_some() => media("🎤 Voice message"),
+        MessageType::Audio(_) => media("🎵 Audio"),
         MessageType::File(f) => media(&format!("📎 {}", f.filename())),
         MessageType::Location(_) => media("📍 Location"),
         other => MessageContent::Text {

@@ -136,6 +136,16 @@ export type MessageContent =
     }
   | { kind: "file"; media: string; filename: string; size: number | null; caption: string | null }
   | { kind: "sticker"; media: string; body: string; width: number | null; height: number | null }
+  | {
+      kind: "audio";
+      media: string;
+      duration_ms: number | null;
+      /** Loudness bars, 0–1024. */
+      waveform: number[];
+      is_voice: boolean;
+      filename: string;
+      size: number | null;
+    }
   | { kind: "media"; label: string }
   | { kind: "poll"; question: string }
   | { kind: "redacted" }
@@ -244,6 +254,26 @@ export interface Picked {
   name: string;
   mime: string;
   size: number;
+}
+
+/** Send a recorded voice message (base64: the Android webview can't pass raw bytes). */
+export async function sendVoice(
+  roomId: string,
+  recording: { blob: Blob; mime: string; durationMs: number; waveform: number[] },
+) {
+  const audio = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(recording.blob);
+  });
+  return invoke<void>("send_voice", {
+    roomId,
+    audio,
+    mime: recording.mime,
+    durationMs: recording.durationMs,
+    waveform: recording.waveform,
+  });
 }
 
 /** Android: open the photo picker ("media") or the document picker ("files"). */

@@ -311,6 +311,26 @@ async fn discard_picked(app: tauri::AppHandle, path: String) -> Result<(), Strin
     std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
+/// Send a recorded voice message. The recording travels base64-encoded: the Android webview
+/// can't pass raw bytes, and voice clips are small.
+#[tauri::command]
+async fn send_voice(
+    core: State<'_, Core>,
+    room_id: String,
+    audio: String,
+    mime: String,
+    duration_ms: u64,
+    waveform: Vec<f32>,
+) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(audio)
+        .map_err(|e| e.to_string())?;
+    core.send_voice(&room_id, bytes, &mime, duration_ms, waveform)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn chat_media_hd(core: State<'_, Core>, room_id: String) -> alwy_core::Result<Option<bool>> {
     core.chat_media_hd(&room_id).await
@@ -599,6 +619,7 @@ pub fn run() {
             send_file,
             pick_files,
             send_picked,
+            send_voice,
             discard_picked,
             chat_media_hd,
             set_chat_media_hd,

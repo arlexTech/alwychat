@@ -9,6 +9,7 @@ license.workspace = true
 ammonia.workspace = true
 image.workspace = true
 mime.workspace = true
+ogg = "0.9"
 matrix-sdk.workspace = true
 matrix-sdk-ui.workspace = true
 eyeball-im.workspace = true

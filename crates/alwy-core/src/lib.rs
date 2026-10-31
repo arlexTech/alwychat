@@ -14,6 +14,7 @@ pub mod session;
 pub mod settings;
 pub mod timeline;
 pub mod upload;
+pub mod voice;
 
 pub use error::{Error, Result};
 pub use session::{Account, Core, LoginRedirect};

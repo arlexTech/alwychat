@@ -5,6 +5,7 @@
   import { eventMediaUrl } from "$lib/media";
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
+  import VoicePlayer from "./VoicePlayer.svelte";
 
   let {
     msg,
@@ -81,6 +82,8 @@
         return c.caption ?? "";
       case "media":
         return c.label;
+      case "audio":
+        return "";
       case "sticker":
         return "";
       case "poll":
@@ -293,6 +296,8 @@
               {#if c.duration_ms}<span class="duration">{formatDuration(c.duration_ms)}</span>{/if}
             {/if}
           </button>
+        {:else if c.kind === "audio"}
+          <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} />
         {:else if c.kind === "file"}
           <button class="file" onclick={onSaveFile} title="Save to Downloads">
             <span class="file-icon">📄</span>

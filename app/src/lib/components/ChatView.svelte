@@ -14,6 +14,7 @@
     sendFile,
     sendMessage,
     sendPicked,
+    sendVoice,
     setChatMediaHd,
     setTyping,
     toggleReaction,
@@ -30,6 +31,7 @@
   import MentionSuggestions from "./MentionSuggestions.svelte";
   import { MentionAutocomplete } from "$lib/mentions.svelte";
   import { pickedMediaUrl } from "$lib/media";
+  import { VoiceRecorder } from "$lib/recorder.svelte";
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatCustomizeSheet from "./ChatCustomizeSheet.svelte";
   import { saveToGallery } from "$lib/save";
@@ -41,6 +43,45 @@
   /** Messages from the same sender closer than this are drawn as one run. */
   const GROUP_GAP_MS = 5 * 60_000;
   /** Until per-chat quick reactions (com.alwy.chat.room.quick_reaction) land. */
+  // ── Voice messages ───────────────────────────────────────────────────────
+  const recorder = new VoiceRecorder();
+  $effect(() => {
+    if (recorder.recording) return closeOnBack(() => recorder.cancel());
+  });
+
+  async function startVoice() {
+    sendError = null;
+    try {
+      await recorder.start();
+    } catch (e) {
+      sendError = e instanceof DOMException && e.name === "NotAllowedError"
+        ? "AlwyChat isn't allowed to use the microphone"
+        : `Couldn't start recording: ${e}`;
+    }
+  }
+
+  async function finishVoice() {
+    const recording = await recorder.stop();
+    if (!recording) return;
+    if (recording.durationMs < 800) {
+      sendError = "Too short: tap 🎤, speak, then send";
+      return;
+    }
+    sendingFiles = true;
+    try {
+      await sendVoice(room.id, recording);
+    } catch (e) {
+      sendError = String(e);
+    } finally {
+      sendingFiles = false;
+    }
+  }
+
+  const recordClock = $derived.by(() => {
+    const s = Math.floor(recorder.elapsedMs / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  });
+
   // A 1:1 chat is titled with the nickname given to the other person, if any.
   const title = $derived((room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);
   // The chat's own quick reaction (shared by its members), ❤️ until someone picks one.
@@ -65,7 +106,8 @@
   let pending = $state<Pending[]>([]);
   let dragging = $state(false);
   let sendingFiles = $state(false);
-  let fileInput: HTMLInputElement;
+  // The composer is swapped out while recording a voice message, so this can change.
+  let fileInput = $state<HTMLInputElement>() as HTMLInputElement;
   let chatMenuOpen = $state(false);
   /** This chat's HD choice: null = app default. */
   let chatHd = $state<boolean | null>(null);
@@ -89,7 +131,8 @@
     if (replyTo) return closeOnBack(() => (replyTo = null));
   });
   let scroller: HTMLDivElement;
-  let input: HTMLTextAreaElement;
+  // The composer is swapped out while recording a voice message, so this can change.
+  let input = $state<HTMLTextAreaElement>() as HTMLTextAreaElement;
 
   $effect(() => {
     const id = room.id;
@@ -99,6 +142,7 @@
     editing = null;
     sendError = null;
     untrack(() => {
+      recorder.cancel();
       clearPending();
       chatMenuOpen = false;
       chat.open(id);
@@ -499,6 +543,7 @@
     if (c.kind === "image") return "📷 Photo";
     if (c.kind === "video") return "🎬 Video";
     if (c.kind === "file") return `📄 ${c.filename}`;
+    if (c.kind === "audio") return c.is_voice ? "🎤 Voice message" : `🎵 ${c.filename}`;
     return "Message";
   }
 
@@ -631,6 +676,21 @@
   {/if}
   {#if sendingFiles}<p class="send-status">Sending…</p>{/if}
   {#if sendError}<p class="send-error">{sendError}</p>{/if}
+  {#if recorder.recording}
+    <div class="bar recording" transition:fade={{ duration: 120 }}>
+      <button type="button" class="attach" onclick={() => recorder.cancel()} aria-label="Delete recording">🗑️</button>
+      <div class="rec">
+        <span class="rec-dot"></span>
+        <span class="rec-time">{recordClock}</span>
+        <div class="rec-wave" aria-hidden="true">
+          {#each recorder.levels as level, i (i)}
+            <span style:height="{Math.max(8, Math.round(level * 100))}%"></span>
+          {/each}
+        </div>
+      </div>
+      <button type="button" class="send" onclick={finishVoice} aria-label="Send voice message">➤</button>
+    </div>
+  {:else}
   <div class="bar">
     {#if isAndroid}
       <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos">🖼️</button>
@@ -664,6 +724,7 @@
         >{editing ? "✓" : "➤"}</button
       >
     {:else}
+      <button type="button" class="attach mic" onclick={startVoice} aria-label="Record a voice message">🎤</button>
       <button
         type="button"
         class="quick"
@@ -672,6 +733,7 @@
       >{QUICK_REACTION}</button>
     {/if}
   </div>
+  {/if}
 </form>
 
 {#if toast}<div class="toast" transition:fly={{ y: 12, duration: 180 }}>{toast}</div>{/if}
@@ -1069,6 +1131,54 @@
   }
   .attach:hover {
     background: var(--surface-2);
+  }
+  .bar.recording {
+    align-items: center;
+  }
+  .rec {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 40px;
+    padding: 0 14px;
+    border-radius: 20px;
+    background: var(--surface-2);
+  }
+  .rec-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--danger);
+    animation: rec-pulse 1s ease-in-out infinite alternate;
+  }
+  @keyframes rec-pulse {
+    to {
+      opacity: 0.3;
+    }
+  }
+  .rec-time {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .rec-wave {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    height: 24px;
+    overflow: hidden;
+  }
+  .rec-wave span {
+    flex: none;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: height 0.05s linear;
   }
   .pending {
     display: flex;
