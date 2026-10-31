@@ -9,6 +9,21 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  companion object {
+    /** On screen: pushes don't notify then (the app shows the message itself). */
+    @Volatile var visible = false
+  }
+
+  override fun onResume() {
+    super.onResume()
+    visible = true
+  }
+
+  override fun onPause() {
+    visible = false
+    super.onPause()
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // The UI is dark: light status/navigation bar icons on a transparent bar.
     enableEdgeToEdge(

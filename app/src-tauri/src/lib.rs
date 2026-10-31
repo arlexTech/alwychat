@@ -26,14 +26,14 @@ async fn discover_server(server: String) -> alwy_core::Result<ServerInfo> {
 }
 
 #[tauri::command]
-async fn restore_session(core: State<'_, Core>) -> alwy_core::Result<Option<Account>> {
+async fn restore_session(core: State<'_, AppCore>) -> alwy_core::Result<Option<Account>> {
     core.restore().await
 }
 
 #[tauri::command]
 async fn login(
     app: tauri::AppHandle,
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     server: String,
 ) -> alwy_core::Result<Account> {
     // Mobile apps are paused while the browser is in front: no loopback server there.
@@ -51,14 +51,14 @@ async fn login(
 }
 
 #[tauri::command]
-fn cancel_login(core: State<'_, Core>) {
+fn cancel_login(core: State<'_, AppCore>) {
     core.cancel_login();
 }
 
 // Async so it runs on the Tokio runtime: the core spawns the stream task from here.
 #[tauri::command]
 async fn subscribe_chat_list(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     on_diffs: Channel<Vec<ListDiff<RoomSummary>>>,
 ) -> alwy_core::Result<()> {
     core.subscribe_chat_list(move |diffs| {
@@ -68,7 +68,7 @@ async fn subscribe_chat_list(
 
 #[tauri::command]
 async fn open_chat(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     on_diffs: Channel<Vec<ListDiff<TimelineEntry>>>,
     on_typing: Channel<Vec<String>>,
@@ -91,7 +91,7 @@ async fn open_chat(
 
 #[tauri::command]
 async fn set_quick_reaction(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     emoji: Option<String>,
 ) -> alwy_core::Result<()> {
@@ -100,7 +100,7 @@ async fn set_quick_reaction(
 
 #[tauri::command]
 async fn set_theme(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     preset: Option<String>,
 ) -> alwy_core::Result<()> {
@@ -109,7 +109,7 @@ async fn set_theme(
 
 #[tauri::command]
 async fn set_nickname(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     user_id: String,
     nickname: Option<String>,
@@ -119,7 +119,7 @@ async fn set_nickname(
 
 #[tauri::command]
 async fn presence(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     user_ids: Vec<String>,
 ) -> alwy_core::Result<Vec<alwy_core::presence::Presence>> {
     core.presence(&user_ids).await
@@ -131,7 +131,7 @@ struct Visible(std::sync::atomic::AtomicBool);
 
 #[tauri::command]
 async fn report_activity(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     visible: State<'_, Visible>,
     active: bool,
 ) -> alwy_core::Result<()> {
@@ -183,7 +183,7 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
 
 #[tauri::command]
 async fn join_call(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     video: bool,
 ) -> alwy_core::Result<alwy_core::rtc::CallConnection> {
@@ -191,26 +191,30 @@ async fn join_call(
 }
 
 #[tauri::command]
-async fn leave_call(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn leave_call(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.leave_call().await
 }
 
 #[tauri::command]
 async fn call_participants(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
 ) -> alwy_core::Result<Vec<Member>> {
     core.call_participants(&room_id).await
 }
 
 #[tauri::command]
-async fn set_typing(core: State<'_, Core>, room_id: String, typing: bool) -> alwy_core::Result<()> {
+async fn set_typing(
+    core: State<'_, AppCore>,
+    room_id: String,
+    typing: bool,
+) -> alwy_core::Result<()> {
     core.set_typing(&room_id, typing).await
 }
 
 #[tauri::command]
 async fn edit_message(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     item_id: String,
     body: String,
@@ -222,7 +226,7 @@ async fn edit_message(
 
 #[tauri::command]
 async fn delete_message(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     item_id: String,
 ) -> alwy_core::Result<()> {
@@ -231,7 +235,7 @@ async fn delete_message(
 
 #[tauri::command]
 async fn edit_history(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     event_id: String,
 ) -> alwy_core::Result<Vec<Revision>> {
@@ -243,7 +247,7 @@ async fn edit_history(
 #[tauri::command]
 async fn save_media(
     app: tauri::AppHandle,
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     media: String,
     to_gallery: bool,
 ) -> Result<String, String> {
@@ -300,7 +304,10 @@ async fn save_to_folder(
 /// Send a photo/video/file to the open chat. Body: raw bytes. Headers: `x-room` and
 /// `x-file` (URI-encoded JSON `OutgoingFile`), since headers must be ASCII.
 #[tauri::command]
-async fn send_file(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+async fn send_file(
+    core: State<'_, AppCore>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected raw file bytes".into());
     };
@@ -378,7 +385,7 @@ async fn pick_files(app: tauri::AppHandle, kind: String) -> Result<Vec<Picked>, 
 #[tauri::command]
 async fn send_picked(
     app: tauri::AppHandle,
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     path: String,
     file: alwy_core::upload::OutgoingFile,
@@ -401,7 +408,7 @@ async fn discard_picked(app: tauri::AppHandle, path: String) -> Result<(), Strin
 /// can't pass raw bytes, and voice clips are small.
 #[tauri::command]
 async fn send_voice(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     audio: String,
     mime: String,
@@ -418,13 +425,16 @@ async fn send_voice(
 }
 
 #[tauri::command]
-async fn chat_media_hd(core: State<'_, Core>, room_id: String) -> alwy_core::Result<Option<bool>> {
+async fn chat_media_hd(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Option<bool>> {
     core.chat_media_hd(&room_id).await
 }
 
 #[tauri::command]
 async fn set_chat_media_hd(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     hd: Option<bool>,
 ) -> alwy_core::Result<()> {
@@ -432,23 +442,27 @@ async fn set_chat_media_hd(
 }
 
 #[tauri::command]
-async fn get_settings(core: State<'_, Core>) -> alwy_core::Result<Settings> {
+async fn get_settings(core: State<'_, AppCore>) -> alwy_core::Result<Settings> {
     Ok(core.settings())
 }
 
 #[tauri::command]
-async fn set_settings(core: State<'_, Core>, settings: Settings) -> alwy_core::Result<()> {
+async fn set_settings(core: State<'_, AppCore>, settings: Settings) -> alwy_core::Result<()> {
     core.set_settings(settings).await
 }
 
 #[tauri::command]
-async fn set_pinned(core: State<'_, Core>, room_id: String, pinned: bool) -> alwy_core::Result<()> {
+async fn set_pinned(
+    core: State<'_, AppCore>,
+    room_id: String,
+    pinned: bool,
+) -> alwy_core::Result<()> {
     core.set_pinned(&room_id, pinned).await
 }
 
 #[tauri::command]
 async fn set_archived(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     archived: bool,
 ) -> alwy_core::Result<()> {
@@ -456,13 +470,17 @@ async fn set_archived(
 }
 
 #[tauri::command]
-async fn set_muted(core: State<'_, Core>, room_id: String, muted: bool) -> alwy_core::Result<()> {
+async fn set_muted(
+    core: State<'_, AppCore>,
+    room_id: String,
+    muted: bool,
+) -> alwy_core::Result<()> {
     core.set_muted(&room_id, muted).await
 }
 
 #[tauri::command]
 async fn set_marked_unread(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     unread: bool,
 ) -> alwy_core::Result<()> {
@@ -470,18 +488,18 @@ async fn set_marked_unread(
 }
 
 #[tauri::command]
-async fn close_chat(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn close_chat(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.close_chat()
 }
 
 #[tauri::command]
-async fn load_older(core: State<'_, Core>, room_id: String) -> alwy_core::Result<bool> {
+async fn load_older(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<bool> {
     core.load_older(&room_id).await
 }
 
 #[tauri::command]
 async fn send_message(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     body: String,
     mentions: Vec<MentionInput>,
@@ -492,13 +510,13 @@ async fn send_message(
 }
 
 #[tauri::command]
-async fn room_members(core: State<'_, Core>, room_id: String) -> alwy_core::Result<Vec<Member>> {
+async fn room_members(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<Vec<Member>> {
     core.room_members(&room_id).await
 }
 
 #[tauri::command]
 async fn toggle_reaction(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     room_id: String,
     item_id: String,
     key: String,
@@ -507,13 +525,13 @@ async fn toggle_reaction(
 }
 
 #[tauri::command]
-async fn mark_read(core: State<'_, Core>, room_id: String) -> alwy_core::Result<()> {
+async fn mark_read(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<()> {
     core.mark_read(&room_id).await
 }
 
 #[tauri::command]
 async fn subscribe_encryption(
-    core: State<'_, Core>,
+    core: State<'_, AppCore>,
     on_status: Channel<EncryptionStatus>,
     on_verification: Channel<VerificationUpdate>,
 ) -> alwy_core::Result<()> {
@@ -528,27 +546,27 @@ async fn subscribe_encryption(
 }
 
 #[tauri::command]
-async fn recover(core: State<'_, Core>, key: String) -> alwy_core::Result<()> {
+async fn recover(core: State<'_, AppCore>, key: String) -> alwy_core::Result<()> {
     core.recover(&key).await
 }
 
 #[tauri::command]
-async fn verify_this_device(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn verify_this_device(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.verify_this_device().await
 }
 
 #[tauri::command]
-async fn accept_verification(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn accept_verification(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.accept_verification().await
 }
 
 #[tauri::command]
-async fn confirm_emojis(core: State<'_, Core>, matching: bool) -> alwy_core::Result<()> {
+async fn confirm_emojis(core: State<'_, AppCore>, matching: bool) -> alwy_core::Result<()> {
     core.confirm_emojis(matching).await
 }
 
 #[tauri::command]
-async fn cancel_verification(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn cancel_verification(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.cancel_verification().await
 }
 
@@ -560,14 +578,121 @@ fn log_ui_error(message: String) {
 
 /// The server ended our session: stop using it locally, keep the store (see Core::end_session).
 #[tauri::command]
-async fn end_session(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn end_session(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.end_session().await;
     Ok(())
 }
 
 #[tauri::command]
-async fn logout(core: State<'_, Core>) -> alwy_core::Result<()> {
+async fn logout(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.logout().await
+}
+
+/// The core is a process-wide singleton: on Android a push can start the process (and the
+/// session) before the UI exists, and the UI must then reuse it (one client per store).
+type AppCore = &'static Core;
+static CORE: std::sync::OnceLock<Core> = std::sync::OnceLock::new();
+
+fn shared_core(data_dir: std::path::PathBuf) -> AppCore {
+    CORE.get_or_init(|| Core::new(data_dir))
+}
+
+/// Whether pushes deliver this device's notifications (then the sync-driven ones stay quiet,
+/// or the phone would show each message twice).
+static PUSH_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Register (or remove) this device's pusher. Returns whether push is in use: false on desktop
+/// and on builds without Firebase, which notify from the running app instead.
+#[tauri::command]
+async fn setup_push(
+    app: tauri::AppHandle,
+    core: State<'_, AppCore>,
+    enabled: bool,
+) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Deserialize)]
+        struct Token {
+            token: String,
+        }
+        let token = match app
+            .state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<Token>("pushToken", serde_json::json!({}))
+            .await
+        {
+            Ok(t) => t.token,
+            Err(e) => {
+                tracing::warn!("no push token, notifying from the running app: {e}");
+                PUSH_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return Ok(false);
+            }
+        };
+        let result = if enabled {
+            core.register_pusher(&token, "AlwyChat (Android)").await
+        } else {
+            core.remove_pusher(&token).await
+        };
+        result.map_err(|e| e.to_string())?;
+        PUSH_ACTIVE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+        Ok(enabled)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, core, enabled);
+        Ok(false)
+    }
+}
+
+/// `com.alwy.chat:/room?id=!room:server` (a tapped notification) → the room ID.
+#[cfg_attr(not(mobile), allow(dead_code))]
+fn room_link(url: &tauri::Url) -> Option<String> {
+    (url.scheme() == alwy_core::session::REDIRECT_SCHEME && url.path() == "/room")
+        .then(|| {
+            url.query_pairs()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.into_owned())
+        })
+        .flatten()
+}
+
+/// The chat whose notification launched the app, if any.
+#[tauri::command]
+fn launch_room(app: tauri::AppHandle) -> Option<String> {
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        app.deep_link()
+            .get_current()
+            .ok()
+            .flatten()?
+            .iter()
+            .find_map(room_link)
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = app;
+        None
+    }
+}
+
+/// Remove this chat's notifications from the phone (it was just opened).
+#[tauri::command]
+async fn clear_notifications(app: tauri::AppHandle, room_id: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>(
+                "clearNotifications",
+                serde_json::json!({ "roomId": room_id }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, room_id);
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -577,13 +702,7 @@ pub fn run() {
             .unwrap_or_else(|_| "info,matrix_sdk=warn".into())
     };
     #[cfg(target_os = "android")]
-    {
-        use tracing_subscriber::prelude::*;
-        tracing_subscriber::registry()
-            .with(filter())
-            .with(paranoid_android::layer("AlwyChat"))
-            .init();
-    }
+    android::init_logging();
     // ALWYCHAT_LOG_FILE: log to a file (e.g. when the app is launched by a test driver).
     #[cfg(not(target_os = "android"))]
     match std::env::var_os("ALWYCHAT_LOG_FILE").map(std::fs::File::create) {
@@ -605,7 +724,7 @@ pub fn run() {
         #[cfg(target_os = "android")]
         init_android_tls()?;
         let data_dir = app.path().app_data_dir()?;
-        let core = Core::new(data_dir);
+        let core = shared_core(data_dir);
         let handle = app.handle().clone();
         core.on_session_ended(move || {
             let _ = handle.emit("session-ended", ());
@@ -624,7 +743,7 @@ pub fn run() {
                     .and_then(|w| w.is_focused().ok())
                     .unwrap_or(false)
             };
-            if focused {
+            if focused || PUSH_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
             let title = if n.is_dm {
@@ -655,8 +774,10 @@ pub fn run() {
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
-                    if url.scheme() == alwy_core::session::REDIRECT_SCHEME
-                        && !handle.state::<Core>().handle_login_redirect(url)
+                    if let Some(room) = room_link(&url) {
+                        let _ = handle.emit("open-room", room);
+                    } else if url.scheme() == alwy_core::session::REDIRECT_SCHEME
+                        && !handle.state::<AppCore>().handle_login_redirect(url)
                     {
                         tracing::warn!("sign-in redirect with no sign-in in progress");
                     }
@@ -709,6 +830,9 @@ pub fn run() {
             presence,
             report_activity,
             system_status,
+            setup_push,
+            launch_room,
+            clear_notifications,
             set_quick_reaction,
             set_theme,
             set_nickname,
@@ -865,7 +989,7 @@ async fn serve_media(
     request: &http::Request<Vec<u8>>,
 ) -> http::Response<Vec<u8>> {
     let uri = request.uri();
-    let core = app.state::<Core>();
+    let core = app.state::<AppCore>();
     let query = uri.query().unwrap_or("");
     let param = |name: &str| {
         query
@@ -972,6 +1096,68 @@ mod android {
 
     pub struct Gallery(pub PluginHandle<Wry>);
     pub struct System(pub PluginHandle<Wry>);
+
+    /// Logcat output (tag `AlwyChat`). Called by the UI start and by a push, whichever is first.
+    pub fn init_logging() {
+        use tracing_subscriber::prelude::*;
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "info,matrix_sdk=warn".into());
+        let _ = tracing_subscriber::registry()
+            .with(filter)
+            .with(paranoid_android::layer("AlwyChat"))
+            .try_init();
+    }
+
+    /// Called by `PushService.kt` for each push (on a worker thread, app maybe not running):
+    /// returns the notification as JSON, or "" when there's nothing to show.
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativePush_notification<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        context: jni::objects::JObject<'c>,
+        data_dir: jni::objects::JString<'c>,
+        room_id: jni::objects::JString<'c>,
+        event_id: jni::objects::JString<'c>,
+    ) -> jni::objects::JString<'c> {
+        env.with_env(|env| -> Result<_, jni::errors::Error> {
+            init_logging();
+            // HTTPS needs this before any request; the UI may not have started yet.
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            let (dir, room, event) = (
+                data_dir.to_string(),
+                room_id.to_string(),
+                event_id.to_string(),
+            );
+            let json = tauri::async_runtime::block_on(notification(dir.into(), room, event));
+            jni::objects::JString::from_str(env, json)
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+    }
+
+    async fn notification(
+        data_dir: std::path::PathBuf,
+        room_id: String,
+        event_id: String,
+    ) -> String {
+        let core = super::shared_core(data_dir);
+        match core.restore().await {
+            Ok(Some(_)) => {}
+            Ok(None) => return String::new(),
+            Err(e) => {
+                tracing::warn!("push: couldn't start the session: {e}");
+                return String::new();
+            }
+        }
+        match core.push_notification(&room_id, &event_id).await {
+            Ok(Some(n)) => serde_json::to_string(&n).unwrap_or_default(),
+            Ok(None) => String::new(),
+            Err(e) => {
+                tracing::warn!("push: {e}");
+                String::new()
+            }
+        }
+    }
 
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]

@@ -81,6 +81,8 @@ pub struct Core {
     pub(crate) on_notification: Arc<Mutex<Option<crate::notifications::NotificationHandler>>>,
     /// The call we're in, if any.
     pub(crate) call: tokio::sync::Mutex<Option<crate::rtc::ActiveCall>>,
+    /// Serialises `restore` (a push and the UI can both start the session on Android).
+    restoring: tokio::sync::Mutex<()>,
     /// Ends the sign-in in progress: the redirect URL (mobile), or `None` to cancel.
     pending_login: Mutex<Option<oneshot::Sender<Option<Url>>>>,
 }
@@ -122,6 +124,7 @@ impl Core {
             media: Arc::default(),
             pending_login: Mutex::default(),
             call: tokio::sync::Mutex::default(),
+            restoring: tokio::sync::Mutex::default(),
         }
     }
 
@@ -145,6 +148,11 @@ impl Core {
 
     /// Restore the previous session, if any. Returns `None` when signed out.
     pub async fn restore(&self) -> Result<Option<Account>> {
+        let _restoring = self.restoring.lock().await;
+        // Already running: a push woke the process before the UI started (Android).
+        if let Ok(client) = self.client() {
+            return Ok(Some(account(&client).await));
+        }
         let path = self.data_dir.join(SESSION_FILE);
         let stored: StoredSession = match tokio::fs::read(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)?,

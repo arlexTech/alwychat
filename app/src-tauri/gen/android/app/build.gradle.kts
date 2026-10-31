@@ -83,9 +83,17 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    // Push (FCM). Without google-services.json the app builds and notifies while running only.
+    implementation(platform("com.google.firebase:firebase-bom:34.5.0"))
+    implementation("com.google.firebase:firebase-messaging")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }
 
 apply(from = file("tauri.build.gradle.kts"))
+
+// Firebase project config (not committed: each build/fork uses its own Firebase project).
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}

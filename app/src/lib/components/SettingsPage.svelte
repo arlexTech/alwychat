@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getSettings, isAndroid, setSettings, systemStatus, type Settings, type SystemStatus } from "$lib/backend";
+  import { getSettings, isAndroid, setSettings, setupPush, systemStatus, type Settings, type SystemStatus } from "$lib/backend";
   import { presence } from "$lib/stores/presence.svelte";
   import Page from "./Page.svelte";
 
@@ -73,9 +73,10 @@
   }
 
   async function toggleNotifications() {
-    if (notificationsOn) return save({ notifications: false });
-    await save({ notifications: true });
-    if (!system?.notifications) await fix("notifications");
+    const on = !notificationsOn;
+    await save({ notifications: on });
+    if (on && !system?.notifications) await fix("notifications");
+    if (isAndroid) setupPush(on).catch((e) => (error = `Push: ${e}`));
   }
 
   async function fix(what: "notifications" | "battery" | "backgroundData") {

@@ -47,6 +47,15 @@ export const endSession = () => invoke<void>("end_session");
 /** The server ended our session (signed out elsewhere, revoked…). Returns an unsubscribe function. */
 export const onSessionEnded = (handler: () => void) => listen("session-ended", handler);
 
+/** A notification was tapped: open this chat. */
+export const onOpenRoom = (handler: (roomId: string) => void) =>
+  listen<string>("open-room", (e) => handler(e.payload));
+/** The chat whose notification launched the app, if any (asked once at start). */
+export const launchRoom = () => invoke<string | null>("launch_room");
+/** Push on/off for this device (Android); resolves to whether push is in use. */
+export const setupPush = (enabled: boolean) => invoke<boolean>("setup_push", { enabled });
+export const clearNotifications = (roomId: string) => invoke<void>("clear_notifications", { roomId });
+
 export interface LatestMessage {
   sender_name: string | null;
   is_own: boolean;

@@ -10,6 +10,7 @@ pub mod media;
 pub mod mentions;
 pub mod notifications;
 pub mod presence;
+pub mod push;
 pub mod rooms;
 pub mod rtc;
 pub mod session;

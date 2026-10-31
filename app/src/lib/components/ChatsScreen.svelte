@@ -3,6 +3,12 @@
   import { flip } from "svelte/animate";
   import { fade } from "svelte/transition";
   import {
+    clearNotifications,
+    getSettings,
+    isAndroid,
+    launchRoom,
+    onOpenRoom,
+    setupPush,
     setArchived,
     setMarkedUnread,
     setMuted,
@@ -130,11 +136,25 @@
     chatList.start();
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
     presence.start();
+    // Tapped notifications open their chat (cold start, or while running).
+    launchRoom().then((id) => id && (selectedId = id), () => {});
+    const stopOpenRoom = onOpenRoom((id) => (selectedId = id));
+    // Re-register push each start: the token may have changed since.
+    if (isAndroid)
+      getSettings()
+        .then((s) => setupPush(s.notifications))
+        .catch((e) => console.warn("push setup failed", e));
     return () => {
+      void stopOpenRoom.then((stop) => stop());
       chatList.reset();
       chat.close();
       encryption.reset();
     };
+  });
+
+  // Opening a chat clears its notification.
+  $effect(() => {
+    if (selectedId && isAndroid) clearNotifications(selectedId).catch(() => {});
   });
 
   function closeChat() {

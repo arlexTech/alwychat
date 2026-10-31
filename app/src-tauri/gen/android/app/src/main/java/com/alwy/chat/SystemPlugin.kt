@@ -12,12 +12,19 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
 import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import com.google.firebase.messaging.FirebaseMessaging
+
+@InvokeArg
+class ClearArgs {
+  lateinit var roomId: String
+}
 
 /**
  * What stops AlwyChat from notifying: the notification permission, battery optimisation
@@ -106,6 +113,30 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
 
   private fun openAppDetails() {
     activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
+  }
+
+  /** This install's FCM token; fails on builds without `google-services.json`. */
+  @Command
+  fun pushToken(invoke: Invoke) {
+    val messaging = try {
+      FirebaseMessaging.getInstance()
+    } catch (e: IllegalStateException) {
+      return invoke.reject("push isn't set up in this build")
+    }
+    messaging.token.addOnCompleteListener { task ->
+      if (task.isSuccessful && task.result != null) {
+        invoke.resolve(JSObject().put("token", task.result))
+      } else {
+        invoke.reject("no push token: ${task.exception?.message}")
+      }
+    }
+  }
+
+  @Command
+  fun clearNotifications(invoke: Invoke) {
+    val args = invoke.parseArgs(ClearArgs::class.java)
+    NotificationManagerCompat.from(activity).cancel(args.roomId, 1)
+    invoke.resolve()
   }
 
   // Android only shows its prompt twice, then silently refuses: after our first ask, go to settings.
