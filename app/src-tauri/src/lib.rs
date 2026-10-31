@@ -134,6 +134,60 @@ fn search_status(
     core.search_status(room_id.as_deref())
 }
 
+/// Joined spaces and their chats, streamed whole on each change.
+#[tauri::command]
+async fn subscribe_spaces(
+    core: State<'_, AppCore>,
+    on_spaces: Channel<Vec<alwy_core::spaces::SpaceInfo>>,
+) -> alwy_core::Result<()> {
+    core.subscribe_spaces(move |spaces| {
+        let _ = on_spaces.send(spaces);
+    })
+    .await
+}
+
+/// A space's children (joined or not), streamed whole on each change.
+#[tauri::command]
+async fn open_space(
+    core: State<'_, AppCore>,
+    space_id: String,
+    on_children: Channel<Vec<alwy_core::spaces::SpaceChild>>,
+) -> alwy_core::Result<()> {
+    core.open_space(&space_id, move |children| {
+        let _ = on_children.send(children);
+    })
+    .await
+}
+
+#[tauri::command]
+fn close_space(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.close_space()
+}
+
+#[tauri::command]
+async fn join_room(
+    core: State<'_, AppCore>,
+    room_id: String,
+    via: Vec<String>,
+) -> alwy_core::Result<()> {
+    core.join_room(&room_id, &via).await
+}
+
+#[tauri::command]
+async fn chat_list_prefs(
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<alwy_core::spaces::ChatListPrefs> {
+    core.chat_list_prefs().await
+}
+
+#[tauri::command]
+async fn set_chat_list_prefs(
+    core: State<'_, AppCore>,
+    prefs: alwy_core::spaces::ChatListPrefs,
+) -> alwy_core::Result<()> {
+    core.set_chat_list_prefs(prefs).await
+}
+
 /// Start indexing older messages for search (once per session).
 #[tauri::command]
 async fn start_search_backfill(core: State<'_, AppCore>) -> alwy_core::Result<()> {
@@ -1088,6 +1142,12 @@ pub fn run() {
             file_action,
             decline_call,
             drafts,
+            subscribe_spaces,
+            open_space,
+            close_space,
+            join_room,
+            chat_list_prefs,
+            set_chat_list_prefs,
             load_newer,
             search_messages,
             shared_media,

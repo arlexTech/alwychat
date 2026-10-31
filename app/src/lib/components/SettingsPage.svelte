@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { isAndroid, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus } from "$lib/backend";
   import { prefs } from "$lib/stores/prefs.svelte";
+  import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import Page from "./Page.svelte";
 
@@ -139,6 +140,20 @@
       {/each}
     </div>
     {#each appearance as t (t.key)}{@render row(t)}{/each}
+
+    <h3 class="section">Chats</h3>
+    <label class="toggle">
+      <span>
+        <strong>Show chats from spaces in Chats</strong>
+        <small>Off: they're only under Spaces. Each space and chat can choose for itself in its settings. Synced to your other devices.</small>
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={spaces.prefs.show_space_chats}
+        onchange={(e) => spaces.setGlobal(e.currentTarget.checked).catch((err) => (error = String(err)))}
+      />
+    </label>
 
     <h3 class="section">Notifications</h3>
     <label class="toggle">

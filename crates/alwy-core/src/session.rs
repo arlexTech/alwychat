@@ -115,6 +115,11 @@ pub(crate) struct Active {
     /// Local message index (None if it couldn't be opened).
     pub search: Option<Arc<crate::search::SearchIndex>>,
     pub search_task: Option<tokio::task::AbortHandle>,
+    /// Created on first use of the Spaces tab.
+    pub spaces: Option<Arc<matrix_sdk_ui::spaces::SpaceService>>,
+    pub spaces_task: Option<tokio::task::AbortHandle>,
+    /// The open space's children feed.
+    pub space_task: Option<tokio::task::AbortHandle>,
 }
 
 impl Core {
@@ -300,6 +305,11 @@ impl Core {
             active.tasks.iter().for_each(|t| t.abort());
             active.encryption_task.iter().for_each(|t| t.abort());
             active.search_task.iter().for_each(|t| t.abort());
+            active
+                .spaces_task
+                .iter()
+                .chain(&active.space_task)
+                .for_each(|t| t.abort());
             active.sync.stop().await;
         }
     }
@@ -315,6 +325,11 @@ impl Core {
             active.tasks.iter().for_each(|t| t.abort());
             active.encryption_task.iter().for_each(|t| t.abort());
             active.search_task.iter().for_each(|t| t.abort());
+            active
+                .spaces_task
+                .iter()
+                .chain(&active.space_task)
+                .for_each(|t| t.abort());
             active.sync.stop().await;
             if let Err(e) = active.client.oauth().logout().await {
                 warn!("server-side logout failed, wiping locally anyway: {e}");
@@ -429,6 +444,9 @@ impl Core {
             may_persist,
             search,
             search_task: None,
+            spaces: None,
+            spaces_task: None,
+            space_task: None,
         });
         Ok(())
     }

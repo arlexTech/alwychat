@@ -313,6 +313,48 @@ export function openChat(
 /** Newer messages of a chat opened on a search result; resolves to true at the newest. */
 export const loadNewer = (roomId: string) => invoke<boolean>("load_newer", { roomId });
 
+// ── Spaces ──────────────────────────────────────────────────────────────────
+
+export interface SpaceInfo {
+  id: string;
+  name: string;
+  avatar: string | null;
+  /** Joined chats inside it, at any depth. */
+  rooms: string[];
+}
+export interface SpaceChild {
+  id: string;
+  name: string;
+  avatar: string | null;
+  topic: string | null;
+  members: number;
+  is_space: boolean;
+  joined: boolean;
+  suggested: boolean;
+  via: string[];
+}
+/** Which space chats also appear in "Chats" (synced between devices). */
+export interface ChatListPrefs {
+  show_space_chats: boolean;
+  spaces: Record<string, boolean>;
+  rooms: Record<string, boolean>;
+}
+
+export function subscribeSpaces(onSpaces: (spaces: SpaceInfo[]) => void) {
+  const channel = new Channel<SpaceInfo[]>();
+  channel.onmessage = onSpaces;
+  return invoke<void>("subscribe_spaces", { onSpaces: channel });
+}
+export function openSpace(spaceId: string, onChildren: (children: SpaceChild[]) => void) {
+  const channel = new Channel<SpaceChild[]>();
+  channel.onmessage = onChildren;
+  return invoke<void>("open_space", { spaceId, onChildren: channel });
+}
+export const closeSpace = () => invoke<void>("close_space");
+export const joinRoom = (roomId: string, via: string[]) => invoke<void>("join_room", { roomId, via });
+export const getChatListPrefs = () => invoke<ChatListPrefs>("chat_list_prefs");
+export const setChatListPrefs = (prefs: ChatListPrefs) => invoke<void>("set_chat_list_prefs", { prefs });
+
 // ── Search & shared media ───────────────────────────────────────────────────
 
 /** Photos+videos, files (incl. audio/voice) or messages with links. */

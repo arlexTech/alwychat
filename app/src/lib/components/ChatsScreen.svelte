@@ -1,5 +1,9 @@
 <script lang="ts">
   import Settings from "@lucide/svelte/icons/settings";
+  import MessageCircle from "@lucide/svelte/icons/message-circle";
+  import LayoutGrid from "@lucide/svelte/icons/layout-grid";
+  import { spaces } from "$lib/stores/spaces.svelte";
+  import SpacesPane from "./SpacesPane.svelte";
   import { onMount } from "svelte";
   import { flip } from "svelte/animate";
   import { fade } from "svelte/transition";
@@ -50,6 +54,8 @@
 
   let filter = $state<Filter>("all");
   let query = $state("");
+  /** Bottom bar: chats, or spaces and their chats. */
+  let tab = $state<"chats" | "spaces">("chats");
   /** Messages matching the search box, under the matching chats. */
   const messageSearch = new MessageSearch();
   $effect(() => {
@@ -106,12 +112,19 @@
 
   const visible = $derived.by(() => {
     const q = query.trim().toLocaleLowerCase();
+    // Search covers every chat; otherwise space chats stay in their space unless shown here.
     const list = q
       ? chatList.rooms.filter((r) => r.name.toLocaleLowerCase().includes(q))
-      : chatList.rooms.filter(matches[filter]);
+      : chatList.rooms.filter((r) => matches[filter](r) && spaces.inChats(r));
     // Pinned chats first; otherwise keep the core's order (most recent activity).
     return [...list.filter((r) => r.is_favourite), ...list.filter((r) => !r.is_favourite)];
   });
+
+  const isUnread = (r: RoomSummary) => !r.is_muted && (r.unread_messages > 0 || r.marked_unread || r.is_invite);
+  const chatsUnread = $derived(chatList.rooms.filter((r) => !r.is_archived && spaces.inChats(r) && isUnread(r)).length);
+  const spacesUnread = $derived(
+    chatList.rooms.filter((r) => spaces.spacesOf(r.id).length && !spaces.inChats(r) && isUnread(r)).length,
+  );
 
   function openRowMenu(event: MouseEvent, room: RoomSummary) {
     event.preventDefault();
@@ -154,6 +167,7 @@
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
     presence.start();
     call.listen();
+    spaces.start();
     drafts.start();
     startSearchBackfill().catch(() => {});
     messageSearch.start();
@@ -190,7 +204,7 @@
       <button class="me" onclick={() => (menuOpen = !menuOpen)} aria-label="Account">
         <Avatar name={myName} size={36} />
       </button>
-      <h1>Chats</h1>
+      <h1>{tab === "chats" ? "Chats" : "Spaces"}</h1>
       {#if menuOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="outside" onclick={() => (menuOpen = false)}></div>
@@ -213,6 +227,11 @@
       </button>
     {/if}
 
+    {#if tab === "spaces"}
+      <div class="rows">
+        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} />
+      </div>
+    {:else}
     <input class="search" type="search" placeholder="Search" bind:value={query} />
 
     <nav class="chips">
@@ -256,6 +275,18 @@
         {/if}
       {/if}
     </div>
+    {/if}
+
+    <nav class="tabbar">
+      <button class:active={tab === "chats"} onclick={() => (tab = "chats")}>
+        <span class="tab-icon"><MessageCircle size={22} />{#if chatsUnread}<span class="dot">{chatsUnread}</span>{/if}</span>
+        Chats
+      </button>
+      <button class:active={tab === "spaces"} onclick={() => (tab = "spaces")}>
+        <span class="tab-icon"><LayoutGrid size={22} />{#if spacesUnread}<span class="dot">{spacesUnread}</span>{/if}</span>
+        Spaces
+      </button>
+    </nav>
   </aside>
 
   <section class="chat-pane" style:--accent-a={theme.a} style:--accent-b={theme.b}>
@@ -421,6 +452,54 @@
     border-color: transparent;
     background: var(--accent);
     color: white;
+  }
+  .tabbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-top: 1px solid var(--border);
+    background: inherit;
+  }
+  .tabbar button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 0 6px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .tabbar button.active {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .tabbar button.active .tab-icon {
+    background: color-mix(in srgb, var(--accent-a) 22%, transparent);
+    color: var(--accent-a);
+  }
+  .tab-icon {
+    position: relative;
+    display: grid;
+    width: 56px;
+    height: 30px;
+    place-items: center;
+    border-radius: 999px;
+    transition: background 0.2s var(--ease);
+  }
+  .dot {
+    position: absolute;
+    top: -2px;
+    right: 6px;
+    min-width: 18px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
   }
   .rows {
     flex: 1;

@@ -2,7 +2,12 @@
   import { mediaUrl } from "$lib/media";
   import { initials } from "$lib/format";
 
-  let { name, mxc = null, size = 48 }: { name: string; mxc?: string | null; size?: number } = $props();
+  let {
+    name,
+    mxc = null,
+    size = 48,
+    square = false,
+  }: { name: string; mxc?: string | null; size?: number; /** Spaces: rounded square. */ square?: boolean } = $props();
 
   let failed = $state(false);
   const src = $derived(failed ? null : mediaUrl(mxc, size));
@@ -18,6 +23,7 @@
 
 <div
   class="avatar"
+  class:square
   style:width="{size}px"
   style:height="{size}px"
   style:font-size="{size * 0.4}px"
@@ -31,6 +37,10 @@
 </div>
 
 <style>
+  .avatar.square,
+  .avatar.square img {
+    border-radius: 28%;
+  }
   .avatar {
     flex: none;
     border-radius: 50%;

@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { roomMembers, setNickname, setQuickReaction, setTheme, type Member } from "$lib/backend";
   import { chat } from "$lib/stores/chat.svelte";
+  import { chatList } from "$lib/stores/chatList.svelte";
+  import { spaces } from "$lib/stores/spaces.svelte";
   import { DEFAULT_QUICK_REACTION, DEFAULT_THEME, QUICK_REACTIONS, THEMES } from "$lib/themes";
   import Avatar from "./Avatar.svelte";
   import Page from "./Page.svelte";
@@ -22,6 +24,8 @@
     onSharedMedia: () => void;
     onClose: () => void;
   } = $props();
+
+  const summary = $derived(chatList.rooms.find((r) => r.id === roomId) ?? null);
 
   const style = $derived(chat.style);
   const canEdit = $derived(style?.can_edit ?? false);
@@ -97,6 +101,21 @@
     <ChevronRight size={18} />
   </button>
 
+  {#if summary && !summary.is_dm && spaces.spacesOf(roomId).length}
+    <label class="switch-row">
+      <span>
+        <strong>Show in Chats</strong>
+        <small>This chat is in a space. On: it's also listed in the Chats tab.</small>
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={spaces.inChats(summary)}
+        onchange={(e) => spaces.setRoom(roomId, e.currentTarget.checked).catch(() => {})}
+      />
+    </label>
+  {/if}
+
   <h3 class="section">Theme</h3>
   <div class="themes">
     {#each THEMES as t (t.id)}
@@ -170,6 +189,24 @@
 </Page>
 
 <style>
+  .switch-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: var(--surface-2);
+  }
+  .switch-row span {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .switch-row small {
+    color: var(--muted);
+  }
   .link-row {
     display: flex;
     align-items: center;

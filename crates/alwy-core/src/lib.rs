@@ -21,6 +21,7 @@ pub mod rtc;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod spaces;
 pub mod timeline;
 pub mod upload;
 pub mod voice;
