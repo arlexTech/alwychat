@@ -357,6 +357,24 @@ export interface ChatListPrefs {
   show_space_chats: boolean;
   spaces: Record<string, boolean>;
   rooms: Record<string, boolean>;
+  /** Custom chat-list folders, in display order. */
+  folders: Folder[];
+}
+
+/** A chat-list folder: chats picked by type and/or by hand. */
+export interface Folder {
+  id: string;
+  name: string;
+  /** Every 1:1 chat. */
+  people: boolean;
+  /** Every group (space chats only when they show in "Chats"). */
+  groups: boolean;
+  /** Always in. */
+  rooms: string[];
+  /** Never in. */
+  exclude: string[];
+  unread_only: boolean;
+  hide_muted: boolean;
 }
 
 export function subscribeSpaces(onSpaces: (spaces: SpaceInfo[]) => void) {

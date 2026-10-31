@@ -56,6 +56,26 @@ pub struct ChatListPrefs {
     pub spaces: HashMap<String, bool>,
     /// Per chat (wins over its spaces).
     pub rooms: HashMap<String, bool>,
+    /// Custom chat-list folders (Telegram style), in display order.
+    pub folders: Vec<Folder>,
+}
+
+/// A chat-list folder: chats picked by type and/or by hand.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    /// Every 1:1 chat.
+    pub people: bool,
+    /// Every group (chats inside spaces only when they show in "Chats").
+    pub groups: bool,
+    /// Always in, whatever the rules above.
+    pub rooms: Vec<String>,
+    /// Never in.
+    pub exclude: Vec<String>,
+    pub unread_only: bool,
+    pub hide_muted: bool,
 }
 
 fn child(room: SpaceRoom) -> SpaceChild {
@@ -166,12 +186,19 @@ impl crate::Core {
         Ok(())
     }
 
+    /// From the server when reachable, not the store: the store only catches up with our own
+    /// writes at the next sync, and changes are applied to this copy.
     pub async fn chat_list_prefs(&self) -> Result<ChatListPrefs> {
-        let raw = self
-            .client()?
-            .account()
-            .account_data_raw(GlobalAccountDataEventType::from(CHAT_LIST_PREFS))
-            .await?;
+        let account = self.client()?.account();
+        let kind = GlobalAccountDataEventType::from(CHAT_LIST_PREFS);
+        // Offline: the last synced copy.
+        let raw = match account.fetch_account_data(kind.clone()).await {
+            Ok(raw) => raw,
+            Err(e) => {
+                warn!("chat list prefs from the server: {e}");
+                account.account_data_raw(kind).await?
+            }
+        };
         Ok(raw
             .and_then(|r| serde_json::from_str::<ChatListPrefs>(r.json().get()).ok())
             .unwrap_or_default())
@@ -213,4 +240,22 @@ async fn spaces_overview(client: &Client, service: &SpaceService) -> Vec<SpaceIn
             avatar: space.avatar_url.map(|u| u.to_string()),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_prefs_without_folders_still_parse() {
+        let prefs: ChatListPrefs =
+            serde_json::from_str(r#"{"show_space_chats":true,"spaces":{},"rooms":{}}"#).unwrap();
+        assert!(prefs.show_space_chats);
+        assert!(prefs.folders.is_empty());
+        let prefs: ChatListPrefs =
+            serde_json::from_str(r#"{"folders":[{"id":"a","name":"Work","rooms":["!x:y"]}]}"#)
+                .unwrap();
+        assert_eq!(prefs.folders[0].rooms, ["!x:y"]);
+        assert!(!prefs.folders[0].people);
+    }
 }

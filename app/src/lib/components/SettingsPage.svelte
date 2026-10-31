@@ -5,12 +5,23 @@
   import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import Page from "./Page.svelte";
+  import FolderPage from "./FolderPage.svelte";
+  import ChevronUp from "@lucide/svelte/icons/chevron-up";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Plus from "@lucide/svelte/icons/plus";
+  import type { Folder } from "$lib/backend";
+  import { onBack } from "$lib/back.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
 
   const settings = $derived(prefs.settings);
   let system = $state<SystemStatus | null>(null);
   let error = $state<string | null>(null);
+  let folderEdit = $state<Folder | "new" | null>(null);
+  $effect(() => {
+    if (folderEdit) return onBack(() => (folderEdit = null));
+  });
+  const move = (id: string, by: -1 | 1) => spaces.moveFolder(id, by).catch((e) => (error = String(e)));
 
   type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
   type Toggle = { key: BoolKey; label: string; hint: string };
@@ -155,6 +166,18 @@
       />
     </label>
 
+    <h3 class="section">Folders</h3>
+    <ul class="folders">
+      {#each spaces.prefs.folders as f, i (f.id)}
+        <li>
+          <button class="folder-name" onclick={() => (folderEdit = f)}>{f.name}</button>
+          <button class="icon" disabled={i === 0} onclick={() => move(f.id, -1)} aria-label="Move up"><ChevronUp size={18} /></button>
+          <button class="icon" disabled={i === spaces.prefs.folders.length - 1} onclick={() => move(f.id, 1)} aria-label="Move down"><ChevronDown size={18} /></button>
+        </li>
+      {/each}
+      <li><button class="folder-name new" onclick={() => (folderEdit = "new")}><Plus size={18} />New folder</button></li>
+    </ul>
+
     <h3 class="section">Notifications</h3>
     <label class="toggle">
       <span>
@@ -213,6 +236,9 @@
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
 </Page>
+{#if folderEdit}
+  <FolderPage folder={folderEdit === "new" ? null : folderEdit} onClose={() => (folderEdit = null)} />
+{/if}
 
 <style>
   .themes {
@@ -260,6 +286,48 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--muted);
+  }
+  .folders {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .folders li {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-top: 1px solid var(--border);
+  }
+  .folder-name {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .folder-name.new {
+    color: var(--muted);
+  }
+  .folders .icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .folders .icon:disabled {
+    opacity: 0.3;
+    cursor: default;
   }
   h3.section {
     margin-top: 26px;

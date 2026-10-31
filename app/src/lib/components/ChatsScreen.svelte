@@ -2,7 +2,19 @@
   import Settings from "@lucide/svelte/icons/settings";
   import MessageCircle from "@lucide/svelte/icons/message-circle";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
-  import { spaces } from "$lib/stores/spaces.svelte";
+  import { inFolder, isUnread, spaces } from "$lib/stores/spaces.svelte";
+  import FolderPage from "./FolderPage.svelte";
+  import FolderPlus from "@lucide/svelte/icons/folder-plus";
+  import FolderMinus from "@lucide/svelte/icons/folder-minus";
+  import Pin from "@lucide/svelte/icons/pin";
+  import PinOff from "@lucide/svelte/icons/pin-off";
+  import Bell from "@lucide/svelte/icons/bell";
+  import BellOff from "@lucide/svelte/icons/bell-off";
+  import MailOpen from "@lucide/svelte/icons/mail-open";
+  import Mail from "@lucide/svelte/icons/mail";
+  import Archive from "@lucide/svelte/icons/archive";
+  import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
+  import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
   import { onMount } from "svelte";
   import { flip } from "svelte/animate";
@@ -20,6 +32,7 @@
     setMuted,
     setPinned,
     type Account,
+    type Folder,
     type RoomSummary,
   } from "$lib/backend";
   import { chat } from "$lib/stores/chat.svelte";
@@ -52,7 +65,27 @@
     { id: "archived", label: "Archived" },
   ];
 
-  let filter = $state<Filter>("all");
+  /** A built-in filter, or `folder:<id>`. */
+  let filter = $state<string>("all");
+  const activeFolder = $derived(
+    filter.startsWith("folder:") ? (spaces.prefs.folders.find((f) => `folder:${f.id}` === filter) ?? null) : null,
+  );
+  // A folder deleted (here or on another device) falls back to All.
+  $effect(() => {
+    if (filter.startsWith("folder:") && spaces.loaded && !activeFolder) filter = "all";
+  });
+  /** The folder editor: a folder, or "new". */
+  let folderEdit = $state<Folder | "new" | null>(null);
+  $effect(() => {
+    if (folderEdit) return onBack(() => (folderEdit = null));
+  });
+  /** Long-press on a folder chip edits it (touch); right-click does on desktop. */
+  let chipTimer: ReturnType<typeof setTimeout> | undefined;
+  let chipLongPressed = false;
+  function chipDown(f: Folder) {
+    chipLongPressed = false;
+    chipTimer = setTimeout(() => ((chipLongPressed = true), (folderEdit = f)), 500);
+  }
   let query = $state("");
   /** Bottom bar: chats, or spaces and their chats. */
   let tab = $state<"chats" | "spaces">("chats");
@@ -115,20 +148,27 @@
     // Search covers every chat; otherwise space chats stay in their space unless shown here.
     const list = q
       ? chatList.rooms.filter((r) => r.name.toLocaleLowerCase().includes(q))
-      : chatList.rooms.filter((r) => matches[filter](r) && spaces.inChats(r));
+      : activeFolder
+        ? chatList.rooms.filter((r) => inFolder(activeFolder, r))
+        : chatList.rooms.filter((r) => matches[filter as Filter](r) && spaces.inChats(r));
     // Pinned chats first; otherwise keep the core's order (most recent activity).
     return [...list.filter((r) => r.is_favourite), ...list.filter((r) => !r.is_favourite)];
   });
 
-  const isUnread = (r: RoomSummary) => !r.is_muted && (r.unread_messages > 0 || r.marked_unread || r.is_invite);
+  const folderUnread = (f: Folder) => chatList.rooms.filter((r) => inFolder(f, r) && isUnread(r)).length;
   const chatsUnread = $derived(chatList.rooms.filter((r) => !r.is_archived && spaces.inChats(r) && isUnread(r)).length);
   const spacesUnread = $derived(
     chatList.rooms.filter((r) => spaces.spacesOf(r.id).length && !spaces.inChats(r) && isUnread(r)).length,
   );
 
+  function folderToggle(folderId: string, roomId: string, inside: boolean) {
+    rowMenu = null;
+    spaces.setInFolder(folderId, roomId, inside).catch((e) => (actionError = String(e)));
+  }
+
   function openRowMenu(event: MouseEvent, room: RoomSummary) {
     event.preventDefault();
-    rowMenu = { room, x: Math.min(event.clientX, innerWidth - 220), y: Math.min(event.clientY, innerHeight - 200) };
+    rowMenu = { room, x: Math.min(event.clientX, innerWidth - 220), y: Math.min(event.clientY, innerHeight - 200 - 40 * spaces.prefs.folders.length) };
   }
 
   async function rowAction(
@@ -238,6 +278,23 @@
       {#each filters as f (f.id)}
         <button class:active={filter === f.id} onclick={() => (filter = f.id)}>{f.label}</button>
       {/each}
+      {#each spaces.prefs.folders as f (f.id)}
+        {@const unread = folderUnread(f)}
+        <button
+          class:active={filter === `folder:${f.id}`}
+          onclick={() => !chipLongPressed && (filter = `folder:${f.id}`)}
+          oncontextmenu={(e) => (e.preventDefault(), clearTimeout(chipTimer), (folderEdit = f))}
+          onpointerdown={() => chipDown(f)}
+          onpointerup={() => clearTimeout(chipTimer)}
+          onpointerleave={() => clearTimeout(chipTimer)}
+          title="Right-click or long-press to edit"
+        >
+          {f.name}{#if unread}<span class="chip-count">{unread}</span>{/if}
+        </button>
+      {/each}
+      <button class="add-folder" onclick={() => (folderEdit = "new")} aria-label="New folder" title="New folder">
+        <Plus size={16} />
+      </button>
     </nav>
 
     {#if actionError}<p class="state error small">{actionError}</p>{/if}
@@ -312,10 +369,10 @@
   <div class="menu-catcher" onclick={() => (rowMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (rowMenu = null))}></div>
   <div class="row-menu" style:left="{rowMenu.x}px" style:top="{rowMenu.y}px" transition:fade={{ duration: 100 }}>
     <button onclick={() => rowAction((c) => setPinned(c.id, !c.is_favourite), (c) => ({ is_favourite: !c.is_favourite, is_archived: false }))}>
-      📌 {r.is_favourite ? "Unpin" : "Pin"}
+      {#if r.is_favourite}<PinOff size={16} />Unpin{:else}<Pin size={16} />Pin{/if}
     </button>
     <button onclick={() => rowAction((c) => setMuted(c.id, !c.is_muted), (c) => ({ is_muted: !c.is_muted }))}>
-      {r.is_muted ? "🔔 Unmute" : "🔕 Mute"}
+      {#if r.is_muted}<Bell size={16} />Unmute{:else}<BellOff size={16} />Mute{/if}
     </button>
     <button
       onclick={() =>
@@ -324,12 +381,22 @@
           (c) => ({ marked_unread: !(c.marked_unread || c.unread_messages > 0) }),
         )}
     >
-      {r.marked_unread || r.unread_messages > 0 ? "✓ Mark as read" : "● Mark as unread"}
+      {#if r.marked_unread || r.unread_messages > 0}<MailOpen size={16} />Mark as read{:else}<Mail size={16} />Mark as unread{/if}
     </button>
     <button onclick={() => rowAction((c) => setArchived(c.id, !c.is_archived), (c) => ({ is_archived: !c.is_archived, is_favourite: false }))}>
-      🗄️ {r.is_archived ? "Unarchive" : "Archive"}
+      {#if r.is_archived}<ArchiveRestore size={16} />Unarchive{:else}<Archive size={16} />Archive{/if}
     </button>
+    {#each spaces.prefs.folders as f (f.id)}
+      {@const inside = inFolder({ ...f, unread_only: false, hide_muted: false }, r)}
+      <button onclick={() => folderToggle(f.id, r.id, !inside)}>
+        {#if inside}<FolderMinus size={16} />Remove from {f.name}{:else}<FolderPlus size={16} />Add to {f.name}{/if}
+      </button>
+    {/each}
   </div>
+{/if}
+
+{#if folderEdit}
+  <FolderPage folder={folderEdit === "new" ? null : folderEdit} onClose={() => (folderEdit = null)} />
 {/if}
 
 <CallView />
@@ -447,6 +514,22 @@
     font-size: 0.85rem;
     cursor: pointer;
     transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+  }
+  .chip-count {
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    font-size: 0.75rem;
+  }
+  .chips button.active .chip-count {
+    background: rgb(255 255 255 / 0.25);
+  }
+  .chips .add-folder {
+    display: grid;
+    place-items: center;
+    padding: 6px 9px;
+    color: var(--muted);
   }
   .chips button.active {
     border-color: transparent;
@@ -610,6 +693,9 @@
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
   }
   .row-menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     padding: 9px 10px;
     border: none;
     border-radius: 8px;
