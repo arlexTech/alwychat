@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.view.WindowCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
@@ -20,6 +21,12 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
+
+@InvokeArg
+class BarsArgs {
+  var light = false
+  lateinit var background: String
+}
 
 @InvokeArg
 class ClearArgs {
@@ -141,6 +148,21 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
       } else {
         invoke.reject("no push token: ${task.exception?.message}")
       }
+    }
+  }
+
+  /** Match the system bars to the app theme: dark icons on a light theme, and its background. */
+  @Command
+  fun setBars(invoke: Invoke) {
+    val args = invoke.parseArgs(BarsArgs::class.java)
+    activity.runOnUiThread {
+      val window = activity.window
+      window.decorView.setBackgroundColor(android.graphics.Color.parseColor(args.background))
+      WindowCompat.getInsetsController(window, window.decorView).apply {
+        isAppearanceLightStatusBars = args.light
+        isAppearanceLightNavigationBars = args.light
+      }
+      invoke.resolve()
     }
   }
 

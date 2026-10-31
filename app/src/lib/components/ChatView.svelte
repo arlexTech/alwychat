@@ -48,6 +48,9 @@
   } from "$lib/backend";
   import { clockTime, dayLabel, shortTime } from "$lib/format";
   import { chat } from "$lib/stores/chat.svelte";
+  import { drafts } from "$lib/stores/drafts.svelte";
+  import { prefs } from "$lib/stores/prefs.svelte";
+  import { playEffect } from "$lib/effects";
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
   import MediaViewer from "./MediaViewer.svelte";
@@ -169,9 +172,15 @@
   // The composer is swapped out while recording a voice message, so this can change.
   let input = $state<HTMLTextAreaElement>() as HTMLTextAreaElement;
 
+  /** The draft's reply target, until that message is loaded. */
+  let draftReply: string | null = null;
+
   $effect(() => {
     const id = room.id;
-    draft = "";
+    const saved = untrack(() => drafts.get(id));
+    draft = saved?.text ?? "";
+    draftReply = saved?.reply_to ?? null;
+    tick().then(autosize);
     untrack(() => mention.reset(id, !room.is_dm));
     replyTo = null;
     editing = null;
@@ -184,7 +193,39 @@
     });
     chatHd = null;
     chatMediaHd(id).then((hd) => room.id === id && (chatHd = hd)).catch(() => {});
-    return () => stopTyping(id);
+    return () => {
+      stopTyping(id);
+      drafts.flush(id);
+    };
+  });
+
+  // Message effects play once, for messages under a couple of minutes old (Element does the same).
+  const EFFECT_MAX_AGE_MS = 120_000;
+  const effectsPlayed = new Set<string>();
+  $effect(() => {
+    if (!chat.loaded || !prefs.effects) return;
+    for (const e of chat.entries.slice(-8)) {
+      if (e.type !== "message" || effectsPlayed.has(e.key)) continue;
+      const c = e.content;
+      if ((c.kind !== "text" && c.kind !== "emote") || !c.effect) continue;
+      effectsPlayed.add(e.key);
+      if (Date.now() - e.timestamp < EFFECT_MAX_AGE_MS) playEffect(c.effect);
+    }
+  });
+
+  // The composer is the chat's draft (not while editing a sent message).
+  $effect(() => {
+    const text = draft;
+    const reply = replyTo?.item_id ?? draftReply;
+    if (editing) return;
+    untrack(() => drafts.set(room.id, text, reply));
+  });
+  $effect(() => {
+    if (!draftReply || !chat.loaded) return;
+    const id = draftReply;
+    const entry = chat.entries.find((e) => e.type === "message" && e.item_id === id);
+    if (entry?.type === "message") replyTo = entry;
+    draftReply = null;
   });
 
   // Typing notices: on while there's fresh input, off after a pause, on send, or on leaving.

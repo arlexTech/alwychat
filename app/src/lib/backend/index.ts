@@ -66,6 +66,14 @@ export const onCallSignal = (handler: (signal: CallSignal) => void) =>
 export const declineCall = (roomId: string, notificationId: string) =>
   invoke<void>("decline_call", { roomId, notificationId });
 
+/** Unsent composer text, synced between our devices. */
+export type Draft = { text: string; reply_to?: string | null; updated: number };
+export const getDrafts = () => invoke<Record<string, Draft>>("drafts");
+export const setDraft = (roomId: string, draft: Draft | null) => invoke<void>("set_draft", { roomId, draft });
+/** A draft changed through sync (another device, or the echo of ours). */
+export const onDraft = (handler: (change: { room_id: string; draft: Draft | null }) => void) =>
+  listen<{ room_id: string; draft: Draft | null }>("draft", (e) => handler(e.payload));
+
 /** A notification was tapped: open this chat. */
 export const onOpenRoom = (handler: (roomId: string) => void) =>
   listen<string>("open-room", (e) => handler(e.payload));
@@ -140,8 +148,8 @@ export interface Reaction {
 
 export type MessageContent =
   /** `html` is sanitised by the core (Matrix allowlist): safe for {@html}. */
-  | { kind: "text"; body: string; html: string | null; link: string | null }
-  | { kind: "emote"; body: string; html: string | null }
+  | { kind: "text"; body: string; html: string | null; link: string | null; effect: Effect | null }
+  | { kind: "emote"; body: string; html: string | null; effect: Effect | null }
   | { kind: "notice"; body: string; html: string | null; link: string | null }
   /** `media` is a key for eventMediaUrl() in $lib/media. */
   | {
@@ -216,6 +224,10 @@ export interface MessageEntry {
   /** Mentions us (or @room). */
   mentions_me: boolean;
 }
+
+/** Element-compatible message effects. */
+export type Effect = "confetti" | "fireworks" | "hearts" | "snowfall" | "rainfall" | "space_invaders";
+export type AppTheme = "system" | "light" | "dark" | "amoled";
 
 export type TimelineEntry = { key: string } & (
   | ({ type: "message" } & MessageEntry)
@@ -444,7 +456,13 @@ export interface Settings {
   notifications: boolean;
   /** Photos in original quality by default (chats can override). */
   hd_media: boolean;
+  /** Play message effects (confetti, snow…). */
+  chat_effects: boolean;
+  app_theme: AppTheme;
 }
+/** Android: dark system bar icons on a light theme, and the colour behind the bars. */
+export const setSystemBars = (light: boolean, background: string) =>
+  invoke<void>("set_system_bars", { light, background });
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke<void>("set_settings", { settings });
 

@@ -259,6 +259,31 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
     }
 }
 
+/// Android: system bar icons (dark on a light theme) and the colour behind them.
+#[tauri::command]
+async fn set_system_bars(
+    app: tauri::AppHandle,
+    light: bool,
+    background: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<()>(
+                "setBars",
+                serde_json::json!({ "light": light, "background": background }),
+            )
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, light, background);
+        Ok(())
+    }
+}
+
 #[tauri::command]
 async fn join_call(
     core: State<'_, AppCore>,
@@ -356,6 +381,25 @@ async fn save_media(
     }
     #[cfg(not(target_os = "android"))]
     save_to_folder(&app, &core, &media, to_gallery).await
+}
+
+/// Unsent composer text of every chat (synced between our devices).
+#[tauri::command]
+async fn drafts(
+    core: State<'_, AppCore>,
+) -> Result<std::collections::HashMap<String, alwy_core::drafts::Draft>, String> {
+    core.drafts().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_draft(
+    core: State<'_, AppCore>,
+    room_id: String,
+    draft: Option<alwy_core::drafts::Draft>,
+) -> Result<(), String> {
+    core.set_draft(&room_id, draft)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// A file message: "open" it in another app, "save_as" (Android picker: folder and name), or
@@ -883,6 +927,10 @@ pub fn run() {
             let _ = handle.emit("call-signal", signal);
         });
         let handle = app.handle().clone();
+        core.on_draft(move |change| {
+            let _ = handle.emit("draft", change);
+        });
+        let handle = app.handle().clone();
         core.on_notification(move |n| {
             // Only when the window isn't in front: otherwise the chat list already shows it.
             let focused = if cfg!(mobile) {
@@ -992,6 +1040,9 @@ pub fn run() {
             forward_messages,
             file_action,
             decline_call,
+            drafts,
+            set_system_bars,
+            set_draft,
             vote_poll,
             end_poll,
             setup_push,

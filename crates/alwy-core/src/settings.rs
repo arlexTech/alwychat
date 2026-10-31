@@ -22,6 +22,10 @@ pub struct Settings {
     pub notifications: bool,
     /// Send photos in original quality by default (chats can override). Off: compressed.
     pub hd_media: bool,
+    /// Play message effects (confetti, snow…) when they arrive.
+    pub chat_effects: bool,
+    /// "system", "light", "dark" or "amoled".
+    pub app_theme: String,
 }
 
 impl Default for Settings {
@@ -32,6 +36,8 @@ impl Default for Settings {
             share_presence: true,
             notifications: true,
             hd_media: false,
+            chat_effects: true,
+            app_theme: "system".to_owned(),
         }
     }
 }

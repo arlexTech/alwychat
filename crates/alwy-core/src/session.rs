@@ -80,6 +80,7 @@ pub struct Core {
     pub(crate) settings: Arc<Mutex<crate::settings::Settings>>,
     pub(crate) on_notification: Arc<Mutex<Option<crate::notifications::NotificationHandler>>>,
     pub(crate) on_call_signal: Arc<Mutex<Option<crate::rtc::CallSignalHandler>>>,
+    pub(crate) on_draft: Arc<Mutex<Option<crate::drafts::DraftHandler>>>,
     /// The call we're in, if any.
     pub(crate) call: tokio::sync::Mutex<Option<crate::rtc::ActiveCall>>,
     /// Serialises `restore` (a push and the UI can both start the session on Android).
@@ -120,6 +121,7 @@ impl Core {
             settings: Arc::new(Mutex::new(crate::settings::Settings::load(&data_dir))),
             on_notification: Arc::default(),
             on_call_signal: Arc::default(),
+            on_draft: Arc::default(),
             data_dir,
             active: Mutex::new(None),
             on_session_ended: Arc::default(),
@@ -396,6 +398,7 @@ impl Core {
         crate::notifications::install(&client, self.on_notification.clone(), self.settings.clone())
             .await;
         crate::rtc::install(&client, self.on_call_signal.clone());
+        crate::drafts::install(&client, self.on_draft.clone());
 
         // The event cache feeds timelines and chat-list previews; it must run before sync starts.
         client

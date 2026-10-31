@@ -1,4 +1,4 @@
-/* Design tokens — Element X calm × Messenger warmth. Light theme comes later via [data-theme]. */
+/* Design tokens — Element X calm × Messenger warmth. Dark by default; [data-theme] switches. */
 :root {
   --bg: #0e1014;
   --surface: #15181f;
@@ -14,6 +14,27 @@
   --radius: 14px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f4f5f8;
+  --surface-2: #eaecf1;
+  --surface-hover: #e3e6ec;
+  --border: #dadee6;
+  --text: #14161c;
+  --muted: #697083;
+  --danger: #d93a3a;
+  color-scheme: light;
+}
+
+/* True black for OLED screens. */
+:root[data-theme="amoled"] {
+  --bg: #000000;
+  --surface: #0a0b0e;
+  --surface-2: #15171d;
+  --surface-hover: #1b1e25;
+  --border: #1d2029;
 }
 
 * {

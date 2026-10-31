@@ -2,6 +2,7 @@
   import Phone from "@lucide/svelte/icons/phone";
   import type { RoomSummary } from "$lib/backend";
   import { shortTime } from "$lib/format";
+  import { drafts } from "$lib/stores/drafts.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import Avatar from "./Avatar.svelte";
 
@@ -18,6 +19,8 @@
   } = $props();
 
   const unread = $derived(room.unread_messages > 0 || room.marked_unread || room.is_invite);
+  // Telegram-style: an unsent draft replaces the preview (not on the chat being typed in).
+  const draft = $derived(selected ? undefined : drafts.get(room.id));
   const preview = $derived.by(() => {
     const l = room.latest;
     if (!l) return room.is_invite ? "Invitation" : "";
@@ -40,7 +43,9 @@
       <span class="time">{shortTime(room.latest?.timestamp)}</span>
     </div>
     <div class="line">
-      <span class="preview" class:sending={room.latest?.is_sending}>{preview}</span>
+      <span class="preview" class:sending={room.latest?.is_sending}
+        >{#if draft}<span class="draft">Draft:</span> {draft.text.replace(/\s+/g, " ")}{:else}{preview}{/if}</span
+      >
       {#if room.unread_mentions > 0}
         <span class="badge mention">@</span>
       {:else if room.unread_messages > 0}
@@ -107,6 +112,9 @@
   .preview {
     font-size: 0.9rem;
     color: var(--muted);
+  }
+  .draft {
+    color: var(--danger, #e5484d);
   }
   .preview.sending {
     opacity: 0.6;

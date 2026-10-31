@@ -1,16 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getSettings, isAndroid, setSettings, setupPush, systemStatus, type Settings, type SystemStatus } from "$lib/backend";
+  import { isAndroid, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus } from "$lib/backend";
+  import { prefs } from "$lib/stores/prefs.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import Page from "./Page.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
 
-  let settings = $state<Settings | null>(null);
+  const settings = $derived(prefs.settings);
   let system = $state<SystemStatus | null>(null);
   let error = $state<string | null>(null);
 
-  type Toggle = { key: keyof Settings; label: string; hint: string };
+  type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
+  type Toggle = { key: BoolKey; label: string; hint: string };
 
   const privacy: Toggle[] = [
     {
@@ -23,6 +25,21 @@
       key: "share_presence",
       label: "Show when I'm active",
       hint: "Others see when you're online or when you were last active.",
+    },
+  ];
+
+  const THEMES: { id: AppTheme; label: string }[] = [
+    { id: "system", label: "System" },
+    { id: "light", label: "Light" },
+    { id: "dark", label: "Dark" },
+    { id: "amoled", label: "Black" },
+  ];
+
+  const appearance: Toggle[] = [
+    {
+      key: "chat_effects",
+      label: "Message effects",
+      hint: "Confetti, fireworks, hearts, snow… when a message with 🎉 🎆 💝 ❄️ arrives (works with Element).",
     },
   ];
 
@@ -59,7 +76,7 @@
   }
 
   onMount(() => {
-    getSettings().then((s) => (settings = s), (e) => (error = String(e)));
+    if (!prefs.settings) prefs.load().catch((e) => (error = String(e)));
     void refreshSystem();
     // Coming back from Android's settings pages: show what the user changed there.
     const onVisible = () => document.visibilityState === "visible" && refreshSystem();
@@ -68,18 +85,14 @@
   });
 
   async function save(change: Partial<Settings>) {
-    if (!settings) return;
-    const previous = settings;
-    settings = { ...settings, ...change };
     try {
-      await setSettings(settings);
+      await prefs.save(change);
     } catch (e) {
-      settings = previous;
       error = String(e);
     }
   }
 
-  async function toggle(key: keyof Settings) {
+  async function toggle(key: BoolKey) {
     if (!settings) return;
     await save({ [key]: !settings[key] });
     if (key === "share_presence") presence.reportNow();
@@ -116,6 +129,16 @@
   {#if settings}
     <h3>Privacy</h3>
     {#each privacy as t (t.key)}{@render row(t)}{/each}
+
+    <h3 class="section">Appearance</h3>
+    <div class="themes" role="radiogroup" aria-label="Theme">
+      {#each THEMES as t (t.id)}
+        <button role="radio" aria-checked={settings.app_theme === t.id} class:on={settings.app_theme === t.id} onclick={() => save({ app_theme: t.id })}>
+          <span class="swatch {t.id}"></span>{t.label}
+        </button>
+      {/each}
+    </div>
+    {#each appearance as t (t.key)}{@render row(t)}{/each}
 
     <h3 class="section">Notifications</h3>
     <label class="toggle">
@@ -177,6 +200,45 @@
 </Page>
 
 <style>
+  .themes {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 4px 0 8px;
+  }
+  .themes button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 4px 10px;
+    border: 2px solid transparent;
+    border-radius: 14px;
+    background: var(--surface-2);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .themes button.on {
+    border-color: var(--accent-a);
+  }
+  .swatch {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+  }
+  .swatch.system {
+    background: linear-gradient(135deg, #ffffff 50%, #0e1014 50%);
+  }
+  .swatch.light {
+    background: #ffffff;
+  }
+  .swatch.dark {
+    background: #0e1014;
+  }
+  .swatch.amoled {
+    background: #000000;
+  }
   h3 {
     margin: 8px 0 8px;
     font-size: 0.8rem;

@@ -100,10 +100,13 @@ pub enum MessageContent {
         body: String,
         html: Option<String>,
         link: Option<String>,
+        /// Message effect to play when it arrives (`crate::effects`).
+        effect: Option<&'static str>,
     },
     Emote {
         body: String,
         html: Option<String>,
+        effect: Option<&'static str>,
     },
     Notice {
         body: String,
@@ -803,15 +806,18 @@ impl Mapper {
 }
 
 fn message_content(msgtype: &MessageType) -> MessageContent {
+    let effect = crate::effects::effect_of(msgtype.msgtype(), msgtype.body());
     match msgtype {
         MessageType::Text(t) => MessageContent::Text {
             body: t.body.clone(),
             html: html::formatted(t.formatted.as_ref()).or_else(|| html::linkify(&t.body)),
             link: html::first_link(&t.body),
+            effect,
         },
         MessageType::Emote(e) => MessageContent::Emote {
             body: e.body.clone(),
             html: html::formatted(e.formatted.as_ref()).or_else(|| html::linkify(&e.body)),
+            effect,
         },
         MessageType::Notice(n) => MessageContent::Notice {
             body: n.body.clone(),
@@ -828,6 +834,7 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
             body: other.body().to_owned(),
             html: None,
             link: None,
+            effect,
         },
     }
 }
