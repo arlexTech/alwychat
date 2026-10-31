@@ -31,6 +31,12 @@ class SaveArgs {
 }
 
 @InvokeArg
+class FileArgs {
+  /** File written by the Rust core in the app's cache. */
+  lateinit var path: String
+}
+
+@InvokeArg
 class PickArgs {
   /** "media": the system photo picker (photos + videos); "files": any document. */
   var kind: String = "media"
@@ -163,4 +169,59 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     }
     return "$folder/${source.name}"
   }
+
+  /** Opens a downloaded file in another app (PDF viewer, text editor…), with a chooser. */
+  @Command
+  fun open(invoke: Invoke) {
+    val file = File(invoke.parseArgs(FileArgs::class.java).path)
+    val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+    val view = Intent(Intent.ACTION_VIEW)
+      .setDataAndType(uri, mimeOf(file))
+      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    try {
+      activity.startActivity(Intent.createChooser(view, file.name))
+      invoke.resolve()
+    } catch (e: Exception) {
+      invoke.reject("no app can open this file")
+    }
+  }
+
+  private var saveAsSource: File? = null
+
+  /** "Save to…": the system's document picker chooses the folder and name. */
+  @Command
+  fun saveAs(invoke: Invoke) {
+    val file = File(invoke.parseArgs(FileArgs::class.java).path)
+    saveAsSource = file
+    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+      addCategory(Intent.CATEGORY_OPENABLE)
+      type = mimeOf(file)
+      putExtra(Intent.EXTRA_TITLE, file.name)
+    }
+    startActivityForResult(invoke, intent, "savedAs")
+  }
+
+  @ActivityCallback
+  fun savedAs(invoke: Invoke, result: ActivityResult) {
+    val source = saveAsSource
+    val target = result.data?.data
+    if (result.resultCode != Activity.RESULT_OK || target == null || source == null) {
+      source?.delete()
+      invoke.resolve(JSObject().put("saved", false))
+      return
+    }
+    Thread {
+      try {
+        activity.contentResolver.openOutputStream(target)!!.use { out -> source.inputStream().use { it.copyTo(out) } }
+        invoke.resolve(JSObject().put("saved", true))
+      } catch (e: Exception) {
+        invoke.reject(e.message ?: e.toString())
+      } finally {
+        source.delete()
+      }
+    }.start()
+  }
+
+  private fun mimeOf(file: File) =
+    MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "application/octet-stream"
 }

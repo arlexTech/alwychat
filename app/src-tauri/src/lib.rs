@@ -349,6 +349,75 @@ async fn save_media(
     save_to_folder(&app, &core, &media, to_gallery).await
 }
 
+/// A file message: "open" it in another app, "save_as" (Android picker: folder and name), or
+/// "downloads". Returns what to tell the user, or None when nothing happened (picker cancelled).
+#[tauri::command]
+async fn file_action(
+    app: tauri::AppHandle,
+    core: State<'_, AppCore>,
+    media: String,
+    action: String,
+) -> Result<Option<String>, String> {
+    if action == "downloads" {
+        return save_media(app, core, media, false)
+            .await
+            .map(|p| Some(format!("Saved to {p}")));
+    }
+    // Opened files stay in the cache (the other app reads them later); cleared at startup.
+    let dir = opened_dir(&app)?;
+    let path = core
+        .save_event_media(&media, &dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "android")]
+    {
+        let args = serde_json::json!({ "path": path.display().to_string() });
+        let gallery = &app.state::<android::Gallery>().0;
+        match action.as_str() {
+            "open" => {
+                gallery
+                    .run_mobile_plugin_async::<()>("open", args)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(None)
+            }
+            "save_as" => {
+                #[derive(serde::Deserialize)]
+                struct SavedAs {
+                    saved: bool,
+                }
+                let r: SavedAs = gallery
+                    .run_mobile_plugin_async("saveAs", args)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(r.saved.then(|| "Saved".to_owned()))
+            }
+            other => Err(format!("unknown file action {other}")),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        match action.as_str() {
+            "open" => {
+                app.opener()
+                    .open_path(path.display().to_string(), None::<&str>)
+                    .map_err(|e| e.to_string())?;
+                Ok(None)
+            }
+            other => Err(format!("unknown file action {other}")),
+        }
+    }
+}
+
+fn opened_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("opened"))
+}
+
 #[cfg(not(target_os = "android"))]
 async fn save_to_folder(
     app: &tauri::AppHandle,
@@ -838,6 +907,9 @@ pub fn run() {
         if let Ok(dir) = picked_dir(app.handle()) {
             let _ = std::fs::remove_dir_all(dir);
         }
+        if let Ok(dir) = opened_dir(app.handle()) {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         // Mobile sign-in comes back as com.alwy.chat:/callback?code=…
         #[cfg(mobile)]
         {
@@ -905,6 +977,7 @@ pub fn run() {
             pin_message,
             create_poll,
             forward_messages,
+            file_action,
             vote_poll,
             end_poll,
             setup_push,

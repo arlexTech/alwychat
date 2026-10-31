@@ -1,4 +1,5 @@
 <script lang="ts">
+  import FileText from "@lucide/svelte/icons/file-text";
   import Download from "@lucide/svelte/icons/download";
   import Pin from "@lucide/svelte/icons/pin";
   import PinOff from "@lucide/svelte/icons/pin-off";
@@ -215,6 +216,13 @@
     swipeX = next;
   }
 
+  // A double-tap reacts: single-tap actions wait a moment to be sure it isn't one.
+  let tapTimer: ReturnType<typeof setTimeout> | undefined;
+  function afterTap(action: () => void) {
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(action, 260);
+  }
+
   function react(key: string) {
     pickerOpen = false;
     onReact(key);
@@ -266,7 +274,7 @@
         class:sending={msg.send_state === "sending"}
         class:failed={msg.send_state === "failed"}
         title={clockTime(msg.timestamp)}
-        ondblclick={() => canReact && react(quickReaction)}
+        ondblclick={() => (clearTimeout(tapTimer), canReact && react(quickReaction))}
         class:swiping
         style:transform={swipeX ? `translateX(${swipeX}px)` : undefined}
         oncontextmenu={openMenu}
@@ -285,7 +293,7 @@
         {#if album && album.length > 1}
           <div class="album" class:two={albumMedia.length === 2} class:three={albumMedia.length === 3} style:width="{box?.w}px" style:aspect-ratio="{box?.w} / {box?.h}">
             {#each albumMedia.slice(0, ALBUM_CELLS) as media, i (media)}
-              <button class="cell" onclick={() => onOpenMedia(i)} aria-label="Open photo {i + 1} of {albumMedia.length}">
+              <button class="cell" onclick={() => afterTap(() => onOpenMedia(i))} aria-label="Open photo {i + 1} of {albumMedia.length}">
                 <img src={eventMediaUrl(media, true)} alt="" decoding="async" loading="lazy" />
                 {#if i === ALBUM_CELLS - 1 && albumMedia.length > ALBUM_CELLS}
                   <span class="more">+{albumMedia.length - ALBUM_CELLS}</span>
@@ -299,7 +307,7 @@
             class:loaded={mediaLoaded}
             style:width="{box.w}px"
             style:aspect-ratio="{box.w} / {box.h}"
-            onclick={() => c.kind !== "sticker" && onOpenMedia(0)}
+            onclick={() => c.kind !== "sticker" && afterTap(() => onOpenMedia(0))}
             aria-label={c.kind === "video" ? "Play video" : c.kind === "image" ? "Open photo" : c.body}
           >
             {#if mediaFailed}
@@ -323,11 +331,11 @@
         {:else if c.kind === "audio"}
           <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} />
         {:else if c.kind === "file"}
-          <button class="file" onclick={onSaveFile} title="Save to Downloads">
-            <span class="file-icon">📄</span>
+          <button class="file" onclick={() => afterTap(onSaveFile)} title="Open or save">
+            <span class="file-icon"><FileText size={26} /></span>
             <span class="file-meta">
               <strong>{c.filename}</strong>
-              <small>{c.size != null ? `${formatSize(c.size)} · ` : ""}Save</small>
+              <small>{c.size != null ? `${formatSize(c.size)} · ` : ""}Tap to open or save</small>
             </span>
           </button>
         {/if}
@@ -812,7 +820,8 @@
     cursor: pointer;
   }
   .file-icon {
-    font-size: 1.8rem;
+    display: grid;
+    color: var(--accent-a);
   }
   .file-meta {
     display: flex;

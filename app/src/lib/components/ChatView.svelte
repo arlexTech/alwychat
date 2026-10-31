@@ -1,4 +1,5 @@
 <script lang="ts">
+  import FileSheet from "./FileSheet.svelte";
   import MessageActions, { type Actions } from "./MessageActions.svelte";
   import ForwardPage from "./ForwardPage.svelte";
   import Plus from "@lucide/svelte/icons/plus";
@@ -12,7 +13,6 @@
   import Lock from "@lucide/svelte/icons/lock";
   import Phone from "@lucide/svelte/icons/phone";
   import Video from "@lucide/svelte/icons/video";
-  import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SendHorizontal from "@lucide/svelte/icons/send-horizontal";
   import Image from "@lucide/svelte/icons/image";
@@ -34,6 +34,7 @@
     sendFile,
     pinMessage,
     forwardMessages,
+    fileAction,
     sendMessage,
     sendPicked,
     sendVoice,
@@ -510,6 +511,24 @@
     }
   }
 
+  /** The file whose Open / Save sheet is shown. */
+  let fileFor = $state<MessageEntry | null>(null);
+  $effect(() => {
+    if (fileFor) return closeOnBack(() => (fileFor = null));
+  });
+
+  async function onFileAction(msg: MessageEntry, action: "open" | "save_as" | "downloads") {
+    const c = msg.content;
+    if (c.kind !== "file") return;
+    if (action === "open") flash("Opening…");
+    try {
+      const done = await fileAction(c.media, action);
+      if (done) flash(done.replace(/^Saved to \/home\/[^/]+/, "Saved to ~"));
+    } catch (e) {
+      flash(`Couldn't ${action === "open" ? "open" : "save"}: ${e}`);
+    }
+  }
+
   function pickMention(s?: Parameters<MentionAutocomplete["pick"]>[1]) {
     const next = mention.pick(draft, s);
     draft = next.draft;
@@ -715,18 +734,19 @@
 
 <header class="chat-header">
   <button class="back" onclick={onBack} aria-label="Back"><ChevronLeft size={26} /></button>
-  <Avatar name={room.name} mxc={room.avatar} size={40} />
-  <div class="title">
-    <strong>{title}</strong>
-    {#if status}
-      <span class="sub" class:online={presence.online(room.dm_user)}>{status}</span>
-    {:else if room.is_encrypted}
-      <span class="sub"><Lock size={12} /> End-to-end encrypted</span>
-    {/if}
-  </div>
+  <button class="who" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings">
+    <Avatar name={room.name} mxc={room.avatar} size={40} />
+    <span class="title">
+      <strong>{title}</strong>
+      {#if status}
+        <span class="sub" class:online={presence.online(room.dm_user)}>{status}</span>
+      {:else if room.is_encrypted}
+        <span class="sub"><Lock size={12} /> End-to-end encrypted</span>
+      {/if}
+    </span>
+  </button>
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call"><Phone size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
-  <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings"><Ellipsis size={22} /></button>
 </header>
 {#if shownPin}
   <div class="pin-banner" transition:fade={{ duration: 150 }}>
@@ -739,6 +759,14 @@
     </button>
     <button class="pin-list" onclick={() => (pinsOpen = true)} aria-label="All pinned messages"><List size={18} /></button>
   </div>
+{/if}
+{#if fileFor && fileFor.content.kind === "file"}
+  {@const msg = fileFor}
+  <FileSheet
+    filename={fileFor.content.filename}
+    onPick={(action) => onFileAction(msg, action)}
+    onClose={() => (fileFor = null)}
+  />
 {/if}
 {#if actionFor}
   <MessageActions
@@ -820,7 +848,7 @@
             onHistory={() => showHistory(row.msg)}
             album={row.album}
             onOpenMedia={(i) => openMedia(row.album ?? [row.msg], i)}
-            onSaveFile={() => saveFile(row.msg)}
+            onSaveFile={() => (fileFor = row.msg)}
             onSaveToGallery={() => saveVisualMedia(row.album ?? [row.msg])}
             pinned={chat.pins.can_pin ? pinnedIds.has(row.msg.item_id) : null}
             onPin={(pin) => setPin(row.msg.item_id, pin)}
@@ -1445,8 +1473,24 @@
   .revisions small {
     color: var(--muted);
   }
+  .who {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px;
+    border: none;
+    border-radius: 14px;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .who:hover {
+    background: var(--surface-2);
+  }
   .chat-menu-button {
-    margin-left: auto;
     width: 36px;
     height: 36px;
     border: none;

@@ -399,6 +399,9 @@ export const setChatMediaHd = (roomId: string, hd: boolean | null) =>
   invoke<void>("set_chat_media_hd", { roomId, hd });
 
 /** Saves to ~/Pictures/AlwyChat (photos/videos) or Downloads; resolves to the file path. */
+/** Open a file message in another app, save it where the user picks (Android), or to Downloads. */
+export const fileAction = (media: string, action: "open" | "save_as" | "downloads") =>
+  invoke<string | null>("file_action", { media, action });
 export const saveMedia = (media: string, toGallery: boolean) =>
   invoke<string>("save_media", { media, toGallery });
 
