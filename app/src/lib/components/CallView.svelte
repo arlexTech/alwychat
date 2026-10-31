@@ -1,4 +1,11 @@
 <script lang="ts">
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Mic from "@lucide/svelte/icons/mic";
+  import MicOff from "@lucide/svelte/icons/mic-off";
+  import Video from "@lucide/svelte/icons/video";
+  import VideoOff from "@lucide/svelte/icons/video-off";
+  import MonitorUp from "@lucide/svelte/icons/monitor-up";
+  import PhoneOff from "@lucide/svelte/icons/phone-off";
   import { fade, fly } from "svelte/transition";
   import type { Track } from "livekit-client";
   import { isAndroid } from "$lib/backend";
@@ -37,7 +44,7 @@
 {:else if call.active}
   <div class="call" transition:fade={{ duration: 160 }}>
     <header>
-      <button class="icon" onclick={() => (call.minimized = true)} aria-label="Back to chats">⌄</button>
+      <button class="icon" onclick={() => (call.minimized = true)} aria-label="Back to chats"><ChevronDown size={24} /></button>
       <div class="title">
         <strong>{call.roomName}</strong>
         <small>{statusText ?? `${call.tiles.length} in call`}</small>
@@ -48,7 +55,7 @@
       <div class="featured">
         <!-- svelte-ignore a11y_media_has_caption -->
         <video use:video={featured.screen} autoplay playsinline muted></video>
-        <span class="label">🖥 {featured.isMe ? "Your screen" : featured.name}</span>
+        <span class="label">{featured.isMe ? "Your screen" : featured.name}</span>
       </div>
     {/if}
 
@@ -63,7 +70,7 @@
               <div class="ring"><Avatar name={t.name} mxc={t.avatar} size={featured ? 56 : 88} /></div>
             </div>
           {/if}
-          <span class="name">{t.micOn ? "" : "🔇 "}{t.isMe ? "You" : t.name}</span>
+          <span class="name">{#if !t.micOn}<MicOff size={13} />{/if}{t.isMe ? "You" : t.name}</span>
         </div>
       {/each}
     </div>
@@ -72,15 +79,15 @@
 
     <div class="controls">
       <button class="ctl" class:off={!call.micOn} onclick={() => call.toggleMic()} aria-label={call.micOn ? "Mute" : "Unmute"}>
-        {call.micOn ? "🎙️" : "🔇"}
+        {#if call.micOn}<Mic size={24} />{:else}<MicOff size={24} />{/if}
       </button>
       <button class="ctl" class:on={call.camOn} onclick={() => call.toggleCamera()} aria-label={call.camOn ? "Turn camera off" : "Turn camera on"}>
-        {call.camOn ? "📷" : "📷"}
+        {#if call.camOn}<Video size={24} />{:else}<VideoOff size={24} />{/if}
       </button>
       {#if canShareScreen}
-        <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label="Share screen">🖥️</button>
+        <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label="Share screen"><MonitorUp size={24} /></button>
       {/if}
-      <button class="ctl hangup" onclick={() => call.leave()} aria-label="Leave call">📞</button>
+      <button class="ctl hangup" onclick={() => call.leave()} aria-label="Leave call"><PhoneOff size={24} /></button>
     </div>
   </div>
 {/if}
@@ -119,8 +126,10 @@
     height: 40px;
     border: none;
     border-radius: 50%;
+    display: grid;
+    place-items: center;
     background: var(--surface-2);
-    font-size: 1.4rem;
+    color: inherit;
     cursor: pointer;
   }
   .featured {
@@ -190,6 +199,9 @@
   }
   .name,
   .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     position: absolute;
     left: 10px;
     bottom: 8px;
@@ -216,9 +228,11 @@
     width: 60px;
     height: 60px;
     border: none;
+    display: grid;
+    place-items: center;
     border-radius: 50%;
     background: var(--surface-2);
-    font-size: 1.5rem;
+    color: inherit;
     cursor: pointer;
     transition: transform 0.12s var(--ease), background 0.15s var(--ease);
   }
@@ -227,16 +241,14 @@
   }
   .ctl.off {
     background: #fff;
+    color: #111;
   }
   .ctl.on {
     background: var(--accent);
   }
   .hangup {
     background: var(--danger);
-    transform: rotate(135deg);
-  }
-  .hangup:active {
-    transform: rotate(135deg) scale(0.92);
+    color: white;
   }
   .pill {
     position: fixed;

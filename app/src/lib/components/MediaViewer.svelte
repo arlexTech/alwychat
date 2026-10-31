@@ -1,4 +1,7 @@
 <script lang="ts">
+  import X from "@lucide/svelte/icons/x";
+  import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import { onMount, untrack } from "svelte";
   import { fade, scale } from "svelte/transition";
   import { eventMediaUrl } from "$lib/media";
@@ -136,19 +139,19 @@
   </div>
 
   <div class="bar" onclick={(e) => e.stopPropagation()}>
-    <button onclick={() => save(false)} disabled={saving}>{saving ? "Saving…" : "⬇ Save"}</button>
+    <button onclick={() => save(false)} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
     {#if items.length > 1}
-      <button onclick={() => save(true)} disabled={saving}>⬇ Save all ({items.length})</button>
+      <button onclick={() => save(true)} disabled={saving}>Save all ({items.length})</button>
     {/if}
-    <button onclick={onClose} aria-label="Close">✕</button>
+    <button onclick={onClose} aria-label="Close"><X size={18} /></button>
   </div>
 
   {#if items.length > 1}
     {#if index > 0}
-      <button class="nav prev" onclick={(e) => (e.stopPropagation(), step(-1))} aria-label="Previous">‹</button>
+      <button class="nav prev" onclick={(e) => (e.stopPropagation(), step(-1))} aria-label="Previous"><ChevronLeft size={28} /></button>
     {/if}
     {#if index < items.length - 1}
-      <button class="nav next" onclick={(e) => (e.stopPropagation(), step(1))} aria-label="Next">›</button>
+      <button class="nav next" onclick={(e) => (e.stopPropagation(), step(1))} aria-label="Next"><ChevronRight size={28} /></button>
     {/if}
     <span class="counter">{index + 1} / {items.length}</span>
   {/if}
@@ -253,8 +256,8 @@
     border-radius: 50%;
     background: rgb(255 255 255 / 0.12);
     color: white;
-    font-size: 2rem;
-    line-height: 1;
+    display: grid;
+    place-items: center;
     cursor: pointer;
     translate: 0 -50%;
   }

@@ -1,4 +1,15 @@
 <script lang="ts">
+  import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+  import Lock from "@lucide/svelte/icons/lock";
+  import Phone from "@lucide/svelte/icons/phone";
+  import Video from "@lucide/svelte/icons/video";
+  import Ellipsis from "@lucide/svelte/icons/ellipsis";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
+  import SendHorizontal from "@lucide/svelte/icons/send-horizontal";
+  import Image from "@lucide/svelte/icons/image";
+  import Paperclip from "@lucide/svelte/icons/paperclip";
+  import Check from "@lucide/svelte/icons/check";
+  import Mic from "@lucide/svelte/icons/mic";
   import { tick, untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import {
@@ -66,7 +77,7 @@
     const recording = await recorder.stop();
     if (!recording) return;
     if (recording.durationMs < 800) {
-      sendError = "Too short: tap 🎤, speak, then send";
+      sendError = "Too short: tap the microphone, speak, then send";
       return;
     }
     sendingFiles = true;
@@ -231,9 +242,13 @@
         case "date_divider":
           out.push({ kind: "day", key: e.key, label: dayLabel(e.timestamp) });
           break;
-        case "notice":
-          out.push({ kind: "notice", key: e.key, text: e.text });
+        case "notice": {
+          // "Alex changed the chat theme" twice in a row (trying colours): show it once.
+          const prev = out.at(-1);
+          if (prev?.kind === "notice" && prev.text === e.text) prev.key = e.key;
+          else out.push({ kind: "notice", key: e.key, text: e.text });
           break;
+        }
         case "read_marker":
           out.push({ kind: "unread", key: e.key });
           break;
@@ -577,19 +592,19 @@
 </script>
 
 <header class="chat-header">
-  <button class="back" onclick={onBack} aria-label="Back">‹</button>
+  <button class="back" onclick={onBack} aria-label="Back"><ChevronLeft size={26} /></button>
   <Avatar name={room.name} mxc={room.avatar} size={40} />
   <div class="title">
     <strong>{title}</strong>
     {#if status}
       <span class="sub" class:online={presence.online(room.dm_user)}>{status}</span>
     {:else if room.is_encrypted}
-      <span class="sub">🔒 End-to-end encrypted</span>
+      <span class="sub"><Lock size={12} /> End-to-end encrypted</span>
     {/if}
   </div>
-  <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call">📞</button>
-  <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call">🎥</button>
-  <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings">⋯</button>
+  <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call"><Phone size={20} /></button>
+  <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
+  <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings"><Ellipsis size={22} /></button>
 </header>
 {#if room.in_call.length && call.roomId !== room.id}
   <button class="call-banner" onclick={() => call.join(room, false)} transition:fade={{ duration: 150 }}>
@@ -703,7 +718,7 @@
   {#if sendError}<p class="send-error">{sendError}</p>{/if}
   {#if recorder.recording}
     <div class="bar recording" transition:fade={{ duration: 120 }}>
-      <button type="button" class="attach" onclick={() => recorder.cancel()} aria-label="Delete recording">🗑️</button>
+      <button type="button" class="attach" onclick={() => recorder.cancel()} aria-label="Delete recording"><Trash2 size={22} /></button>
       <div class="rec">
         <span class="rec-dot"></span>
         <span class="rec-time">{recordClock}</span>
@@ -713,15 +728,15 @@
           {/each}
         </div>
       </div>
-      <button type="button" class="send" onclick={finishVoice} aria-label="Send voice message">➤</button>
+      <button type="button" class="send" onclick={finishVoice} aria-label="Send voice message"><SendHorizontal size={20} /></button>
     </div>
   {:else}
   <div class="bar">
     {#if isAndroid}
-      <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos">🖼️</button>
-      <button type="button" class="attach" onclick={() => pick("files")} aria-label="Files">📎</button>
+      <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos"><Image size={24} /></button>
+      <button type="button" class="attach" onclick={() => pick("files")} aria-label="Files"><Paperclip size={22} /></button>
     {:else}
-      <button type="button" class="attach" onclick={() => fileInput.click()} aria-label="Attach photos or files">📎</button>
+      <button type="button" class="attach" onclick={() => fileInput.click()} aria-label="Attach photos or files"><Paperclip size={22} /></button>
     {/if}
     <input
       bind:this={fileInput}
@@ -746,10 +761,10 @@
     ></textarea>
     {#if draft.trim() || editing || pending.length}
       <button class="send" aria-label={editing ? "Save edit" : "Send"} transition:fly={{ x: 8, duration: 140 }}
-        >{editing ? "✓" : "➤"}</button
+        >{#if editing}<Check size={20} />{:else}<SendHorizontal size={20} />{/if}</button
       >
     {:else}
-      <button type="button" class="attach mic" onclick={startVoice} aria-label="Record a voice message">🎤</button>
+      <button type="button" class="attach mic" onclick={startVoice} aria-label="Record a voice message"><Mic size={24} /></button>
       <button
         type="button"
         class="quick"
@@ -825,6 +840,9 @@
     text-overflow: ellipsis;
   }
   .sub {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 0.8rem;
     color: var(--muted);
   }
@@ -860,15 +878,20 @@
   }
   .back {
     display: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin-left: -6px;
+    padding: 0;
     border: none;
+    border-radius: 50%;
     background: none;
-    font-size: 2rem;
-    line-height: 1;
+    color: inherit;
     cursor: pointer;
   }
   @media (max-width: 720px) {
     .back {
-      display: block;
+      display: grid;
     }
   }
 
@@ -996,8 +1019,12 @@
     resize: none;
     outline: none;
   }
-  textarea:focus {
-    box-shadow: 0 0 0 2px var(--accent-a);
+  /* No scrollbar next to the field (it grows up to max-height, then scrolls silently). */
+  textarea {
+    scrollbar-width: none;
+  }
+  textarea::-webkit-scrollbar {
+    display: none;
   }
   .send,
   .quick {
@@ -1010,9 +1037,10 @@
     transition: transform 0.12s var(--ease);
   }
   .send {
+    display: grid;
+    place-items: center;
     background: var(--accent);
     color: white;
-    font-size: 1.1rem;
   }
   .quick {
     background: none;
@@ -1149,9 +1177,11 @@
     height: 36px;
     border: none;
     border-radius: 50%;
+    display: grid;
+    place-items: center;
+    padding: 0;
     background: none;
-    font-size: 1.3rem;
-    color: var(--muted);
+    color: var(--accent-a);
     cursor: pointer;
   }
   .chat-menu-button:hover {
@@ -1179,9 +1209,12 @@
     width: 40px;
     height: 40px;
     border: none;
+    display: grid;
+    place-items: center;
+    padding: 0;
     border-radius: 50%;
     background: none;
-    font-size: 1.25rem;
+    color: var(--accent-a);
     cursor: pointer;
   }
   .attach:hover {

@@ -121,9 +121,9 @@ export interface Reaction {
 
 export type MessageContent =
   /** `html` is sanitised by the core (Matrix allowlist): safe for {@html}. */
-  | { kind: "text"; body: string; html: string | null }
+  | { kind: "text"; body: string; html: string | null; link: string | null }
   | { kind: "emote"; body: string; html: string | null }
-  | { kind: "notice"; body: string; html: string | null }
+  | { kind: "notice"; body: string; html: string | null; link: string | null }
   /** `media` is a key for eventMediaUrl() in $lib/media. */
   | {
       kind: "image";
@@ -211,6 +211,19 @@ export interface Presence {
 export const getPresence = (userIds: string[]) => invoke<Presence[]>("presence", { userIds });
 /** Tell the server whether we're using the app (ignored when "Show when I'm active" is off). */
 export const reportActivity = (active: boolean) => invoke<void>("report_activity", { active });
+
+export interface LinkPreview {
+  url: string;
+  site_name: string | null;
+  title: string | null;
+  description: string | null;
+  /** mxc:// image. */
+  image: string | null;
+  image_width: number | null;
+  image_height: number | null;
+}
+
+export const linkPreview = (url: string) => invoke<LinkPreview | null>("link_preview", { url });
 
 /** What can keep notifications from arriving (always all true on desktop). */
 export interface SystemStatus {

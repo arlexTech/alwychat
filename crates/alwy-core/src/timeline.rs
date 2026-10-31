@@ -95,9 +95,11 @@ pub struct Reader {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MessageContent {
     /// `html` is sanitised (Matrix allowlist) and safe to insert; fall back to `body` without it.
+    /// `link`: the URL to show a preview card for.
     Text {
         body: String,
         html: Option<String>,
+        link: Option<String>,
     },
     Emote {
         body: String,
@@ -106,6 +108,7 @@ pub enum MessageContent {
     Notice {
         body: String,
         html: Option<String>,
+        link: Option<String>,
     },
     /// `media` is a key for `media://localhost/_event/<key>` (add `?thumb=1` for previews).
     Image {
@@ -760,15 +763,17 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
     match msgtype {
         MessageType::Text(t) => MessageContent::Text {
             body: t.body.clone(),
-            html: html::formatted(t.formatted.as_ref()),
+            html: html::formatted(t.formatted.as_ref()).or_else(|| html::linkify(&t.body)),
+            link: html::first_link(&t.body),
         },
         MessageType::Emote(e) => MessageContent::Emote {
             body: e.body.clone(),
-            html: html::formatted(e.formatted.as_ref()),
+            html: html::formatted(e.formatted.as_ref()).or_else(|| html::linkify(&e.body)),
         },
         MessageType::Notice(n) => MessageContent::Notice {
             body: n.body.clone(),
-            html: html::formatted(n.formatted.as_ref()),
+            html: html::formatted(n.formatted.as_ref()).or_else(|| html::linkify(&n.body)),
+            link: html::first_link(&n.body),
         },
         MessageType::Image(_) => media("📷 Photo"),
         MessageType::Video(_) => media("🎬 Video"),
@@ -779,6 +784,7 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
         other => MessageContent::Text {
             body: other.body().to_owned(),
             html: None,
+            link: None,
         },
     }
 }

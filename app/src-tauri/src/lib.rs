@@ -130,6 +130,14 @@ async fn presence(
 struct Visible(std::sync::atomic::AtomicBool);
 
 #[tauri::command]
+async fn link_preview(
+    core: State<'_, AppCore>,
+    url: String,
+) -> alwy_core::Result<Option<alwy_core::links::LinkPreview>> {
+    core.link_preview(&url).await
+}
+
+#[tauri::command]
 async fn report_activity(
     core: State<'_, AppCore>,
     visible: State<'_, Visible>,
@@ -834,6 +842,7 @@ pub fn run() {
             presence,
             report_activity,
             system_status,
+            link_preview,
             setup_push,
             launch_room,
             clear_notifications,

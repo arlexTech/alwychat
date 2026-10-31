@@ -78,12 +78,115 @@ pub(crate) fn formatted(body: Option<&FormattedBody>) -> Option<String> {
     (!html.trim().is_empty()).then_some(html)
 }
 
+/// Byte ranges of the http(s) URLs in plain text.
+fn find_urls(text: &str) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find("http") {
+        let start = from + offset;
+        let rest = &text[start..];
+        let at_word_start = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        if !(at_word_start && (rest.starts_with("https://") || rest.starts_with("http://"))) {
+            from = start + 4;
+            continue;
+        }
+        let mut end = start
+            + rest
+                .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+                .unwrap_or(rest.len());
+        // Sentence punctuation after a link isn't part of it; a ")" only if unbalanced.
+        while let Some(last) = text[start..end].chars().next_back() {
+            let url = &text[start..end];
+            let unbalanced_paren =
+                last == ')' && url.matches('(').count() < url.matches(')').count();
+            if matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '*' | '_')
+                || unbalanced_paren
+            {
+                end -= last.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if text[start..end].len() > "https://".len() {
+            found.push((start, end));
+        }
+        from = end.max(start + 4);
+    }
+    found
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\n', "<br>")
+}
+
+/// Plain text with its URLs as links (safe HTML), or `None` when it has no URL.
+pub(crate) fn linkify(text: &str) -> Option<String> {
+    let urls = find_urls(text);
+    if urls.is_empty() {
+        return None;
+    }
+    let mut html = String::new();
+    let mut last = 0;
+    for (start, end) in urls {
+        let url = escape(&text[start..end]);
+        html.push_str(&escape(&text[last..start]));
+        html.push_str(&format!(
+            "<a href=\"{url}\" rel=\"noopener noreferrer\">{url}</a>"
+        ));
+        last = end;
+    }
+    html.push_str(&escape(&text[last..]));
+    Some(html)
+}
+
+/// The URL to preview for a message: its first http(s) link outside reply quotes.
+pub(crate) fn first_link(body: &str) -> Option<String> {
+    body.lines()
+        .filter(|line| !line.starts_with('>'))
+        .find_map(|line| find_urls(line).first().map(|&(s, e)| line[s..e].to_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn clean(html: &str) -> Option<String> {
         formatted(Some(&FormattedBody::html(html)))
+    }
+
+    #[test]
+    fn linkifies_plain_urls() {
+        assert_eq!(linkify("no links here"), None);
+        assert_eq!(
+            linkify("see https://example.org/a?b=1&c=2. <ok>").as_deref(),
+            Some(
+                "see <a href=\"https://example.org/a?b=1&amp;c=2\" rel=\"noopener noreferrer\">\
+                 https://example.org/a?b=1&amp;c=2</a>. &lt;ok&gt;"
+            )
+        );
+        // Not a link start inside a word; parentheses kept only when balanced.
+        assert_eq!(find_urls("xhttp://a.b"), vec![]);
+        let text = "(https://en.wikipedia.org/wiki/Rust_(language))";
+        assert_eq!(
+            &text[find_urls(text)[0].0..find_urls(text)[0].1],
+            "https://en.wikipedia.org/wiki/Rust_(language)"
+        );
+    }
+
+    #[test]
+    fn first_link_skips_quotes() {
+        assert_eq!(
+            first_link("> <@a:b> https://old.example\nlook http://new.example/x!").as_deref(),
+            Some("http://new.example/x")
+        );
+        assert_eq!(first_link("nothing"), None);
     }
 
     #[test]

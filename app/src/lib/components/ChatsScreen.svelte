@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Settings from "@lucide/svelte/icons/settings";
   import { onMount } from "svelte";
   import { flip } from "svelte/animate";
   import { fade } from "svelte/transition";
@@ -176,7 +177,7 @@
             <strong>{myName}</strong>
             <span>{account.user_id}</span>
           </div>
-          <button class="plain" onclick={() => ((settingsOpen = true), (menuOpen = false))}>⚙️ Settings</button>
+          <button class="plain" onclick={() => ((settingsOpen = true), (menuOpen = false))}><Settings size={16} /> Settings</button>
           <button onclick={onSignOut}>Sign out</button>
         </div>
       {/if}
@@ -444,11 +445,19 @@
     .shell.has-selection .list-pane {
       display: none;
     }
+    /* Full screen: same colour as the system bars around it (MainActivity paints them --bg). */
+    .list-pane {
+      border-right: none;
+      background: var(--bg);
+    }
     .shell.has-selection .chat-pane {
       display: flex;
     }
   }
   .menu button.plain {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     color: inherit;
   }
   .state.small {

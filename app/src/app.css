@@ -45,3 +45,18 @@ input {
   background: var(--border);
   border-radius: 8px;
 }
+
+/* Phones scroll by touch: no scrollbars (the timeline's sat at the screen edge). */
+@media (hover: none) {
+  * {
+    scrollbar-width: none;
+  }
+  ::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Buttons show their own pressed state; the WebView's blue tap flash looks out of place. */
+* {
+  -webkit-tap-highlight-color: transparent;
+}

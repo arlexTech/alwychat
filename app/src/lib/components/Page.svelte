@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { Snippet } from "svelte";
   import { fly } from "svelte/transition";
 
@@ -8,7 +9,7 @@
 
 <div class="page" role="dialog" aria-modal="true" aria-label={title} transition:fly={{ x: 48, duration: 220 }}>
   <header>
-    <button class="back" onclick={onClose} aria-label="Back">←</button>
+    <button class="back" onclick={onClose} aria-label="Back"><ArrowLeft size={22} /></button>
     <h2>{title}</h2>
   </header>
   <div class="body">
@@ -39,14 +40,13 @@
   .back {
     display: grid;
     place-items: center;
-    padding: 0 0 2px;
-    line-height: 1;
+    padding: 0;
+    color: inherit;
     width: 42px;
     height: 42px;
     border: none;
     border-radius: 50%;
     background: none;
-    font-size: 1.4rem;
     cursor: pointer;
   }
   .back:hover {

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import SmilePlus from "@lucide/svelte/icons/smile-plus";
+  import Reply from "@lucide/svelte/icons/reply";
+  import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import { fade, scale } from "svelte/transition";
   import { openExternal, type MessageEntry } from "$lib/backend";
   import { clockTime } from "$lib/format";
@@ -6,6 +9,7 @@
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
   import VoicePlayer from "./VoicePlayer.svelte";
+  import LinkPreview from "./LinkPreview.svelte";
 
   let {
     msg,
@@ -231,7 +235,7 @@
 
     <div class="line">
       {#if swipeX > 0}
-        <span class="swipe-reply" style:opacity={Math.min(1, swipeX / SWIPE_REPLY)} style:scale={swipeX >= SWIPE_REPLY ? 1.15 : 0.8 + (swipeX / SWIPE_REPLY) * 0.2}>↩</span>
+        <span class="swipe-reply" style:opacity={Math.min(1, swipeX / SWIPE_REPLY)} style:scale={swipeX >= SWIPE_REPLY ? 1.15 : 0.8 + (swipeX / SWIPE_REPLY) * 0.2}><Reply size={16} /></span>
       {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -314,6 +318,9 @@
             {#if html}{#if c.kind === "emote"}* {msg.sender_name} {/if}{@html html}{:else}{text}{/if}
           </span>
         {/if}
+        {#if (c.kind === "text" || c.kind === "notice") && c.link}
+          <LinkPreview url={c.link} />
+        {/if}
         {#if c.kind === "unable_to_decrypt"}
           <button class="unlock" onclick={onUnlock}>Unlock</button>
         {/if}
@@ -325,13 +332,13 @@
       {#if canReact || msg.can_reply || hasMenu}
         <div class="actions" class:open={menuOpen || pickerOpen}>
           {#if canReact}
-            <button onclick={() => ((pickerOpen = !pickerOpen), (menuOpen = false))} aria-label="React">☺</button>
+            <button onclick={() => ((pickerOpen = !pickerOpen), (menuOpen = false))} aria-label="React"><SmilePlus size={18} /></button>
           {/if}
           {#if msg.can_reply}
-            <button onclick={onReply} aria-label="Reply">↩</button>
+            <button onclick={onReply} aria-label="Reply"><Reply size={18} /></button>
           {/if}
           {#if hasMenu}
-            <button onclick={() => ((menuOpen = !menuOpen), (pickerOpen = false))} aria-label="More">⋯</button>
+            <button onclick={() => ((menuOpen = !menuOpen), (pickerOpen = false))} aria-label="More"><Ellipsis size={18} /></button>
           {/if}
         </div>
       {/if}
@@ -346,7 +353,7 @@
       {#if menuOpen}
         <div class="menu" transition:fade={{ duration: 100 }}>
           {#if canSaveToGallery}
-            <button onclick={() => pick(onSaveToGallery)}>⬇ {albumSize ? `Save all (${albumSize})` : "Save"}</button>
+            <button onclick={() => pick(onSaveToGallery)}>{albumSize ? `Save all (${albumSize})` : "Save"}</button>
           {/if}
           {#if msg.can_edit}<button onclick={() => pick(onEdit)}>✏️ Edit</button>{/if}
           {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}>🕘 Edit history</button>{/if}
@@ -598,8 +605,11 @@
     opacity: 1;
   }
   .actions > button {
+    display: grid;
+    place-items: center;
     width: 28px;
     height: 28px;
+    padding: 0;
     border: none;
     border-radius: 50%;
     background: var(--surface-2);
@@ -838,16 +848,17 @@
     font-size: 0.7rem;
     color: var(--muted);
   }
+  /* minmax(0, …): tall photos must not stretch their row past the album's box. */
   .album {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-auto-rows: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
     gap: 3px;
     border-radius: 14px;
     overflow: hidden;
   }
   .album.two {
-    grid-template-rows: 1fr;
+    grid-template-rows: minmax(0, 1fr);
   }
   /* Three photos: one wide on top, two below (Messenger). */
   .album.three .cell:first-child {
@@ -862,6 +873,8 @@
     overflow: hidden;
   }
   .cell img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
