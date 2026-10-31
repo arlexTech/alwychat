@@ -40,10 +40,12 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     val net = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     return JSObject().apply {
       put("notifications", NotificationManagerCompat.from(activity).areNotificationsEnabled())
-      put("batteryUnrestricted", power.isIgnoringBatteryOptimizations(pkg))
+      put("batteryUnrestricted", runCatching { power.isIgnoringBatteryOptimizations(pkg) }.getOrDefault(true))
+      // Unknown counts as fine: a failed check shouldn't nag the user.
       put(
         "backgroundData",
-        net.restrictBackgroundStatus != ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED,
+        runCatching { net.restrictBackgroundStatus != ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED }
+          .getOrDefault(true),
       )
     }
   }

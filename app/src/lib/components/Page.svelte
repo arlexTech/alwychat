@@ -37,6 +37,10 @@
     font-size: 1.25rem;
   }
   .back {
+    display: grid;
+    place-items: center;
+    padding: 0 0 2px;
+    line-height: 1;
     width: 42px;
     height: 42px;
     border: none;
