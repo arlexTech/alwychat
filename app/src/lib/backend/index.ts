@@ -297,6 +297,8 @@ export function openChat(
   onTyping: (names: string[]) => void,
   onStyle: (style: ChatStyle) => void,
   onPins: (pins: Pins) => void,
+  /** Open on this message (a search result) instead of the latest ones. */
+  focus: string | null = null,
 ) {
   const diffs = new Channel<ListDiff<TimelineEntry>[]>();
   diffs.onmessage = onDiffs;
@@ -306,8 +308,69 @@ export function openChat(
   style.onmessage = onStyle;
   const pins = new Channel<Pins>();
   pins.onmessage = onPins;
-  return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing, onStyle: style, onPins: pins });
+  return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing, onStyle: style, onPins: pins, focus });
 }
+/** Newer messages of a chat opened on a search result; resolves to true at the newest. */
+export const loadNewer = (roomId: string) => invoke<boolean>("load_newer", { roomId });
+
+// ── Search & shared media ───────────────────────────────────────────────────
+
+/** Photos+videos, files (incl. audio/voice) or messages with links. */
+export type KindFilter = "media" | "files" | "links";
+
+export interface SearchHit {
+  room_id: string;
+  room_name: string;
+  room_avatar: string | null;
+  event_id: string;
+  sender: string;
+  sender_name: string;
+  is_own: boolean;
+  timestamp: number;
+  kind: string;
+  /** The matching part; matches are between \u0002 and \u0003. */
+  snippet: string;
+  media: string | null;
+}
+
+export interface SharedItem {
+  event_id: string;
+  sender_name: string;
+  timestamp: number;
+  kind: string;
+  media: string | null;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
+  filename: string | null;
+  size: number | null;
+  text: string | null;
+  url: string | null;
+}
+
+export interface SearchStatus {
+  messages: number;
+  chats_done: number;
+  chats: number;
+  indexing: boolean;
+  chat_done: boolean | null;
+}
+
+export const searchMessages = (
+  query: string,
+  opts: { roomId?: string | null; sender?: string | null; kind?: KindFilter | null; before?: number | null } = {},
+) =>
+  invoke<SearchHit[]>("search_messages", {
+    query,
+    roomId: opts.roomId ?? null,
+    sender: opts.sender ?? null,
+    kind: opts.kind ?? null,
+    before: opts.before ?? null,
+  });
+export const sharedMedia = (roomId: string, kind: KindFilter, before: number | null = null) =>
+  invoke<SharedItem[]>("shared_media", { roomId, kind, before });
+export const searchStatus = (roomId: string | null = null) => invoke<SearchStatus>("search_status", { roomId });
+export const startSearchBackfill = () => invoke<void>("start_search_backfill");
 
 export interface PinnedMessage {
   event_id: string;

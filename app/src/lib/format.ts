@@ -39,3 +39,18 @@ export function dayLabel(ms: number, now = Date.now()): string {
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.getFullYear() === today.getFullYear() ? longDate.format(d) : longDateYear.format(d);
 }
+
+/** File size: 830 B · 42 KB · 3.1 MB. */
+export function formatSize(bytes: number | null | undefined): string {
+  if (bytes == null) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+/** Media length: 0:42 · 12:05. */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return "";
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}

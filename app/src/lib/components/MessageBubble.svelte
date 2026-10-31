@@ -18,6 +18,7 @@
   import VoicePlayer from "./VoicePlayer.svelte";
   import LinkPreview from "./LinkPreview.svelte";
   import PollView from "./PollView.svelte";
+  import { formatDuration, formatSize } from "$lib/format";
 
   let {
     msg,
@@ -233,18 +234,6 @@
     action();
   }
 
-  function formatSize(bytes: number | null) {
-    if (bytes == null) return "";
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  }
-
-  function formatDuration(ms: number | null) {
-    if (ms == null) return "";
-    const s = Math.round(ms / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  }
 </script>
 
 <div class="row" class:own={msg.is_own} class:first class:last>

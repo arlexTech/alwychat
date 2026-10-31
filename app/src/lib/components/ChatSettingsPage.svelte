@@ -5,17 +5,21 @@
   import { DEFAULT_QUICK_REACTION, DEFAULT_THEME, QUICK_REACTIONS, THEMES } from "$lib/themes";
   import Avatar from "./Avatar.svelte";
   import Page from "./Page.svelte";
+  import Images from "@lucide/svelte/icons/images";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
   let {
     roomId,
     hd,
     onChooseHd,
+    onSharedMedia,
     onClose,
   }: {
     roomId: string;
     /** This chat's photo quality: null = app default. */
     hd: boolean | null;
     onChooseHd: (hd: boolean | null) => void;
+    onSharedMedia: () => void;
     onClose: () => void;
   } = $props();
 
@@ -87,7 +91,13 @@
     <p class="muted hint">Only the chat's admins can change its theme, quick reaction and nicknames.</p>
   {/if}
 
-  <h3>Theme</h3>
+  <button class="link-row" onclick={onSharedMedia}>
+    <Images size={20} />
+    <span><strong>Shared media</strong><small>Photos, videos, files and links</small></span>
+    <ChevronRight size={18} />
+  </button>
+
+  <h3 class="section">Theme</h3>
   <div class="themes">
     {#each THEMES as t (t.id)}
       <button
@@ -160,6 +170,27 @@
 </Page>
 
 <style>
+  .link-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 14px;
+    background: var(--surface-2);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .link-row span {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+  }
+  .link-row small {
+    color: var(--muted);
+  }
   h3 {
     margin: 8px 0 10px;
     font-size: 0.8rem;

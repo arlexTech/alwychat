@@ -8,6 +8,7 @@
     getSettings,
     isAndroid,
     launchRoom,
+    startSearchBackfill,
     onOpenRoom,
     setupPush,
     setArchived,
@@ -19,6 +20,8 @@
   } from "$lib/backend";
   import { chat } from "$lib/stores/chat.svelte";
   import { drafts } from "$lib/stores/drafts.svelte";
+  import { MessageSearch } from "$lib/stores/search.svelte";
+  import SearchResults from "./SearchResults.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import { call } from "$lib/stores/call.svelte";
   import CallView from "./CallView.svelte";
@@ -47,6 +50,17 @@
 
   let filter = $state<Filter>("all");
   let query = $state("");
+  /** Messages matching the search box, under the matching chats. */
+  const messageSearch = new MessageSearch();
+  $effect(() => {
+    messageSearch.query = query;
+    messageSearch.changed();
+  });
+
+  function openHit(roomId: string, eventId: string) {
+    chat.jump(roomId, eventId);
+    selectedId = roomId;
+  }
   let selectedId = $state<string | null>(null);
   let menuOpen = $state(false);
   let settingsOpen = $state(false);
@@ -141,6 +155,8 @@
     presence.start();
     call.listen();
     drafts.start();
+    startSearchBackfill().catch(() => {});
+    messageSearch.start();
     // Tapped notifications open their chat (cold start, or while running).
     launchRoom().then((id) => id && (selectedId = id), () => {});
     const stopOpenRoom = onOpenRoom((id) => (selectedId = id));
@@ -214,7 +230,7 @@
         {#each Array(8) as _, i (i)}
           <div class="skeleton" style:animation-delay="{i * 60}ms"></div>
         {/each}
-      {:else if visible.length === 0}
+      {:else if visible.length === 0 && !messageSearch.active}
         <p class="state">{query ? "No chats match your search" : "Nothing here yet"}</p>
       {:else}
         {#each visible as room (room.id)}
@@ -227,6 +243,17 @@
             />
           </div>
         {/each}
+        {#if messageSearch.active}
+          <h4 class="results-title">
+            Messages
+            {#if messageSearch.status?.indexing}<small>· reading older history ({messageSearch.status.chats_done}/{messageSearch.status.chats} chats)</small>{/if}
+          </h4>
+          {#if messageSearch.hits.length}
+            <SearchResults hits={messageSearch.hits} onPick={(h) => openHit(h.room_id, h.event_id)} onMore={() => messageSearch.more()} />
+          {:else if !messageSearch.loading}
+            <p class="state small">No messages found</p>
+          {/if}
+        {/if}
       {/if}
     </div>
   </aside>
@@ -345,6 +372,19 @@
   }
   .menu button:hover {
     background: var(--surface-hover);
+  }
+  .results-title {
+    margin: 14px 12px 4px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .results-title small {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
   }
   .search {
     margin: 4px 16px 8px;

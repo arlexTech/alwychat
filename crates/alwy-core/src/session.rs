@@ -112,6 +112,9 @@ pub(crate) struct Active {
     /// Cleared when this session is torn down, so late token refreshes can't rewrite
     /// `session.json` after it was deleted (that would restore onto an empty store).
     pub may_persist: Arc<AtomicBool>,
+    /// Local message index (None if it couldn't be opened).
+    pub search: Option<Arc<crate::search::SearchIndex>>,
+    pub search_task: Option<tokio::task::AbortHandle>,
 }
 
 impl Core {
@@ -296,6 +299,7 @@ impl Core {
             active.may_persist.store(false, Ordering::SeqCst);
             active.tasks.iter().for_each(|t| t.abort());
             active.encryption_task.iter().for_each(|t| t.abort());
+            active.search_task.iter().for_each(|t| t.abort());
             active.sync.stop().await;
         }
     }
@@ -310,6 +314,7 @@ impl Core {
             active.may_persist.store(false, Ordering::SeqCst);
             active.tasks.iter().for_each(|t| t.abort());
             active.encryption_task.iter().for_each(|t| t.abort());
+            active.search_task.iter().for_each(|t| t.abort());
             active.sync.stop().await;
             if let Err(e) = active.client.oauth().logout().await {
                 warn!("server-side logout failed, wiping locally anyway: {e}");
@@ -399,6 +404,7 @@ impl Core {
             .await;
         crate::rtc::install(&client, self.on_call_signal.clone());
         crate::drafts::install(&client, self.on_draft.clone());
+        let search = crate::search::install(&client, &self.data_dir.join(STORE_DIR));
 
         // The event cache feeds timelines and chat-list previews; it must run before sync starts.
         client
@@ -421,6 +427,8 @@ impl Core {
             verifications,
             encryption_task: None,
             may_persist,
+            search,
+            search_task: None,
         });
         Ok(())
     }

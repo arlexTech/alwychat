@@ -74,6 +74,7 @@ async fn open_chat(
     on_typing: Channel<Vec<String>>,
     on_style: Channel<alwy_core::custom::ChatStyle>,
     on_pins: Channel<alwy_core::pins::Pins>,
+    focus: Option<String>,
 ) -> alwy_core::Result<()> {
     core.open_chat(
         &room_id,
@@ -89,8 +90,54 @@ async fn open_chat(
         move |pins| {
             let _ = on_pins.send(pins);
         },
+        focus.as_deref(),
     )
     .await
+}
+
+/// Newer messages of a chat opened on a search result; true once the newest is loaded.
+#[tauri::command]
+async fn load_newer(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<bool> {
+    core.load_newer(&room_id).await
+}
+
+/// Messages matching `query`, newest first, in all chats or one; `before` pages on.
+#[tauri::command]
+async fn search_messages(
+    core: State<'_, AppCore>,
+    query: String,
+    room_id: Option<String>,
+    sender: Option<String>,
+    kind: Option<alwy_core::search::KindFilter>,
+    before: Option<i64>,
+) -> alwy_core::Result<Vec<alwy_core::search::SearchHit>> {
+    core.search_messages(&query, room_id.as_deref(), sender.as_deref(), kind, before)
+        .await
+}
+
+/// A chat's photos and videos, files or links, newest first.
+#[tauri::command]
+async fn shared_media(
+    core: State<'_, AppCore>,
+    room_id: String,
+    kind: alwy_core::search::KindFilter,
+    before: Option<i64>,
+) -> alwy_core::Result<Vec<alwy_core::search::SharedItem>> {
+    core.shared_media(&room_id, kind, before).await
+}
+
+#[tauri::command]
+fn search_status(
+    core: State<'_, AppCore>,
+    room_id: Option<String>,
+) -> alwy_core::Result<alwy_core::search::SearchStatus> {
+    core.search_status(room_id.as_deref())
+}
+
+/// Start indexing older messages for search (once per session).
+#[tauri::command]
+async fn start_search_backfill(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.start_search_backfill()
 }
 
 #[tauri::command]
@@ -1041,6 +1088,11 @@ pub fn run() {
             file_action,
             decline_call,
             drafts,
+            load_newer,
+            search_messages,
+            shared_media,
+            search_status,
+            start_search_backfill,
             set_system_bars,
             set_draft,
             vote_poll,

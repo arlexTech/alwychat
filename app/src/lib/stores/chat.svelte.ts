@@ -1,4 +1,4 @@
-import { closeChat, loadOlder, openChat, type ChatStyle, type Pins, type TimelineEntry } from "$lib/backend";
+import { closeChat, loadNewer, loadOlder, openChat, type ChatStyle, type Pins, type TimelineEntry } from "$lib/backend";
 import { applyDiffs } from "./list";
 
 /** Older messages are fetched until at least this many entries are loaded. */
@@ -20,42 +20,107 @@ class Chat {
   /** Pinned messages (newest pin first). */
   pins = $state<Pins>({ messages: [], can_pin: false });
 
+  /** The message the timeline is centred on (opened from search); null = live, latest. */
+  focused = $state<string | null>(null);
+  /** A message found in the live timeline that the view should scroll to (then cleared). */
+  revealed = $state<string | null>(null);
+  /** The newest message is loaded (always, unless focused on an older one). */
+  atEnd = $state(true);
+  loadingNewer = $state(false);
+  /** A search result to show once this chat opens. */
+  #pendingFocus: { roomId: string; eventId: string } | null = null;
+  /** Bumped on every (re)load, so late updates of a replaced timeline are dropped. */
+  #generation = 0;
+
   async open(roomId: string) {
-    if (this.roomId === roomId) return;
+    const focus = this.#pendingFocus?.roomId === roomId ? this.#pendingFocus.eventId : null;
+    this.#pendingFocus = null;
+    if (this.roomId === roomId && !focus) return;
+    await this.#load(roomId, null);
+    if (focus) await this.#show(roomId, focus);
+  }
+
+  /** Show `eventId` in its chat: right away if it's open, else when the chat opens. */
+  jump(roomId: string, eventId: string) {
+    if (this.roomId === roomId) void this.#show(roomId, eventId);
+    else this.#pendingFocus = { roomId, eventId };
+  }
+
+  /** Recent messages stay in the live timeline; older ones open a timeline around them. */
+  async #show(roomId: string, eventId: string) {
+    if (this.focused) await this.#load(roomId, null);
+    if (await this.reveal(eventId, 3)) {
+      this.focused = null;
+      this.revealed = eventId;
+    } else if (this.roomId === roomId) {
+      await this.#load(roomId, eventId);
+    }
+  }
+
+  /** Back to the latest messages (live) after viewing a search result. */
+  async latest() {
+    if (this.roomId && this.focused) await this.#load(this.roomId, null);
+  }
+
+  async #load(roomId: string, focus: string | null) {
+    const generation = ++this.#generation;
+    const current = () => this.#generation === generation;
+    const sameRoom = this.roomId === roomId;
     this.roomId = roomId;
+    this.focused = focus;
+    this.atEnd = !focus;
     this.entries = [];
     this.loaded = false;
     this.atStart = false;
     this.error = null;
-    this.typing = [];
-    // Last known look right away, so the chat doesn't flash the default theme.
-    this.style = this.#styles.get(roomId) ?? null;
-    this.pins = { messages: [], can_pin: false };
+    if (!sameRoom) {
+      this.typing = [];
+      // Last known look right away, so the chat doesn't flash the default theme.
+      this.style = this.#styles.get(roomId) ?? null;
+      this.pins = { messages: [], can_pin: false };
+    }
     try {
       await openChat(
         roomId,
         (diffs) => {
-          // Late batches from the previous chat are dropped.
-          if (this.roomId !== roomId) return;
+          // Late batches from the previous timeline are dropped.
+          if (!current()) return;
           applyDiffs(this.entries, diffs);
           this.loaded = true;
         },
         (names) => {
-          if (this.roomId === roomId) this.typing = names;
+          if (current()) this.typing = names;
         },
         (style) => {
           this.#styles.set(roomId, style);
-          if (this.roomId === roomId) this.style = style;
+          if (current()) this.style = style;
         },
         (pins) => {
-          if (this.roomId === roomId) this.pins = pins;
+          if (current()) this.pins = pins;
         },
+        focus,
       );
-      while (this.roomId === roomId && !this.atStart && this.entries.length < MIN_ENTRIES) {
+      while (current() && !focus && !this.atStart && this.entries.length < MIN_ENTRIES) {
         if (!(await this.older())) break;
       }
     } catch (e) {
-      if (this.roomId === roomId) this.error = String(e);
+      if (current()) this.error = String(e);
+    }
+  }
+
+  /** Fetch newer messages of a focused timeline. */
+  async newer() {
+    const roomId = this.roomId;
+    if (!roomId || !this.focused || this.atEnd || this.loadingNewer) return;
+    this.loadingNewer = true;
+    const generation = this.#generation;
+    try {
+      const atEnd = await loadNewer(roomId);
+      if (this.#generation === generation) this.atEnd = atEnd;
+    } catch (e) {
+      if (this.#generation === generation) this.error = String(e);
+    } finally {
+      this.loadingNewer = false;
     }
   }
 
@@ -77,9 +142,9 @@ class Chat {
   }
 
   /** Load older messages until `eventId` is in the timeline (gives up after a few pages). */
-  async reveal(eventId: string): Promise<boolean> {
+  async reveal(eventId: string, pages = 15): Promise<boolean> {
     const has = () => this.entries.some((e) => e.type === "message" && e.item_id === eventId);
-    for (let page = 0; !has() && page < 15; page++) {
+    for (let page = 0; !has() && page < pages; page++) {
       if (!(await this.older())) break;
     }
     return has();
@@ -87,6 +152,8 @@ class Chat {
 
   close() {
     if (!this.roomId) return;
+    this.#generation++;
+    this.focused = null;
     this.roomId = null;
     this.entries = [];
     this.typing = [];

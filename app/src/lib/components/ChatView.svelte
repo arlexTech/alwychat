@@ -13,6 +13,8 @@
   import Lock from "@lucide/svelte/icons/lock";
   import Phone from "@lucide/svelte/icons/phone";
   import Video from "@lucide/svelte/icons/video";
+  import SearchIcon from "@lucide/svelte/icons/search";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SendHorizontal from "@lucide/svelte/icons/send-horizontal";
   import Image from "@lucide/svelte/icons/image";
@@ -51,6 +53,8 @@
   import { drafts } from "$lib/stores/drafts.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { playEffect } from "$lib/effects";
+  import ChatSearchPage from "./ChatSearchPage.svelte";
+  import SharedMediaPage from "./SharedMediaPage.svelte";
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
   import MediaViewer from "./MediaViewer.svelte";
@@ -334,6 +338,8 @@
   function onScroll() {
     const fromTop = scroller.scrollHeight + scroller.scrollTop - scroller.clientHeight;
     if (fromTop < 400) chat.older();
+    // Opened on an older message: newer ones load near the bottom.
+    if (chat.focused && Math.abs(scroller.scrollTop) < 400) chat.newer();
   }
 
   // Read receipts: whenever new content arrives while we're at the bottom and focused.
@@ -356,6 +362,7 @@
     if (pending.length && !editing) return sendAttachments(body);
     if (!body) return;
     if (editing) return saveEdit(editing, body);
+    if (chat.focused) await chat.latest();
     stopTyping(room.id);
     const reply = replyTo?.item_id ?? null;
     const mentions = mention.picked;
@@ -735,6 +742,43 @@
     pinIndex = (pinIndex + 1) % chat.pins.messages.length;
   }
 
+  let searchOpen = $state(false);
+  let mediaOpen = $state(false);
+  $effect(() => {
+    if (searchOpen) return closeOnBack(() => (searchOpen = false));
+  });
+  $effect(() => {
+    if (mediaOpen) return closeOnBack(() => (mediaOpen = false));
+  });
+
+  /** Show a search result or shared item: in the loaded messages if it's there, else around it. */
+  async function showMessage(eventId: string) {
+    searchOpen = false;
+    mediaOpen = false;
+    await tick();
+    if (chat.entries.some((e) => e.type === "message" && e.item_id === eventId)) return jumpTo(eventId);
+    chat.jump(room.id, eventId);
+  }
+
+  // A timeline opened on a message: bring it into view once loaded.
+  let jumpedTo: string | null = null;
+  $effect(() => {
+    const target = chat.focused;
+    if (!target || !chat.loaded || jumpedTo === target) return;
+    jumpedTo = target;
+    tick().then(() => jumpTo(target));
+  });
+  $effect(() => {
+    if (!chat.focused) jumpedTo = null;
+  });
+  // Or found among the latest messages.
+  $effect(() => {
+    const target = chat.revealed;
+    if (!target) return;
+    chat.revealed = null;
+    tick().then(() => jumpTo(target));
+  });
+
   function jumpTo(eventId: string) {
     const el = scroller.querySelector<HTMLElement>(`[data-event="${CSS.escape(eventId)}"]`);
     if (!el) return;
@@ -786,6 +830,7 @@
       {/if}
     </span>
   </button>
+  <button class="chat-menu-button" onclick={() => (searchOpen = true)} aria-label="Search in chat"><SearchIcon size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call"><Phone size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
 </header>
@@ -848,7 +893,13 @@
   </button>
 {/if}
 {#if chatMenuOpen}
-  <ChatSettingsPage roomId={room.id} hd={chatHd} onChooseHd={chooseHd} onClose={() => (chatMenuOpen = false)} />
+  <ChatSettingsPage
+    roomId={room.id}
+    hd={chatHd}
+    onChooseHd={chooseHd}
+    onSharedMedia={() => ((chatMenuOpen = false), (mediaOpen = true))}
+    onClose={() => (chatMenuOpen = false)}
+  />
 {/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1038,6 +1089,17 @@
 
 {#if viewer}
   <MediaViewer items={viewer.items} index={viewer.index} onClose={() => (viewer = null)} />
+{/if}
+{#if searchOpen}
+  <ChatSearchPage roomId={room.id} onPick={showMessage} onClose={() => (searchOpen = false)} />
+{/if}
+{#if mediaOpen}
+  <SharedMediaPage roomId={room.id} onShow={showMessage} onClose={() => (mediaOpen = false)} />
+{/if}
+{#if chat.focused}
+  <button class="latest" onclick={() => chat.latest()} transition:fade={{ duration: 150 }}>
+    <ArrowDown size={16} /> Latest
+  </button>
 {/if}
 
 {#if confirmDelete}
@@ -1432,6 +1494,22 @@
       transform: translateY(-4px);
       opacity: 1;
     }
+  }
+  .latest {
+    position: fixed;
+    right: 16px;
+    bottom: 84px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: none;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
+    color: white;
+    cursor: pointer;
   }
   .toast {
     position: fixed;

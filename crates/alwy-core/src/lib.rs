@@ -18,6 +18,7 @@ pub mod presence;
 pub mod push;
 pub mod rooms;
 pub mod rtc;
+pub mod search;
 pub mod session;
 pub mod settings;
 pub mod timeline;

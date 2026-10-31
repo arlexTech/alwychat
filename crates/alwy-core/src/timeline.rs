@@ -12,8 +12,8 @@ use matrix_sdk::ruma::{
 };
 use matrix_sdk_ui::timeline::{
     EventSendState, EventTimelineItem, MembershipChange, MsgLikeKind, RoomExt, Timeline,
-    TimelineDetails, TimelineEventItemId, TimelineItem, TimelineItemContent, TimelineItemKind,
-    VirtualTimelineItem,
+    TimelineDetails, TimelineEventFocusThreadMode, TimelineEventItemId, TimelineFocus,
+    TimelineItem, TimelineItemContent, TimelineItemKind, VirtualTimelineItem,
 };
 use serde::Serialize;
 use tracing::warn;
@@ -30,6 +30,8 @@ use crate::{
 
 /// Events fetched per back-pagination request.
 const PAGE_EVENTS: u16 = 40;
+/// Messages loaded around a search result.
+const FOCUS_CONTEXT_EVENTS: u16 = 30;
 
 /// One row of the timeline, in the same order as the SDK's items so diff indices stay valid.
 #[derive(Debug, Clone, Serialize)]
@@ -235,11 +237,24 @@ impl crate::Core {
         on_typing: impl Fn(Vec<String>) + Send + 'static,
         on_style: impl Fn(crate::custom::ChatStyle) + Send + Sync + 'static,
         on_pins: impl Fn(crate::pins::Pins) + Send + Sync + 'static,
+        focus: Option<&str>,
     ) -> Result<()> {
         let client = self.client()?;
         let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
         let room = client.get_room(&room_id).ok_or(Error::UnknownRoom)?;
-        let timeline = Arc::new(room.timeline().await.map_err(timeline_err)?);
+        // Focused on one message (a search result): its surroundings, paginated both ways,
+        // without live updates until the UI goes back to the latest messages.
+        let builder = match focus {
+            Some(event_id) => room.timeline_builder().with_focus(TimelineFocus::Event {
+                target: OwnedEventId::try_from(event_id).map_err(|_| Error::UnknownEvent)?,
+                num_context_events: FOCUS_CONTEXT_EVENTS,
+                thread_mode: TimelineEventFocusThreadMode::Automatic {
+                    hide_threaded_events: false,
+                },
+            }),
+            None => room.timeline_builder(),
+        };
+        let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
 
         let task = tokio::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
             .abort_handle();
@@ -267,6 +282,16 @@ impl crate::Core {
         let timeline = self.timeline(room_id)?;
         timeline
             .paginate_backwards(PAGE_EVENTS)
+            .await
+            .map_err(timeline_err)
+    }
+
+    /// Load newer messages (a timeline focused on a search result). Returns `true` once
+    /// the newest message is reached.
+    pub async fn load_newer(&self, room_id: &str) -> Result<bool> {
+        let timeline = self.timeline(room_id)?;
+        timeline
+            .paginate_forwards(PAGE_EVENTS)
             .await
             .map_err(timeline_err)
     }
