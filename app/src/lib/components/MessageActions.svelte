@@ -9,11 +9,13 @@
   import PinOff from "@lucide/svelte/icons/pin-off";
   import Reply from "@lucide/svelte/icons/reply";
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import type { MessageEntry } from "$lib/backend";
 
   export interface Actions {
     react: (key: string) => void;
     reply?: () => void;
+    thread?: () => void;
     copy?: () => void;
     forward?: () => void;
     /** Present when we may pin in this chat. */
@@ -52,6 +54,7 @@
   </div>
   <div class="list">
     {#if actions.reply}<button onclick={() => run(actions.reply!)}><Reply size={20} />Reply</button>{/if}
+    {#if actions.thread}<button onclick={() => run(actions.thread!)}><MessagesSquare size={20} />Reply in thread</button>{/if}
     {#if actions.copy}<button onclick={() => run(actions.copy!)}><Copy size={20} />Copy text</button>{/if}
     {#if actions.forward}<button onclick={() => run(actions.forward!)}><Forward size={20} />Forward</button>{/if}
     {#if actions.pin}

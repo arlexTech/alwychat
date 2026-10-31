@@ -530,6 +530,7 @@
   .chat-pane {
     /* Re-derived here: --accent on :root was computed from the default colours. */
     --accent: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;

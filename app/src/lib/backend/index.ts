@@ -223,6 +223,8 @@ export interface MessageEntry {
   seen_by: { name: string; avatar: string | null }[];
   /** Mentions us (or @room). */
   mentions_me: boolean;
+  /** Replies in the thread started on this message. */
+  thread: ThreadInfo | null;
 }
 
 /** Element-compatible message effects. */
@@ -291,6 +293,13 @@ export interface ChatStyle {
   can_edit: boolean;
 }
 
+export interface ThreadInfo {
+  replies: number;
+  latest_sender: string | null;
+  latest_avatar: string | null;
+  latest_text: string | null;
+}
+
 export function openChat(
   roomId: string,
   onDiffs: (diffs: ListDiff<TimelineEntry>[]) => void,
@@ -310,6 +319,16 @@ export function openChat(
   pins.onmessage = onPins;
   return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing, onStyle: style, onPins: pins, focus });
 }
+/**
+ * Open the thread started on `root` in the open chat. Until closed, passing `root` where a
+ * command takes a room ID (send, react, edit, delete, load older, mark read…) acts on the thread.
+ */
+export function openThread(roomId: string, root: string, onDiffs: (diffs: ListDiff<TimelineEntry>[]) => void) {
+  const diffs = new Channel<ListDiff<TimelineEntry>[]>();
+  diffs.onmessage = onDiffs;
+  return invoke<void>("open_thread", { roomId, root, onDiffs: diffs });
+}
+export const closeThread = () => invoke<void>("close_thread");
 /** Newer messages of a chat opened on a search result; resolves to true at the newest. */
 export const loadNewer = (roomId: string) => invoke<boolean>("load_newer", { roomId });
 

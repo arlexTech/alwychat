@@ -9,6 +9,7 @@
   import SmilePlus from "@lucide/svelte/icons/smile-plus";
   import Reply from "@lucide/svelte/icons/reply";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
+  import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import { fade, scale } from "svelte/transition";
   import { openExternal, type MessageEntry } from "$lib/backend";
   import { clockTime } from "$lib/format";
@@ -40,6 +41,7 @@
     onPin,
     roomId,
     onLongPress,
+    onThread,
     album = null,
   }: {
     msg: MessageEntry;
@@ -64,6 +66,8 @@
     roomId: string;
     /** Touch long-press: the chat shows its action sheet (instead of the small menu). */
     onLongPress?: () => void;
+    /** Open the thread on this message (absent inside a thread). */
+    onThread?: () => void;
     /** Whether it's pinned; null when we can't pin in this chat. */
     pinned?: boolean | null;
     onPin?: (pin: boolean) => void;
@@ -164,7 +168,7 @@
   const albumSize = $derived(album && album.length > 1 ? album.length : 0);
   const canSaveToGallery = $derived(albumSize > 0 || ((c.kind === "image" || c.kind === "video") && !muted));
   const hasMenu = $derived(
-    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery,
+    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || (!!onThread && remote && msg.can_reply),
   );
 
   // Right-click (desktop) or long-press (touch) opens the same menu as ⋯.
@@ -382,6 +386,9 @@
               {#if pinned}<PinOff size={16} />Unpin{:else}<Pin size={16} />Pin{/if}
             </button>
           {/if}
+          {#if onThread && remote && msg.can_reply}
+            <button onclick={() => pick(onThread)}><MessagesSquare size={16} />Reply in thread</button>
+          {/if}
           {#if msg.can_edit}<button onclick={() => pick(onEdit)}><Pencil size={16} />Edit</button>{/if}
           {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}><History size={16} />Edit history</button>{/if}
           {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}><Trash2 size={16} />Delete</button>{/if}
@@ -397,6 +404,18 @@
           </button>
         {/each}
       </div>
+    {/if}
+
+    {#if msg.thread && msg.thread.replies > 0 && onThread}
+      {@const t = msg.thread}
+      <button class="thread" onclick={onThread}>
+        <MessagesSquare size={15} />
+        <strong>{t.replies} {t.replies === 1 ? "reply" : "replies"}</strong>
+        {#if t.latest_sender}
+          <Avatar name={t.latest_sender} mxc={t.latest_avatar} size={16} />
+          <span>{t.latest_text}</span>
+        {/if}
+      </button>
     {/if}
 
     {#if msg.send_state === "failed"}
@@ -677,6 +696,32 @@
     transform: scale(1.3);
   }
 
+  .thread {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: min(320px, 100%);
+    margin: 2px 6px 4px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: inherit;
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .thread strong {
+    flex: none;
+    color: var(--accent-b, var(--text));
+  }
+  .thread span {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--muted);
+  }
   .reactions {
     display: flex;
     flex-wrap: wrap;

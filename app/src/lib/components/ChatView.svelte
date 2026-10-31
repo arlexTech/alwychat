@@ -69,8 +69,33 @@
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
+  import ChatView from "./ChatView.svelte";
+  import { ThreadTimeline } from "$lib/stores/thread.svelte";
 
-  let { room, onBack }: { room: RoomSummary; onBack: () => void } = $props();
+  let {
+    room,
+    onBack,
+    thread = null,
+  }: {
+    room: RoomSummary;
+    onBack: () => void;
+    /** Show the thread started on this message instead of the chat. */
+    thread?: string | null;
+  } = $props();
+
+  // The chat's timeline, or the thread's. Commands that take a room ID act on the thread
+  // when given its root (`target`); room-wide ones (typing, pins, settings) keep `room.id`.
+  const tl = untrack(() => (thread ? new ThreadTimeline(room.id, thread) : chat));
+  const target = $derived(thread ?? room.id);
+  $effect(() => () => {
+    if (tl instanceof ThreadTimeline) tl.close();
+  });
+
+  /** The thread open over this chat. */
+  let threadRoot = $state<string | null>(null);
+  $effect(() => {
+    if (threadRoot) return closeOnBack(() => (threadRoot = null));
+  });
 
   /** Messages from the same sender closer than this are drawn as one run. */
   const GROUP_GAP_MS = 5 * 60_000;
@@ -101,7 +126,7 @@
     }
     sendingFiles = true;
     try {
-      await sendVoice(room.id, recording);
+      await sendVoice(target, recording);
     } catch (e) {
       sendError = String(e);
     } finally {
@@ -181,6 +206,11 @@
 
   $effect(() => {
     const id = room.id;
+    threadRoot = null;
+    if (thread) {
+      untrack(() => mention.reset(id, !room.is_dm));
+      return;
+    }
     const saved = untrack(() => drafts.get(id));
     draft = saved?.text ?? "";
     draftReply = saved?.reply_to ?? null;
@@ -207,8 +237,8 @@
   const EFFECT_MAX_AGE_MS = 120_000;
   const effectsPlayed = new Set<string>();
   $effect(() => {
-    if (!chat.loaded || !prefs.effects) return;
-    for (const e of chat.entries.slice(-8)) {
+    if (thread || !tl.loaded || !prefs.effects) return;
+    for (const e of tl.entries.slice(-8)) {
       if (e.type !== "message" || effectsPlayed.has(e.key)) continue;
       const c = e.content;
       if ((c.kind !== "text" && c.kind !== "emote") || !c.effect) continue;
@@ -221,13 +251,13 @@
   $effect(() => {
     const text = draft;
     const reply = replyTo?.item_id ?? draftReply;
-    if (editing) return;
+    if (editing || thread) return;
     untrack(() => drafts.set(room.id, text, reply));
   });
   $effect(() => {
-    if (!draftReply || !chat.loaded) return;
+    if (!draftReply || !tl.loaded) return;
     const id = draftReply;
-    const entry = chat.entries.find((e) => e.type === "message" && e.item_id === id);
+    const entry = tl.entries.find((e) => e.type === "message" && e.item_id === id);
     if (entry?.type === "message") replyTo = entry;
     draftReply = null;
   });
@@ -280,7 +310,7 @@
 
   const rows = $derived.by(() => {
     const out: Row[] = [];
-    for (const e of chat.entries) {
+    for (const e of tl.entries) {
       switch (e.type) {
         case "message": {
           const prev = out.at(-1);
@@ -337,20 +367,22 @@
   // and the browser keeps that anchor while older messages are prepended.
   function onScroll() {
     const fromTop = scroller.scrollHeight + scroller.scrollTop - scroller.clientHeight;
-    if (fromTop < 400) chat.older();
+    if (fromTop < 400) tl.older();
     // Opened on an older message: newer ones load near the bottom.
-    if (chat.focused && Math.abs(scroller.scrollTop) < 400) chat.newer();
+    if (tl.focused && Math.abs(scroller.scrollTop) < 400) tl.newer();
   }
 
   // Read receipts: whenever new content arrives while we're at the bottom and focused.
   let readTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
-    chat.entries.length;
-    const id = room.id;
+    tl.entries.length;
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
+      // A thread with no replies yet has nothing to read (the root belongs to the chat).
+      const last = tl.entries.findLast((e) => e.type === "message");
+      if (thread && (!last || (last.type === "message" && last.item_id === thread))) return;
       if (document.hasFocus() && scroller && Math.abs(scroller.scrollTop) < 40) {
-        markRead(id).catch(() => {});
+        markRead(target).catch(() => {});
       }
     }, 600);
     return () => clearTimeout(readTimer);
@@ -362,7 +394,7 @@
     if (pending.length && !editing) return sendAttachments(body);
     if (!body) return;
     if (editing) return saveEdit(editing, body);
-    if (chat.focused) await chat.latest();
+    if (tl.focused) await tl.latest();
     stopTyping(room.id);
     const reply = replyTo?.item_id ?? null;
     const mentions = mention.picked;
@@ -374,7 +406,7 @@
     autosize();
     scroller.scrollTo({ top: 0, behavior: "smooth" });
     try {
-      await sendMessage(room.id, body, reply, mentions);
+      await sendMessage(target, body, reply, mentions);
     } catch (e) {
       sendError = String(e);
       draft ||= body;
@@ -425,7 +457,7 @@
     scroller.scrollTo({ top: 0, behavior: "smooth" });
     sendingFiles = true;
     try {
-      if (text && files.length > 1) await sendMessage(room.id, text, null);
+      if (text && files.length > 1) await sendMessage(target, text, null);
       const isPhoto = (f: Pending) => f.mime.startsWith("image/") && f.mime !== "image/gif";
       const photos = files.filter(isPhoto).length;
       const galleryId = photos > 1 ? crypto.randomUUID() : null;
@@ -434,8 +466,8 @@
       for (const f of files) {
         const gallery = galleryId && isPhoto(f) ? { id: galleryId, index: index++, count: photos } : null;
         const meta = { caption: files.length === 1 ? text : null, gallery };
-        if (f.picked) await sendPicked(room.id, f.picked, meta);
-        else if (f.file) await sendFile(room.id, f.file, meta);
+        if (f.picked) await sendPicked(target, f.picked, meta);
+        else if (f.file) await sendFile(target, f.file, meta);
       }
     } catch (e) {
       sendError = String(e);
@@ -484,7 +516,7 @@
     autosize();
     if (body === editableText(msg)) return;
     try {
-      await editMessage(room.id, msg.item_id, body, mentions);
+      await editMessage(target, msg.item_id, body, mentions);
     } catch (e) {
       sendError = String(e);
     }
@@ -516,7 +548,7 @@
   async function doDelete(msg: MessageEntry) {
     confirmDelete = null;
     try {
-      await deleteMessage(room.id, msg.item_id);
+      await deleteMessage(target, msg.item_id);
     } catch (e) {
       sendError = String(e);
     }
@@ -525,7 +557,7 @@
   async function showHistory(msg: MessageEntry) {
     history = { revisions: null, error: null };
     try {
-      history = { revisions: await editHistory(room.id, msg.item_id), error: null };
+      history = { revisions: await editHistory(target, msg.item_id), error: null };
     } catch (e) {
       history = { revisions: [], error: String(e) };
     }
@@ -623,7 +655,7 @@
   }
 
   function react(msg: MessageEntry, key: string) {
-    toggleReaction(room.id, msg.item_id, key).catch((e) => (sendError = String(e)));
+    toggleReaction(target, msg.item_id, key).catch((e) => (sendError = String(e)));
   }
 
   // Long-press action sheet (touch) and forwarding.
@@ -673,6 +705,7 @@
       reply: msg.can_reply ? () => startReply(msg) : undefined,
       copy: text ? () => copyText(text) : undefined,
       forward: forwardable ? () => (forwardIds = items.map((m) => m.item_id)) : undefined,
+      thread: !thread && remote && msg.can_reply ? () => (threadRoot = msg.item_id) : undefined,
       pin: chat.pins.can_pin && remote ? { pinned, toggle: () => setPin(msg.item_id, !pinned) } : undefined,
       save: visual
         ? { label: items.length > 1 ? `Save all (${items.length})` : "Save to gallery", run: () => saveVisualMedia(items) }
@@ -685,13 +718,13 @@
     };
   }
 
-  async function forwardTo(target: RoomSummary) {
+  async function forwardTo(to: RoomSummary) {
     const ids = forwardIds;
     forwardIds = null;
     if (!ids) return;
     try {
-      const sent = await forwardMessages(room.id, ids, target.id);
-      flash(sent ? `Forwarded to ${target.name}` : "Couldn't forward that message");
+      const sent = await forwardMessages(target, ids, to.id);
+      flash(sent ? `Forwarded to ${to.name}` : "Couldn't forward that message");
     } catch (e) {
       flash(`Couldn't forward: ${e}`);
     }
@@ -728,7 +761,7 @@
   }
 
   async function showPin(eventId: string) {
-    if (!(await chat.reveal(eventId))) {
+    if (!(await tl.reveal(eventId))) {
       sendError = "That message is too far back to show";
       return;
     }
@@ -756,26 +789,26 @@
     searchOpen = false;
     mediaOpen = false;
     await tick();
-    if (chat.entries.some((e) => e.type === "message" && e.item_id === eventId)) return jumpTo(eventId);
+    if (tl.entries.some((e) => e.type === "message" && e.item_id === eventId)) return jumpTo(eventId);
     chat.jump(room.id, eventId);
   }
 
   // A timeline opened on a message: bring it into view once loaded.
   let jumpedTo: string | null = null;
   $effect(() => {
-    const target = chat.focused;
-    if (!target || !chat.loaded || jumpedTo === target) return;
+    const target = tl.focused;
+    if (!target || !tl.loaded || jumpedTo === target) return;
     jumpedTo = target;
     tick().then(() => jumpTo(target));
   });
   $effect(() => {
-    if (!chat.focused) jumpedTo = null;
+    if (!tl.focused) jumpedTo = null;
   });
   // Or found among the latest messages.
   $effect(() => {
-    const target = chat.revealed;
+    const target = tl.revealed;
     if (!target) return;
-    chat.revealed = null;
+    tl.revealed = null;
     tick().then(() => jumpTo(target));
   });
 
@@ -809,7 +842,7 @@
 
   const typingText = $derived.by(() => {
     const t = chat.typing;
-    if (t.length === 0) return null;
+    if (t.length === 0 || thread) return null;
     if (room.is_dm) return "typing";
     if (t.length === 1) return `${t[0]} is typing`;
     if (t.length === 2) return `${t[0]} and ${t[1]} are typing`;
@@ -819,6 +852,12 @@
 
 <header class="chat-header">
   <button class="back" onclick={onBack} aria-label="Back"><ChevronLeft size={26} /></button>
+  {#if thread}
+  <span class="title thread-title">
+    <strong>Thread</strong>
+    <span class="sub">{title}</span>
+  </span>
+  {:else}
   <button class="who" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings">
     <Avatar name={room.name} mxc={room.avatar} size={40} />
     <span class="title">
@@ -833,8 +872,9 @@
   <button class="chat-menu-button" onclick={() => (searchOpen = true)} aria-label="Search in chat"><SearchIcon size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call"><Phone size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
+  {/if}
 </header>
-{#if shownPin}
+{#if shownPin && !thread}
   <div class="pin-banner" transition:fade={{ duration: 150 }}>
     <button class="pin-main" onclick={onPinBanner}>
       <Pin size={16} />
@@ -866,7 +906,7 @@
   <ForwardPage onPick={forwardTo} onClose={() => (forwardIds = null)} />
 {/if}
 {#if pollOpen}
-  <PollCreator roomId={room.id} onClose={() => (pollOpen = false)} />
+  <PollCreator roomId={target} onClose={() => (pollOpen = false)} />
 {/if}
 {#if pinsOpen}
   <Page title="Pinned messages" onClose={() => (pinsOpen = false)}>
@@ -885,7 +925,7 @@
     </ul>
   </Page>
 {/if}
-{#if room.in_call.length && call.roomId !== room.id}
+{#if room.in_call.length && call.roomId !== room.id && !thread}
   <button class="call-banner" onclick={() => call.join(room, false)} transition:fade={{ duration: 150 }}>
     <span class="call-dot"></span>
     <span>{room.in_call.length} in the call</span>
@@ -915,10 +955,10 @@
     <div class="drop-hint" transition:fade={{ duration: 120 }}>Drop to send</div>
   {/if}
   <div class="timeline">
-    {#if chat.error}
-      <p class="center error">{chat.error}</p>
+    {#if tl.error}
+      <p class="center error">{tl.error}</p>
     {/if}
-    {#if chat.loadingOlder}
+    {#if tl.loadingOlder}
       <div class="spinner" aria-label="Loading older messages"></div>
     {/if}
 
@@ -944,7 +984,8 @@
             onSaveToGallery={() => saveVisualMedia(row.album ?? [row.msg])}
             pinned={chat.pins.can_pin ? pinnedIds.has(row.msg.item_id) : null}
             onPin={(pin) => setPin(row.msg.item_id, pin)}
-            roomId={room.id}
+            roomId={target}
+            onThread={thread ? undefined : () => (threadRoot = row.msg.item_id)}
             onLongPress={() => (actionFor = { msg: row.msg, album: row.album })}
           />
         </div>
@@ -954,12 +995,12 @@
         <p class="center notice">{row.text}</p>
       {:else if row.kind === "unread"}
         <div class="unread"><span>New messages</span></div>
-      {:else if row.kind === "start"}
+      {:else if row.kind === "start" && !thread}
         <p class="center notice">This is the beginning of {room.name} ✨</p>
       {/if}
     {/each}
 
-    {#if chat.loaded && rows.length === 0 && chat.atStart}
+    {#if tl.loaded && rows.length === 0 && tl.atStart}
       <p class="center notice">No messages yet. Say hi 👋</p>
     {/if}
 
@@ -1078,7 +1119,7 @@
         type="button"
         class="quick"
         aria-label="Send {QUICK_REACTION}"
-        onclick={() => sendMessage(room.id, QUICK_REACTION, null).catch((e) => (sendError = String(e)))}
+        onclick={() => sendMessage(target, QUICK_REACTION, null).catch((e) => (sendError = String(e)))}
       >{QUICK_REACTION}</button>
     {/if}
   </div>
@@ -1096,8 +1137,15 @@
 {#if mediaOpen}
   <SharedMediaPage roomId={room.id} onShow={showMessage} onClose={() => (mediaOpen = false)} />
 {/if}
-{#if chat.focused}
-  <button class="latest" onclick={() => chat.latest()} transition:fade={{ duration: 150 }}>
+{#if threadRoot}
+  {#key threadRoot}
+    <div class="thread-layer" transition:fly={{ x: 48, duration: 200 }}>
+      <ChatView {room} thread={threadRoot} onBack={() => (threadRoot = null)} />
+    </div>
+  {/key}
+{/if}
+{#if tl.focused}
+  <button class="latest" onclick={() => tl.latest()} transition:fade={{ duration: 150 }}>
     <ArrowDown size={16} /> Latest
   </button>
 {/if}
@@ -1141,6 +1189,18 @@
 {/if}
 
 <style>
+  /* A thread covers its chat (the chat pane is its positioning box). */
+  .thread-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+  .thread-title {
+    flex: 1;
+  }
   .chat-header {
     position: relative;
     display: flex;

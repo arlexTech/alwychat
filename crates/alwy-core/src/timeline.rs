@@ -85,6 +85,17 @@ pub struct MessageEntry {
     pub seen_by: Vec<Reader>,
     /// Mentions us (or @room), per our push rules.
     pub mentions_me: bool,
+    /// Replies in the thread started on this message (Element-compatible threads).
+    pub thread: Option<ThreadInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreadInfo {
+    pub replies: u32,
+    /// The latest reply, once loaded.
+    pub latest_sender: Option<String>,
+    pub latest_avatar: Option<String>,
+    pub latest_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,6 +230,20 @@ pub(crate) struct OpenChat {
     /// Keeps the theme/quick reaction/nicknames watch alive while the chat is open.
     _style: matrix_sdk::event_handler::EventHandlerDropGuard,
     _pins: matrix_sdk::event_handler::EventHandlerDropGuard,
+    /// A thread of this chat, open beside it.
+    thread: Option<OpenThread>,
+}
+
+pub(crate) struct OpenThread {
+    root: OwnedEventId,
+    timeline: Arc<Timeline>,
+    task: tokio::task::AbortHandle,
+}
+
+impl Drop for OpenThread {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl Drop for OpenChat {
@@ -249,10 +274,13 @@ impl crate::Core {
                 target: OwnedEventId::try_from(event_id).map_err(|_| Error::UnknownEvent)?,
                 num_context_events: FOCUS_CONTEXT_EVENTS,
                 thread_mode: TimelineEventFocusThreadMode::Automatic {
-                    hide_threaded_events: false,
+                    hide_threaded_events: true,
                 },
             }),
-            None => room.timeline_builder(),
+            // Thread replies live in their thread; the root shows a summary instead.
+            None => room.timeline_builder().with_focus(TimelineFocus::Live {
+                hide_threaded_events: true,
+            }),
         };
         let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
 
@@ -269,12 +297,59 @@ impl crate::Core {
                 typing_task,
                 _style: style,
                 _pins: pins,
+                thread: None,
             })
         })
     }
 
     pub fn close_chat(&self) -> Result<()> {
         self.with_active(|a| a.chat = None)
+    }
+
+    /// Open the thread started on `root` (it may have no replies yet) in the open chat and
+    /// stream it to `sink`. Every command that takes a `room_id` acts on the thread when
+    /// given the root's event ID instead (sending there adds the thread relation).
+    pub async fn open_thread(
+        &self,
+        room_id: &str,
+        root: &str,
+        sink: impl FnMut(Vec<ListDiff<TimelineEntry>>) + Send + 'static,
+    ) -> Result<()> {
+        let room = self.timeline(room_id)?.room().clone();
+        let root = OwnedEventId::try_from(root).map_err(|_| Error::UnknownEvent)?;
+        let timeline = Arc::new(
+            room.timeline_builder()
+                .with_focus(TimelineFocus::Thread {
+                    root_event_id: root.clone(),
+                })
+                .build()
+                .await
+                .map_err(timeline_err)?,
+        );
+        let task = tokio::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
+            .abort_handle();
+        self.with_active(|a| match a.chat.as_mut() {
+            Some(chat) if chat.room_id == room_id => {
+                chat.thread = Some(OpenThread {
+                    root,
+                    timeline,
+                    task,
+                });
+                Ok(())
+            }
+            _ => {
+                task.abort();
+                Err(Error::ChatNotOpen)
+            }
+        })?
+    }
+
+    pub fn close_thread(&self) -> Result<()> {
+        self.with_active(|a| {
+            if let Some(chat) = a.chat.as_mut() {
+                chat.thread = None;
+            }
+        })
     }
 
     /// Load older messages. Returns `true` once the start of the room is reached.
@@ -427,12 +502,17 @@ impl crate::Core {
         Ok(())
     }
 
+    /// The open chat's timeline, or its open thread's when `room_id` is the thread root.
     pub(crate) fn timeline(&self, room_id: &str) -> Result<Arc<Timeline>> {
         self.with_active(|a| {
-            a.chat
+            let chat = a.chat.as_ref()?;
+            if chat.room_id.as_str() == room_id {
+                return Some(chat.timeline.clone());
+            }
+            chat.thread
                 .as_ref()
-                .filter(|c| c.room_id.as_str() == room_id)
-                .map(|c| c.timeline.clone())
+                .filter(|t| t.root.as_str() == room_id)
+                .map(|t| t.timeline.clone())
         })?
         .ok_or(Error::ChatNotOpen)
     }
@@ -644,6 +724,24 @@ impl Mapper {
                         .map(|u| self.reader(u))
                         .collect(),
                     mentions_me: event.is_highlighted(),
+                    thread: msg.thread_summary.as_ref().map(|t| {
+                        let latest = match &t.latest_event {
+                            TimelineDetails::Ready(e) => Some(e),
+                            _ => None,
+                        };
+                        ThreadInfo {
+                            replies: t.num_replies,
+                            latest_sender: latest
+                                .map(|e| profile_name(&e.sender_profile, e.sender.localpart())),
+                            latest_avatar: latest.and_then(|e| match &e.sender_profile {
+                                TimelineDetails::Ready(p) => {
+                                    p.avatar_url.as_ref().map(|u| u.to_string())
+                                }
+                                _ => None,
+                            }),
+                            latest_text: latest.map(|e| summary(&e.content)),
+                        }
+                    }),
                 }))
             }
             TimelineItemContent::MembershipChange(change) => match membership_text(change.change())

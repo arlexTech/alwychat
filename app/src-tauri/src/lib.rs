@@ -785,6 +785,24 @@ async fn close_chat(core: State<'_, AppCore>) -> alwy_core::Result<()> {
 }
 
 #[tauri::command]
+async fn open_thread(
+    core: State<'_, AppCore>,
+    room_id: String,
+    root: String,
+    on_diffs: Channel<Vec<ListDiff<TimelineEntry>>>,
+) -> alwy_core::Result<()> {
+    core.open_thread(&room_id, &root, move |diffs| {
+        let _ = on_diffs.send(diffs);
+    })
+    .await
+}
+
+#[tauri::command]
+async fn close_thread(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.close_thread()
+}
+
+#[tauri::command]
 async fn load_older(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<bool> {
     core.load_older(&room_id).await
 }
@@ -1128,6 +1146,8 @@ pub fn run() {
             cancel_login,
             subscribe_chat_list,
             open_chat,
+            open_thread,
+            close_thread,
             set_typing,
             join_call,
             leave_call,
