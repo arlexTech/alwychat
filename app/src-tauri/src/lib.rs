@@ -73,6 +73,7 @@ async fn open_chat(
     on_diffs: Channel<Vec<ListDiff<TimelineEntry>>>,
     on_typing: Channel<Vec<String>>,
     on_style: Channel<alwy_core::custom::ChatStyle>,
+    on_pins: Channel<alwy_core::pins::Pins>,
 ) -> alwy_core::Result<()> {
     core.open_chat(
         &room_id,
@@ -84,6 +85,9 @@ async fn open_chat(
         },
         move |style| {
             let _ = on_style.send(style);
+        },
+        move |pins| {
+            let _ = on_pins.send(pins);
         },
     )
     .await
@@ -128,6 +132,48 @@ async fn presence(
 /// Whether the app is on screen (the webview reports it on every visibility change).
 /// Window focus isn't reliable on mobile, so notifications look at this there.
 struct Visible(std::sync::atomic::AtomicBool);
+
+#[tauri::command]
+async fn create_poll(
+    core: State<'_, AppCore>,
+    room_id: String,
+    question: String,
+    answers: Vec<String>,
+    disclosed: bool,
+    multiple: bool,
+) -> alwy_core::Result<()> {
+    core.create_poll(&room_id, &question, &answers, disclosed, multiple)
+        .await
+}
+
+#[tauri::command]
+async fn vote_poll(
+    core: State<'_, AppCore>,
+    room_id: String,
+    poll_id: String,
+    answers: Vec<String>,
+) -> alwy_core::Result<()> {
+    core.vote_poll(&room_id, &poll_id, answers).await
+}
+
+#[tauri::command]
+async fn end_poll(
+    core: State<'_, AppCore>,
+    room_id: String,
+    poll_id: String,
+) -> alwy_core::Result<()> {
+    core.end_poll(&room_id, &poll_id).await
+}
+
+#[tauri::command]
+async fn pin_message(
+    core: State<'_, AppCore>,
+    room_id: String,
+    event_id: String,
+    pin: bool,
+) -> alwy_core::Result<()> {
+    core.pin_message(&room_id, &event_id, pin).await
+}
 
 #[tauri::command]
 async fn link_preview(
@@ -843,6 +889,10 @@ pub fn run() {
             report_activity,
             system_status,
             link_preview,
+            pin_message,
+            create_poll,
+            vote_poll,
+            end_poll,
             setup_push,
             launch_room,
             clear_notifications,

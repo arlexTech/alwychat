@@ -158,7 +158,19 @@ export type MessageContent =
       size: number | null;
     }
   | { kind: "media"; label: string }
-  | { kind: "poll"; question: string }
+  | {
+      kind: "poll";
+      question: string;
+      answers: PollAnswer[];
+      /** People who voted. */
+      voters: number;
+      max_selections: number;
+      /** Results visible while the poll runs. */
+      disclosed: boolean;
+      ended: boolean;
+      /** We started it (only the creator can end it). */
+      is_mine: boolean;
+    }
   | { kind: "redacted" }
   | { kind: "unable_to_decrypt" }
   | { kind: "unsupported" };
@@ -253,6 +265,7 @@ export function openChat(
   onDiffs: (diffs: ListDiff<TimelineEntry>[]) => void,
   onTyping: (names: string[]) => void,
   onStyle: (style: ChatStyle) => void,
+  onPins: (pins: Pins) => void,
 ) {
   const diffs = new Channel<ListDiff<TimelineEntry>[]>();
   diffs.onmessage = onDiffs;
@@ -260,8 +273,38 @@ export function openChat(
   typing.onmessage = onTyping;
   const style = new Channel<ChatStyle>();
   style.onmessage = onStyle;
-  return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing, onStyle: style });
+  const pins = new Channel<Pins>();
+  pins.onmessage = onPins;
+  return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing, onStyle: style, onPins: pins });
 }
+
+export interface PinnedMessage {
+  event_id: string;
+  sender_name: string;
+  preview: string;
+}
+
+/** The chat's pinned messages, most recently pinned first. */
+export interface Pins {
+  messages: PinnedMessage[];
+  can_pin: boolean;
+}
+
+export interface PollAnswer {
+  id: string;
+  text: string;
+  votes: number;
+  mine: boolean;
+}
+
+export const createPoll = (roomId: string, question: string, answers: string[], disclosed: boolean, multiple: boolean) =>
+  invoke<void>("create_poll", { roomId, question, answers, disclosed, multiple });
+export const votePoll = (roomId: string, pollId: string, answers: string[]) =>
+  invoke<void>("vote_poll", { roomId, pollId, answers });
+export const endPoll = (roomId: string, pollId: string) => invoke<void>("end_poll", { roomId, pollId });
+
+export const pinMessage = (roomId: string, eventId: string, pin: boolean) =>
+  invoke<void>("pin_message", { roomId, eventId, pin });
 
 export const setQuickReaction = (roomId: string, emoji: string | null) =>
   invoke<void>("set_quick_reaction", { roomId, emoji });

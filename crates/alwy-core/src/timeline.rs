@@ -155,8 +155,19 @@ pub enum MessageContent {
     Media {
         label: String,
     },
+    /// MSC3381 poll (Element-compatible). Counts are hidden until the end for
+    /// undisclosed polls, except our own choice.
     Poll {
         question: String,
+        answers: Vec<PollAnswer>,
+        /// Number of people who voted.
+        voters: u32,
+        max_selections: u32,
+        /// Results visible before the end.
+        disclosed: bool,
+        ended: bool,
+        /// We started it (only the creator can end it).
+        is_mine: bool,
     },
     Redacted,
     /// Encrypted and we don't have the key (yet).
@@ -202,6 +213,7 @@ pub(crate) struct OpenChat {
     typing_task: tokio::task::AbortHandle,
     /// Keeps the theme/quick reaction/nicknames watch alive while the chat is open.
     _style: matrix_sdk::event_handler::EventHandlerDropGuard,
+    _pins: matrix_sdk::event_handler::EventHandlerDropGuard,
 }
 
 impl Drop for OpenChat {
@@ -219,6 +231,7 @@ impl crate::Core {
         sink: impl FnMut(Vec<ListDiff<TimelineEntry>>) + Send + 'static,
         on_typing: impl Fn(Vec<String>) + Send + 'static,
         on_style: impl Fn(crate::custom::ChatStyle) + Send + Sync + 'static,
+        on_pins: impl Fn(crate::pins::Pins) + Send + Sync + 'static,
     ) -> Result<()> {
         let client = self.client()?;
         let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
@@ -229,6 +242,7 @@ impl crate::Core {
             .abort_handle();
         let typing_task = tokio::spawn(stream_typing(room.clone(), on_typing)).abort_handle();
         let style = self.watch_chat_style(&room, on_style).await;
+        let pins = self.watch_pins(&room, on_pins).await;
         self.with_active(|a| {
             a.chat = Some(OpenChat {
                 room_id,
@@ -236,6 +250,7 @@ impl crate::Core {
                 task,
                 typing_task,
                 _style: style,
+                _pins: pins,
             })
         })
     }
@@ -500,9 +515,10 @@ impl Mapper {
                             height: c.info.height.map(uint),
                         }
                     }
-                    MsgLikeKind::Poll(p) => MessageContent::Poll {
-                        question: p.results().question,
-                    },
+                    MsgLikeKind::Poll(p) => {
+                        let own = self.timeline.room().own_user_id().to_string();
+                        poll_content(p.results(), &own, event.sender().as_str() == own)
+                    }
                     MsgLikeKind::Redacted => MessageContent::Redacted,
                     MsgLikeKind::UnableToDecrypt(_) => MessageContent::UnableToDecrypt,
                     MsgLikeKind::Other(_) | MsgLikeKind::LiveLocation(_) => {
@@ -804,6 +820,44 @@ fn diff_values<T>(diff: &VectorDiff<T>) -> Vec<&T> {
         | VectorDiff::Insert { value, .. }
         | VectorDiff::Set { value, .. } => vec![value],
         _ => Vec::new(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PollAnswer {
+    pub id: String,
+    pub text: String,
+    pub votes: u32,
+    pub mine: bool,
+}
+
+fn poll_content(
+    results: matrix_sdk_ui::timeline::PollResult,
+    own: &str,
+    is_mine: bool,
+) -> MessageContent {
+    let voters: std::collections::HashSet<&String> = results.votes.values().flatten().collect();
+    let answers = results
+        .answers
+        .iter()
+        .map(|a| {
+            let votes = results.votes.get(&a.id);
+            PollAnswer {
+                id: a.id.clone(),
+                text: a.text.clone(),
+                votes: votes.map_or(0, |v| v.len() as u32),
+                mine: votes.is_some_and(|v| v.iter().any(|u| u == own)),
+            }
+        })
+        .collect();
+    MessageContent::Poll {
+        question: results.question,
+        answers,
+        voters: voters.len() as u32,
+        max_selections: results.max_selections as u32,
+        disclosed: results.kind == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed,
+        ended: results.end_time.is_some(),
+        is_mine,
     }
 }
 

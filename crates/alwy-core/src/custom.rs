@@ -162,7 +162,11 @@ async fn chat_style(room: &Room) -> ChatStyle {
 }
 
 /// A state event's content from the server; `None` if it was never set.
-async fn fetch<T: DeserializeOwned>(room: &Room, event_type: &str, key: &str) -> Result<Option<T>> {
+pub(crate) async fn fetch<T: DeserializeOwned>(
+    room: &Room,
+    event_type: &str,
+    key: &str,
+) -> Result<Option<T>> {
     let request = get_state_event_for_key::v3::Request::new(
         room.room_id().to_owned(),
         StateEventType::from(event_type),

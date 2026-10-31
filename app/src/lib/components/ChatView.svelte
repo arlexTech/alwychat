@@ -1,4 +1,11 @@
 <script lang="ts">
+  import FileIcon from "@lucide/svelte/icons/file";
+  import ChartBar from "@lucide/svelte/icons/chart-bar";
+  import PollCreator from "./PollCreator.svelte";
+  import Pin from "@lucide/svelte/icons/pin";
+  import PinOff from "@lucide/svelte/icons/pin-off";
+  import List from "@lucide/svelte/icons/list";
+  import Page from "./Page.svelte";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import Lock from "@lucide/svelte/icons/lock";
   import Phone from "@lucide/svelte/icons/phone";
@@ -23,6 +30,7 @@
     pickFiles,
     saveMedia,
     sendFile,
+    pinMessage,
     sendMessage,
     sendPicked,
     sendVoice,
@@ -553,6 +561,46 @@
     input.focus();
   }
 
+  const pinnedIds = $derived(new Set(chat.pins.messages.map((p) => p.event_id)));
+  /** Which pin the banner shows; tapping it jumps there and moves on to the next (older) one. */
+  let pinIndex = $state(0);
+  const shownPin = $derived(chat.pins.messages[pinIndex % Math.max(1, chat.pins.messages.length)] ?? null);
+  let pinsOpen = $state(false);
+  let attachOpen = $state(false);
+  let pollOpen = $state(false);
+  $effect(() => {
+    if (attachOpen) return closeOnBack(() => (attachOpen = false));
+  });
+  $effect(() => {
+    if (pollOpen) return closeOnBack(() => (pollOpen = false));
+  });
+  $effect(() => {
+    if (pinsOpen) return closeOnBack(() => (pinsOpen = false));
+  });
+
+  async function setPin(eventId: string, pin: boolean) {
+    try {
+      await pinMessage(room.id, eventId, pin);
+    } catch (e) {
+      sendError = String(e);
+    }
+  }
+
+  async function showPin(eventId: string) {
+    if (!(await chat.reveal(eventId))) {
+      sendError = "That message is too far back to show";
+      return;
+    }
+    await tick();
+    jumpTo(eventId);
+  }
+
+  function onPinBanner() {
+    if (!shownPin) return;
+    void showPin(shownPin.event_id);
+    pinIndex = (pinIndex + 1) % chat.pins.messages.length;
+  }
+
   function jumpTo(eventId: string) {
     const el = scroller.querySelector<HTMLElement>(`[data-event="${CSS.escape(eventId)}"]`);
     if (!el) return;
@@ -606,6 +654,38 @@
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
   <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings"><Ellipsis size={22} /></button>
 </header>
+{#if shownPin}
+  <div class="pin-banner" transition:fade={{ duration: 150 }}>
+    <button class="pin-main" onclick={onPinBanner}>
+      <Pin size={16} />
+      <span class="pin-text">
+        <small>Pinned{chat.pins.messages.length > 1 ? ` · ${(pinIndex % chat.pins.messages.length) + 1}/${chat.pins.messages.length}` : ""}</small>
+        <span><strong>{shownPin.sender_name}:</strong> {shownPin.preview}</span>
+      </span>
+    </button>
+    <button class="pin-list" onclick={() => (pinsOpen = true)} aria-label="All pinned messages"><List size={18} /></button>
+  </div>
+{/if}
+{#if pollOpen}
+  <PollCreator roomId={room.id} onClose={() => (pollOpen = false)} />
+{/if}
+{#if pinsOpen}
+  <Page title="Pinned messages" onClose={() => (pinsOpen = false)}>
+    <ul class="pins">
+      {#each chat.pins.messages as p (p.event_id)}
+        <li>
+          <button class="pin-item" onclick={() => ((pinsOpen = false), void showPin(p.event_id))}>
+            <strong>{p.sender_name}</strong>
+            <span>{p.preview}</span>
+          </button>
+          {#if chat.pins.can_pin}
+            <button class="unpin" onclick={() => setPin(p.event_id, false)} aria-label="Unpin"><PinOff size={18} /></button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </Page>
+{/if}
 {#if room.in_call.length && call.roomId !== room.id}
   <button class="call-banner" onclick={() => call.join(room, false)} transition:fade={{ duration: 150 }}>
     <span class="call-dot"></span>
@@ -657,6 +737,9 @@
             onOpenMedia={(i) => openMedia(row.album ?? [row.msg], i)}
             onSaveFile={() => saveFile(row.msg)}
             onSaveToGallery={() => saveVisualMedia(row.album ?? [row.msg])}
+            pinned={chat.pins.can_pin ? pinnedIds.has(row.msg.item_id) : null}
+            onPin={(pin) => setPin(row.msg.item_id, pin)}
+            roomId={room.id}
           />
         </div>
       {:else if row.kind === "day"}
@@ -734,10 +817,20 @@
   <div class="bar">
     {#if isAndroid}
       <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos"><Image size={24} /></button>
-      <button type="button" class="attach" onclick={() => pick("files")} aria-label="Files"><Paperclip size={22} /></button>
-    {:else}
-      <button type="button" class="attach" onclick={() => fileInput.click()} aria-label="Attach photos or files"><Paperclip size={22} /></button>
     {/if}
+    <div class="attach-wrap">
+      <button type="button" class="attach" onclick={() => (attachOpen = !attachOpen)} aria-label="Attach" aria-expanded={attachOpen}>
+        <Paperclip size={22} />
+      </button>
+      {#if attachOpen}
+        <div class="attach-menu" transition:fade={{ duration: 100 }}>
+          <button type="button" onclick={() => ((attachOpen = false), isAndroid ? pick("files") : fileInput.click())}>
+            <FileIcon size={18} />{isAndroid ? "File" : "Photos or files"}
+          </button>
+          <button type="button" onclick={() => ((attachOpen = false), (pollOpen = true))}><ChartBar size={18} />Poll</button>
+        </div>
+      {/if}
+    </div>
     <input
       bind:this={fileInput}
       type="file"
@@ -869,6 +962,91 @@
     border-radius: 999px;
     background: #1f9d48;
     color: white;
+  }
+  .pin-banner {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .pin-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px 8px 16px;
+    border: none;
+    border-left: 3px solid var(--accent-a);
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pin-main :global(svg) {
+    flex: none;
+    color: var(--accent-a);
+  }
+  .pin-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    font-size: 0.85rem;
+  }
+  .pin-text small {
+    color: var(--accent-a);
+    font-weight: 600;
+  }
+  .pin-text span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .pin-list,
+  .unpin {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    margin-right: 6px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .pins {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .pins li {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .pin-item {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 4px;
+    border: none;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pin-item span {
+    color: var(--muted);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
   .call-dot {
     width: 9px;
@@ -1216,6 +1394,41 @@
     background: none;
     color: var(--accent-a);
     cursor: pointer;
+  }
+  .attach-wrap {
+    position: relative;
+  }
+  .attach-menu {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    min-width: 180px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-2);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
+  }
+  .attach-menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 10px;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .attach-menu button:hover {
+    background: var(--surface-hover);
+  }
+  .attach-menu :global(svg) {
+    color: var(--accent-a);
   }
   .attach:hover {
     background: var(--surface-2);

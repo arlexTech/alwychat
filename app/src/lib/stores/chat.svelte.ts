@@ -1,4 +1,4 @@
-import { closeChat, loadOlder, openChat, type ChatStyle, type TimelineEntry } from "$lib/backend";
+import { closeChat, loadOlder, openChat, type ChatStyle, type Pins, type TimelineEntry } from "$lib/backend";
 import { applyDiffs } from "./list";
 
 /** Older messages are fetched until at least this many entries are loaded. */
@@ -17,6 +17,8 @@ class Chat {
   /** Theme, quick reaction and nicknames; null until loaded (the last one seen is reused). */
   style = $state<ChatStyle | null>(null);
   #styles = new Map<string, ChatStyle>();
+  /** Pinned messages (newest pin first). */
+  pins = $state<Pins>({ messages: [], can_pin: false });
 
   async open(roomId: string) {
     if (this.roomId === roomId) return;
@@ -28,6 +30,7 @@ class Chat {
     this.typing = [];
     // Last known look right away, so the chat doesn't flash the default theme.
     this.style = this.#styles.get(roomId) ?? null;
+    this.pins = { messages: [], can_pin: false };
     try {
       await openChat(
         roomId,
@@ -43,6 +46,9 @@ class Chat {
         (style) => {
           this.#styles.set(roomId, style);
           if (this.roomId === roomId) this.style = style;
+        },
+        (pins) => {
+          if (this.roomId === roomId) this.pins = pins;
         },
       );
       while (this.roomId === roomId && !this.atStart && this.entries.length < MIN_ENTRIES) {
@@ -68,6 +74,15 @@ class Chat {
     } finally {
       this.loadingOlder = false;
     }
+  }
+
+  /** Load older messages until `eventId` is in the timeline (gives up after a few pages). */
+  async reveal(eventId: string): Promise<boolean> {
+    const has = () => this.entries.some((e) => e.type === "message" && e.item_id === eventId);
+    for (let page = 0; !has() && page < 15; page++) {
+      if (!(await this.older())) break;
+    }
+    return has();
   }
 
   close() {

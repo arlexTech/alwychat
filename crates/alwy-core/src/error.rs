@@ -32,6 +32,8 @@ pub enum Error {
     Call(String),
     #[error("push: {0}")]
     Push(String),
+    #[error("poll: {0}")]
+    Poll(String),
     #[error("this chat isn't open")]
     ChatNotOpen,
     #[error("timeline: {0}")]

@@ -10,6 +10,8 @@ pub mod links;
 pub mod media;
 pub mod mentions;
 pub mod notifications;
+pub mod pins;
+pub mod polls;
 pub mod presence;
 pub mod push;
 pub mod rooms;

@@ -1,4 +1,10 @@
 <script lang="ts">
+  import Download from "@lucide/svelte/icons/download";
+  import Pin from "@lucide/svelte/icons/pin";
+  import PinOff from "@lucide/svelte/icons/pin-off";
+  import Pencil from "@lucide/svelte/icons/pencil";
+  import History from "@lucide/svelte/icons/history";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
   import SmilePlus from "@lucide/svelte/icons/smile-plus";
   import Reply from "@lucide/svelte/icons/reply";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
@@ -10,6 +16,7 @@
   import Avatar from "./Avatar.svelte";
   import VoicePlayer from "./VoicePlayer.svelte";
   import LinkPreview from "./LinkPreview.svelte";
+  import PollView from "./PollView.svelte";
 
   let {
     msg,
@@ -27,6 +34,9 @@
     onOpenMedia,
     onSaveFile,
     onSaveToGallery,
+    pinned = null,
+    onPin,
+    roomId,
     album = null,
   }: {
     msg: MessageEntry;
@@ -48,6 +58,10 @@
     onSaveFile: () => void;
     /** Save this message's photo/video, or the whole album, to the gallery. */
     onSaveToGallery: () => void;
+    roomId: string;
+    /** Whether it's pinned; null when we can't pin in this chat. */
+    pinned?: boolean | null;
+    onPin?: (pin: boolean) => void;
     /** Several photos drawn as one grid; `msg` is the first. */
     album?: MessageEntry[] | null;
   } = $props();
@@ -91,7 +105,7 @@
       case "sticker":
         return "";
       case "poll":
-        return `📊 ${c.question}`;
+        return "";
       case "redacted":
         return "Message deleted";
       case "unable_to_decrypt":
@@ -300,6 +314,8 @@
               {#if c.duration_ms}<span class="duration">{formatDuration(c.duration_ms)}</span>{/if}
             {/if}
           </button>
+        {:else if c.kind === "poll"}
+          <PollView {roomId} pollId={msg.item_id} poll={c} />
         {:else if c.kind === "audio"}
           <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} />
         {:else if c.kind === "file"}
@@ -353,11 +369,16 @@
       {#if menuOpen}
         <div class="menu" transition:fade={{ duration: 100 }}>
           {#if canSaveToGallery}
-            <button onclick={() => pick(onSaveToGallery)}>{albumSize ? `Save all (${albumSize})` : "Save"}</button>
+            <button onclick={() => pick(onSaveToGallery)}><Download size={16} />{albumSize ? `Save all (${albumSize})` : "Save"}</button>
           {/if}
-          {#if msg.can_edit}<button onclick={() => pick(onEdit)}>✏️ Edit</button>{/if}
-          {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}>🕘 Edit history</button>{/if}
-          {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}>🗑️ Delete</button>{/if}
+          {#if pinned !== null && remote && onPin}
+            <button onclick={() => pick(() => onPin(!pinned))}>
+              {#if pinned}<PinOff size={16} />Unpin{:else}<Pin size={16} />Pin{/if}
+            </button>
+          {/if}
+          {#if msg.can_edit}<button onclick={() => pick(onEdit)}><Pencil size={16} />Edit</button>{/if}
+          {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}><History size={16} />Edit history</button>{/if}
+          {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}><Trash2 size={16} />Delete</button>{/if}
         </div>
       {/if}
     </div>
@@ -825,6 +846,9 @@
     right: 0;
   }
   .menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     padding: 8px 10px;
     border: none;
     border-radius: 8px;
