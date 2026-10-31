@@ -1,4 +1,13 @@
-import { getSettings, hasBackend, isAndroid, setSettings, setSystemBars, type AppTheme, type Settings } from "$lib/backend";
+import {
+  getSettings,
+  hasBackend,
+  isAndroid,
+  setSecureScreen,
+  setSettings,
+  setSystemBars,
+  type AppTheme,
+  type Settings,
+} from "$lib/backend";
 
 /** This device's settings, shared by the settings page and what they affect (theme, effects). */
 class Prefs {
@@ -10,6 +19,7 @@ class Prefs {
     if (!hasBackend) return;
     this.settings = await getSettings();
     this.#applyTheme();
+    if (this.settings.hide_in_switcher) setSecureScreen(true).catch(() => {});
   }
 
   /** Optimistic: shown at once, rolled back (and thrown) if it can't be saved. */
@@ -18,6 +28,7 @@ class Prefs {
     const previous = this.settings;
     this.settings = { ...this.settings, ...change };
     if ("app_theme" in change) this.#applyTheme();
+    if ("hide_in_switcher" in change) setSecureScreen(!!change.hide_in_switcher).catch(() => {});
     try {
       await setSettings(this.settings);
     } catch (e) {

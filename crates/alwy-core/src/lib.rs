@@ -1,6 +1,7 @@
 //! AlwyChat core: all Matrix state and logic lives here. UI shells (Tauri) stay thin.
 #![recursion_limit = "256"]
 
+pub mod applock;
 pub mod custom;
 pub mod discovery;
 pub mod drafts;

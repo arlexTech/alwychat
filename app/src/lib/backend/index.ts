@@ -312,6 +312,21 @@ export const setStatus = (status: Status | null) => invoke<void>("set_status", {
 /** null stops sharing it. */
 export const setTimeZone = (timeZone: string | null) => invoke<void>("set_time_zone", { timeZone });
 
+// ── App lock ────────────────────────────────────────────────────────────────
+
+export interface AppLockState {
+  enabled: boolean;
+  biometry: "fingerprint" | "face" | null;
+}
+export type UnlockResult = { result: "ok" } | { result: "wrong" } | { result: "wait"; seconds: number };
+export const appLockState = () => invoke<AppLockState>("app_lock_state");
+/** Turn on / change (4–12 digits), or off with null. */
+export const setAppLock = (pin: string | null) => invoke<void>("set_app_lock", { pin });
+export const unlockApp = (pin: string) => invoke<UnlockResult>("unlock_app", { pin });
+/** The system fingerprint / face prompt; true once recognised. */
+export const unlockBiometric = () => invoke<boolean>("unlock_biometric");
+export const setSecureScreen = (secure: boolean) => invoke<void>("set_secure_screen", { secure });
+
 export interface ThreadInfo {
   replies: number;
   latest_sender: string | null;
@@ -620,6 +635,11 @@ export interface Settings {
   /** Play message effects (confetti, snow…). */
   chat_effects: boolean;
   app_theme: AppTheme;
+  /** App lock: ask again after this long in the background (0 = every time). */
+  app_lock_after_s: number;
+  app_lock_biometric: boolean;
+  /** Android: blank in the app switcher, no screenshots. */
+  hide_in_switcher: boolean;
 }
 /** Android: dark system bar icons on a light theme, and the colour behind the bars. */
 export const setSystemBars = (light: boolean, background: string) =>

@@ -7,6 +7,9 @@
   import { presence } from "$lib/stores/presence.svelte";
   import Page from "./Page.svelte";
   import FolderPage from "./FolderPage.svelte";
+  import PinPad from "./PinPad.svelte";
+  import { appLock } from "$lib/stores/applock.svelte";
+  import { setAppLock, unlockApp } from "$lib/backend";
   import ChevronUp from "@lucide/svelte/icons/chevron-up";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Plus from "@lucide/svelte/icons/plus";
@@ -68,6 +71,65 @@
   $effect(() => {
     if (folderEdit) return onBack(() => (folderEdit = null));
   });
+  // ── App lock: set, change or turn off the PIN, step by step ──
+  type PinFlow = {
+    mode: "set" | "change" | "disable";
+    step: "current" | "new" | "confirm";
+    first?: string;
+    /** Shown on the next step's keypad (each step gets a fresh one). */
+    notice?: string;
+  };
+  let pinFlow = $state<PinFlow | null>(null);
+  $effect(() => {
+    if (pinFlow) return onBack(() => (pinFlow = null));
+  });
+  const LOCK_AFTER = [
+    { s: 60, label: "After 1 minute away" },
+    { s: 300, label: "After 5 minutes away" },
+    { s: 900, label: "After 15 minutes away" },
+    { s: 3600, label: "After 1 hour away" },
+  ];
+  $effect(() => {
+    void appLock.refresh().catch(() => {});
+  });
+  const pinTitle = $derived(
+    !pinFlow
+      ? ""
+      : pinFlow.step === "current"
+        ? "Enter your current PIN"
+        : pinFlow.step === "new"
+          ? "Choose a PIN"
+          : "Enter it again",
+  );
+
+  async function pinStep(pin: string): Promise<string | null> {
+    const flow = pinFlow;
+    if (!flow) return null;
+    if (flow.step === "current") {
+      const r = await unlockApp(pin);
+      if (r.result === "wait") return `Too many tries. Wait ${r.seconds} s`;
+      if (r.result === "wrong") return "Wrong PIN";
+      if (flow.mode === "disable") {
+        await setAppLock(null);
+        await appLock.refresh();
+        pinFlow = null;
+      } else pinFlow = { ...flow, step: "new", notice: undefined };
+      return null;
+    }
+    if (flow.step === "new") {
+      pinFlow = { ...flow, step: "confirm", first: pin, notice: undefined };
+      return null;
+    }
+    if (pin !== flow.first) {
+      pinFlow = { ...flow, step: "new", first: undefined, notice: "The PINs didn't match. Try again" };
+      return null;
+    }
+    await setAppLock(pin);
+    await appLock.refresh();
+    pinFlow = null;
+    return null;
+  }
+
   const move = (id: string, by: -1 | 1) => spaces.moveFolder(id, by).catch((e) => (error = String(e)));
 
   type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
@@ -223,6 +285,50 @@
     <h3 class="section">Privacy</h3>
     {#each privacy as t (t.key)}{@render row(t)}{/each}
 
+    <h3 class="section">App lock</h3>
+    <label class="toggle">
+      <span>
+        <strong>Lock with a PIN</strong>
+        <small>Asked when AlwyChat opens and after you've been away. It hides the app; messages on this device aren't encrypted with it.</small>
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={appLock.state.enabled}
+        onclick={(e) => {
+          e.preventDefault();
+          pinFlow = appLock.state.enabled ? { mode: "disable", step: "current" } : { mode: "set", step: "new" };
+        }}
+      />
+    </label>
+    {#if appLock.state.enabled}
+      <label class="toggle">
+        <span><strong>Lock again</strong></span>
+        <select
+          value={settings.app_lock_after_s}
+          onchange={(e) => save({ app_lock_after_s: Number(e.currentTarget.value) })}
+        >
+          {#each LOCK_AFTER as o (o.s)}<option value={o.s}>{o.label}</option>{/each}
+        </select>
+      </label>
+      {#if appLock.state.biometry}
+        <label class="toggle">
+          <span><strong>Unlock with {appLock.state.biometry === "face" ? "face" : "fingerprint"}</strong></span>
+          <input type="checkbox" role="switch" checked={settings.app_lock_biometric} onchange={() => toggle("app_lock_biometric")} />
+        </label>
+      {/if}
+      <button class="link-row" onclick={() => (pinFlow = { mode: "change", step: "current" })}>Change PIN</button>
+    {/if}
+    {#if isAndroid}
+      <label class="toggle">
+        <span>
+          <strong>Hide in app switcher</strong>
+          <small>Recent apps shows a blank screen, and screenshots are blocked.</small>
+        </span>
+        <input type="checkbox" role="switch" checked={settings.hide_in_switcher} onchange={() => toggle("hide_in_switcher")} />
+      </label>
+    {/if}
+
     <h3 class="section">Appearance</h3>
     <div class="themes" role="radiogroup" aria-label="Theme">
       {#each THEMES as t (t.id)}
@@ -317,6 +423,19 @@
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
 </Page>
+{#if pinFlow}
+  <Page title={pinFlow.mode === "disable" ? "Turn off app lock" : pinFlow.mode === "change" ? "Change PIN" : "App lock"} onClose={() => (pinFlow = null)}>
+    <div class="pin-page">
+      {#key pinFlow.step}
+        <PinPad
+          title={pinTitle}
+          hint={pinFlow.notice ?? (pinFlow.step === "new" ? "4 to 12 digits" : null)}
+          onSubmit={pinStep}
+        />
+      {/key}
+    </div>
+  </Page>
+{/if}
 {#if folderEdit}
   <FolderPage folder={folderEdit === "new" ? null : folderEdit} onClose={() => (folderEdit = null)} />
 {/if}
@@ -418,6 +537,31 @@
   .status-hint {
     display: block;
     margin: 6px 0 4px;
+  }
+  .pin-page {
+    display: grid;
+    place-items: center;
+    padding-top: 24px;
+  }
+  .toggle select {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+  }
+  .link-row {
+    display: block;
+    width: 100%;
+    padding: 12px 0;
+    border: none;
+    border-top: 1px solid var(--border);
+    background: none;
+    color: var(--accent-b, inherit);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
   .folders {
     margin: 0;

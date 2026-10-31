@@ -17,6 +17,9 @@ matrix-sdk-ui.workspace = true
 eyeball-im.workspace = true
 futures-util.workspace = true
 rand.workspace = true
+# App lock PIN hash.
+pbkdf2 = "0.13"
+sha2 = "0.11"
 # Message search (SQLite FTS5). Same version as matrix-sdk-sqlite, so it shares its bundled SQLite.
 rusqlite = "0.40"
 serde.workspace = true

@@ -385,6 +385,93 @@ async fn set_system_bars(
     }
 }
 
+#[derive(serde::Serialize)]
+struct AppLockState {
+    enabled: bool,
+    /// "fingerprint" or "face" when the device can unlock with it.
+    biometry: Option<&'static str>,
+}
+
+#[tauri::command]
+async fn app_lock_state(
+    app: tauri::AppHandle,
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<AppLockState> {
+    use tauri_plugin_biometric::{BiometricExt, BiometryType};
+    let biometry = match app.biometric().status() {
+        Ok(s) if s.is_available => match s.biometry_type {
+            BiometryType::FaceID => Some("face"),
+            BiometryType::TouchID => Some("fingerprint"),
+            BiometryType::None => None,
+        },
+        _ => None,
+    };
+    Ok(AppLockState {
+        enabled: core.app_lock_enabled(),
+        biometry,
+    })
+}
+
+#[tauri::command]
+async fn set_app_lock(core: State<'_, AppCore>, pin: Option<String>) -> alwy_core::Result<()> {
+    core.set_app_lock(pin.as_deref()).await
+}
+
+#[tauri::command]
+async fn unlock_app(
+    core: State<'_, AppCore>,
+    pin: String,
+) -> alwy_core::Result<alwy_core::applock::Unlock> {
+    core.unlock_app(&pin).await
+}
+
+/// The system fingerprint/face prompt; true once recognised.
+#[tauri::command]
+async fn unlock_biometric(
+    app: tauri::AppHandle,
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<bool> {
+    use tauri_plugin_biometric::{AuthOptions, BiometricExt};
+    let prompt = app.clone();
+    let ok = tauri::async_runtime::spawn_blocking(move || {
+        prompt
+            .biometric()
+            .authenticate(
+                "Unlock AlwyChat".into(),
+                AuthOptions {
+                    title: Some("Unlock AlwyChat".into()),
+                    cancel_title: Some("Use PIN".into()),
+                    ..Default::default()
+                },
+            )
+            .is_ok()
+    })
+    .await
+    .unwrap_or(false);
+    if ok {
+        core.biometric_unlocked();
+    }
+    Ok(ok)
+}
+
+/// Android: hide the app's content in the app switcher and block screenshots (FLAG_SECURE).
+#[tauri::command]
+async fn set_secure_screen(app: tauri::AppHandle, secure: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<()>("setSecure", serde_json::json!({ "secure": secure }))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, secure);
+        Ok(())
+    }
+}
+
 #[tauri::command]
 async fn join_call(
     core: State<'_, AppCore>,
@@ -1051,7 +1138,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_deep_link::init());
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_biometric::init());
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(android::gallery_plugin())
@@ -1201,6 +1289,11 @@ pub fn run() {
             search_status,
             start_search_backfill,
             set_system_bars,
+            app_lock_state,
+            set_app_lock,
+            unlock_app,
+            unlock_biometric,
+            set_secure_screen,
             set_draft,
             vote_poll,
             end_poll,

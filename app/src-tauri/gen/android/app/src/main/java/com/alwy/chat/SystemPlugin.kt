@@ -23,6 +23,11 @@ import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
 
 @InvokeArg
+class SecureArgs {
+  var secure = false
+}
+
+@InvokeArg
 class BarsArgs {
   var light = false
   lateinit var background: String
@@ -162,6 +167,17 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
         isAppearanceLightStatusBars = args.light
         isAppearanceLightNavigationBars = args.light
       }
+      invoke.resolve()
+    }
+  }
+
+  /** App lock: blank in the app switcher, no screenshots (FLAG_SECURE). */
+  @Command
+  fun setSecure(invoke: Invoke) {
+    val args = invoke.parseArgs(SecureArgs::class.java)
+    activity.runOnUiThread {
+      val flag = android.view.WindowManager.LayoutParams.FLAG_SECURE
+      if (args.secure) activity.window.addFlags(flag) else activity.window.clearFlags(flag)
       invoke.resolve()
     }
   }

@@ -458,6 +458,8 @@ impl Core {
                 _ => {}
             }
         }
+        // A new sign-in starts without the previous person's app lock.
+        self.set_app_lock(None).await?;
         match tokio::fs::remove_file(self.data_dir.join(SESSION_FILE)).await {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),

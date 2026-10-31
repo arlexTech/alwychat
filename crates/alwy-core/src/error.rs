@@ -34,6 +34,8 @@ pub enum Error {
     Push(String),
     #[error("poll: {0}")]
     Poll(String),
+    #[error("app lock: {0}")]
+    AppLock(String),
     #[error("search: {0}")]
     Search(String),
     #[error("this chat isn't open")]

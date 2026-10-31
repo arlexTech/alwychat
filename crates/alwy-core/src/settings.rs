@@ -26,6 +26,12 @@ pub struct Settings {
     pub chat_effects: bool,
     /// "system", "light", "dark" or "amoled".
     pub app_theme: String,
+    /// App lock: ask again after the app was in the background this long (0 = every time).
+    pub app_lock_after_s: u32,
+    /// App lock: offer fingerprint / face before the PIN.
+    pub app_lock_biometric: bool,
+    /// Android: blank in the app switcher, no screenshots.
+    pub hide_in_switcher: bool,
 }
 
 impl Default for Settings {
@@ -38,6 +44,9 @@ impl Default for Settings {
             hd_media: false,
             chat_effects: true,
             app_theme: "system".to_owned(),
+            app_lock_after_s: 60,
+            app_lock_biometric: true,
+            hide_in_switcher: false,
         }
     }
 }
