@@ -1,4 +1,4 @@
-import { closeChat, loadOlder, openChat, type TimelineEntry } from "$lib/backend";
+import { closeChat, loadOlder, openChat, type ChatStyle, type TimelineEntry } from "$lib/backend";
 import { applyDiffs } from "./list";
 
 /** Older messages are fetched until at least this many entries are loaded. */
@@ -14,6 +14,9 @@ class Chat {
   error = $state<string | null>(null);
   /** Names of people typing right now. */
   typing = $state<string[]>([]);
+  /** Theme, quick reaction and nicknames; null until loaded (the last one seen is reused). */
+  style = $state<ChatStyle | null>(null);
+  #styles = new Map<string, ChatStyle>();
 
   async open(roomId: string) {
     if (this.roomId === roomId) return;
@@ -23,6 +26,8 @@ class Chat {
     this.atStart = false;
     this.error = null;
     this.typing = [];
+    // Last known look right away, so the chat doesn't flash the default theme.
+    this.style = this.#styles.get(roomId) ?? null;
     try {
       await openChat(
         roomId,
@@ -34,6 +39,10 @@ class Chat {
         },
         (names) => {
           if (this.roomId === roomId) this.typing = names;
+        },
+        (style) => {
+          this.#styles.set(roomId, style);
+          if (this.roomId === roomId) this.style = style;
         },
       );
       while (this.roomId === roomId && !this.atStart && this.entries.length < MIN_ENTRIES) {
@@ -66,6 +75,7 @@ class Chat {
     this.roomId = null;
     this.entries = [];
     this.typing = [];
+    this.style = null;
     closeChat().catch(() => {});
   }
 }

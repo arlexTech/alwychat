@@ -72,6 +72,7 @@ async fn open_chat(
     room_id: String,
     on_diffs: Channel<Vec<ListDiff<TimelineEntry>>>,
     on_typing: Channel<Vec<String>>,
+    on_style: Channel<alwy_core::custom::ChatStyle>,
 ) -> alwy_core::Result<()> {
     core.open_chat(
         &room_id,
@@ -81,8 +82,39 @@ async fn open_chat(
         move |names| {
             let _ = on_typing.send(names);
         },
+        move |style| {
+            let _ = on_style.send(style);
+        },
     )
     .await
+}
+
+#[tauri::command]
+async fn set_quick_reaction(
+    core: State<'_, Core>,
+    room_id: String,
+    emoji: Option<String>,
+) -> alwy_core::Result<()> {
+    core.set_quick_reaction(&room_id, emoji).await
+}
+
+#[tauri::command]
+async fn set_theme(
+    core: State<'_, Core>,
+    room_id: String,
+    preset: Option<String>,
+) -> alwy_core::Result<()> {
+    core.set_theme(&room_id, preset).await
+}
+
+#[tauri::command]
+async fn set_nickname(
+    core: State<'_, Core>,
+    room_id: String,
+    user_id: String,
+    nickname: Option<String>,
+) -> alwy_core::Result<()> {
+    core.set_nickname(&room_id, &user_id, nickname).await
 }
 
 #[tauri::command]
@@ -557,6 +589,9 @@ pub fn run() {
             subscribe_chat_list,
             open_chat,
             set_typing,
+            set_quick_reaction,
+            set_theme,
+            set_nickname,
             edit_message,
             delete_message,
             edit_history,

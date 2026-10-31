@@ -38,6 +38,7 @@ export class MentionAutocomplete {
     if (!this.query) return [];
     const q = normalize(this.query.text);
     const matches = this.#members.filter((m) => {
+      if (m.is_me) return false;
       const name = normalize(m.name);
       return name.startsWith(q) || name.includes(` ${q}`) || normalize(m.user_id).startsWith(`@${q}`);
     });

@@ -37,6 +37,8 @@ pub struct RoomSummary {
     /// `mxc://` URI of the room avatar, or of the other person in a DM.
     pub avatar: Option<String>,
     pub is_dm: bool,
+    /// The other person of a 1:1 chat (for the nickname shown as its title).
+    pub dm_user: Option<String>,
     pub is_invite: bool,
     pub is_favourite: bool,
     /// Tagged low priority: shown under "Archived" (Element: "Low priority").
@@ -189,6 +191,13 @@ async fn summarize(room: &Room) -> RoomSummary {
         name,
         avatar,
         is_dm,
+        dm_user: is_dm
+            .then(|| {
+                room.direct_targets()
+                    .iter()
+                    .find_map(|t| t.as_user_id().map(ToString::to_string))
+            })
+            .flatten(),
         is_invite: room.state() == RoomState::Invited,
         is_favourite: room.is_favourite(),
         is_archived: room.is_low_priority(),

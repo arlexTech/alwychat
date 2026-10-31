@@ -187,6 +187,8 @@ pub(crate) struct OpenChat {
     timeline: Arc<Timeline>,
     task: tokio::task::AbortHandle,
     typing_task: tokio::task::AbortHandle,
+    /// Keeps the theme/quick reaction/nicknames watch alive while the chat is open.
+    _style: matrix_sdk::event_handler::EventHandlerDropGuard,
 }
 
 impl Drop for OpenChat {
@@ -203,6 +205,7 @@ impl crate::Core {
         room_id: &str,
         sink: impl FnMut(Vec<ListDiff<TimelineEntry>>) + Send + 'static,
         on_typing: impl Fn(Vec<String>) + Send + 'static,
+        on_style: impl Fn(crate::custom::ChatStyle) + Send + Sync + 'static,
     ) -> Result<()> {
         let client = self.client()?;
         let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
@@ -212,12 +215,14 @@ impl crate::Core {
         let task = tokio::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
             .abort_handle();
         let typing_task = tokio::spawn(stream_typing(room.clone(), on_typing)).abort_handle();
+        let style = self.watch_chat_style(&room, on_style).await;
         self.with_active(|a| {
             a.chat = Some(OpenChat {
                 room_id,
                 timeline,
                 task,
                 typing_task,
+                _style: style,
             })
         })
     }
@@ -376,6 +381,16 @@ async fn stream_timeline(
 }
 
 /// Names of people typing in `room` (never us), until the task is aborted.
+/// Notice for our own `com.alwy.chat.room.*` state events (theme, quick reaction, nicknames).
+fn custom_state_verb(event_type: &str) -> Option<&'static str> {
+    match event_type {
+        crate::custom::THEME => Some("changed the chat theme"),
+        crate::custom::QUICK_REACTION => Some("changed the quick reaction"),
+        crate::custom::NICKNAMES => Some("changed a nickname"),
+        _ => None,
+    }
+}
+
 async fn stream_typing(room: matrix_sdk::Room, on_typing: impl Fn(Vec<String>)) {
     let (_guard, mut typing) = room.subscribe_to_typing_notifications();
     while let Ok(users) = typing.recv().await {
@@ -567,6 +582,14 @@ impl Mapper {
                 // Avatar-only changes are noise in a chat.
                 None => EntryKind::Hidden,
             },
+            TimelineItemContent::OtherState(state) => {
+                match custom_state_verb(&state.content().event_type().to_string()) {
+                    Some(verb) => EntryKind::Notice {
+                        text: format!("{name} {verb}"),
+                    },
+                    None => EntryKind::Hidden,
+                }
+            }
             TimelineItemContent::CallInvite | TimelineItemContent::RtcNotification { .. } => {
                 EntryKind::Notice {
                     text: format!("📞 {name} started a call"),

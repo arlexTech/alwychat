@@ -26,6 +26,8 @@ pub enum Error {
     UnknownRoom,
     #[error("this message isn't available")]
     UnknownEvent,
+    #[error("this person isn't in the chat")]
+    UnknownUser,
     #[error("this chat isn't open")]
     ChatNotOpen,
     #[error("timeline: {0}")]

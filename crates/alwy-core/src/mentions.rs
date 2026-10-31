@@ -27,6 +27,7 @@ pub struct Member {
     pub user_id: String,
     pub name: String,
     pub avatar: Option<String>,
+    pub is_me: bool,
 }
 
 const ROOM_MENTION: &str = "@room";
@@ -83,7 +84,7 @@ fn has_word(text: &str, word: &str) -> bool {
 }
 
 impl crate::Core {
-    /// Joined members of a room, sorted by name, for `@` autocomplete.
+    /// Joined members of a room (us included, flagged `is_me`), sorted by name.
     pub async fn room_members(&self, room_id: &str) -> Result<Vec<Member>> {
         let client = self.client()?;
         let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
@@ -93,8 +94,8 @@ impl crate::Core {
             .members(RoomMemberships::JOIN)
             .await?
             .into_iter()
-            .filter(|m| Some(m.user_id()) != own.as_deref())
             .map(|m| Member {
+                is_me: Some(m.user_id()) == own.as_deref(),
                 user_id: m.user_id().to_string(),
                 name: m
                     .display_name()

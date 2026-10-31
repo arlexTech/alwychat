@@ -60,6 +60,7 @@ export interface RoomSummary {
   name: string;
   avatar: string | null;
   is_dm: boolean;
+  dm_user: string | null;
   is_invite: boolean;
   is_favourite: boolean;
   /** Low-priority tag: shown under "Archived". */
@@ -173,17 +174,36 @@ export type TimelineEntry = { key: string } & (
   | { type: "hidden" }
 );
 
+/** Shared look of a chat (room state `com.alwy.chat.room.*`). */
+export interface ChatStyle {
+  quick_reaction: string | null;
+  /** Theme preset id from `$lib/themes`. */
+  theme: string | null;
+  /** User ID → nickname given in this chat. */
+  nicknames: Record<string, string>;
+  can_edit: boolean;
+}
+
 export function openChat(
   roomId: string,
   onDiffs: (diffs: ListDiff<TimelineEntry>[]) => void,
   onTyping: (names: string[]) => void,
+  onStyle: (style: ChatStyle) => void,
 ) {
   const diffs = new Channel<ListDiff<TimelineEntry>[]>();
   diffs.onmessage = onDiffs;
   const typing = new Channel<string[]>();
   typing.onmessage = onTyping;
-  return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing });
+  const style = new Channel<ChatStyle>();
+  style.onmessage = onStyle;
+  return invoke<void>("open_chat", { roomId, onDiffs: diffs, onTyping: typing, onStyle: style });
 }
+
+export const setQuickReaction = (roomId: string, emoji: string | null) =>
+  invoke<void>("set_quick_reaction", { roomId, emoji });
+export const setTheme = (roomId: string, preset: string | null) => invoke<void>("set_theme", { roomId, preset });
+export const setNickname = (roomId: string, userId: string, nickname: string | null) =>
+  invoke<void>("set_nickname", { roomId, userId, nickname });
 
 export const setTyping = (roomId: string, typing: boolean) =>
   invoke<void>("set_typing", { roomId, typing });
@@ -287,6 +307,7 @@ export interface Member {
   user_id: string;
   name: string;
   avatar: string | null;
+  is_me: boolean;
 }
 
 export const sendMessage = (

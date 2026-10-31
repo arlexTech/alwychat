@@ -17,6 +17,7 @@
   import ChatRow from "./ChatRow.svelte";
   import ChatView from "./ChatView.svelte";
   import { onBack } from "$lib/back.svelte";
+  import { themeById } from "$lib/themes";
   import EncryptionSheet from "./EncryptionSheet.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
 
@@ -40,6 +41,8 @@
   /** Right-click menu on a chat row. */
   let rowMenu = $state<{ room: RoomSummary; x: number; y: number } | null>(null);
   let actionError = $state<string | null>(null);
+  /** The open chat's shared theme colours. */
+  const theme = $derived(themeById(chat.style?.theme));
 
   // Android back: close menus and sheets first, then the open chat.
   $effect(() => {
@@ -177,7 +180,7 @@
     </div>
   </aside>
 
-  <section class="chat-pane">
+  <section class="chat-pane" style:--accent-a={theme.a} style:--accent-b={theme.b}>
     {#if selected}
       <ChatView room={selected} onBack={closeChat} />
     {:else}
@@ -352,6 +355,8 @@
     }
   }
   .chat-pane {
+    /* Re-derived here: --accent on :root was computed from the default colours. */
+    --accent: linear-gradient(135deg, var(--accent-a), var(--accent-b));
     display: flex;
     flex-direction: column;
     min-width: 0;

@@ -30,6 +30,8 @@
   import MentionSuggestions from "./MentionSuggestions.svelte";
   import { MentionAutocomplete } from "$lib/mentions.svelte";
   import { pickedMediaUrl } from "$lib/media";
+  import { DEFAULT_QUICK_REACTION } from "$lib/themes";
+  import ChatCustomizeSheet from "./ChatCustomizeSheet.svelte";
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
@@ -39,7 +41,10 @@
   /** Messages from the same sender closer than this are drawn as one run. */
   const GROUP_GAP_MS = 5 * 60_000;
   /** Until per-chat quick reactions (com.alwy.chat.room.quick_reaction) land. */
-  const QUICK_REACTION = "❤️";
+  // A 1:1 chat is titled with the nickname given to the other person, if any.
+  const title = $derived((room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);
+  // The chat's own quick reaction (shared by its members), ❤️ until someone picks one.
+  const QUICK_REACTION = $derived(chat.style?.quick_reaction ?? DEFAULT_QUICK_REACTION);
 
   /** Our typing notice is refreshed this often while typing, and dropped after this much idle. */
   const TYPING_REFRESH_MS = 4_000;
@@ -164,7 +169,7 @@
             prev.msg.sender === e.sender &&
             e.timestamp - prev.msg.timestamp < GROUP_GAP_MS;
           if (joins) prev.last = false;
-          out.push({ kind: "message", key: e.key, msg: e, first: !joins, last: true, album: null });
+          out.push({ kind: "message", key: e.key, msg: withNickname(e), first: !joins, last: true, album: null });
           break;
         }
         case "date_divider":
@@ -185,6 +190,12 @@
     if (out.at(-1)?.kind === "unread") out.pop();
     return out;
   });
+
+  /** Show the nickname this chat gave the sender, if any. */
+  function withNickname(e: MessageEntry): MessageEntry {
+    const nick = chat.style?.nicknames[e.sender];
+    return nick && !e.is_own ? { ...e, sender_name: nick } : e;
+  }
 
   function joinsAlbum(a: MessageEntry, b: MessageEntry) {
     const ca = a.content;
@@ -323,7 +334,6 @@
   }
 
   async function chooseHd(hd: boolean | null) {
-    chatMenuOpen = false;
     const previous = chatHd;
     chatHd = hd;
     try {
@@ -513,19 +523,14 @@
   <button class="back" onclick={onBack} aria-label="Back">‹</button>
   <Avatar name={room.name} mxc={room.avatar} size={40} />
   <div class="title">
-    <strong>{room.name}</strong>
+    <strong>{title}</strong>
     {#if room.is_encrypted}<span class="sub">🔒 End-to-end encrypted</span>{/if}
   </div>
-  <button class="chat-menu-button" onclick={() => (chatMenuOpen = !chatMenuOpen)} aria-label="Chat options">⋯</button>
-  {#if chatMenuOpen}
-    <div class="chat-menu" transition:fade={{ duration: 100 }}>
-      <p>Photos sent in this chat</p>
-      <button class:active={chatHd === null} onclick={() => chooseHd(null)}>App default</button>
-      <button class:active={chatHd === true} onclick={() => chooseHd(true)}>Always HD</button>
-      <button class:active={chatHd === false} onclick={() => chooseHd(false)}>Always compressed</button>
-    </div>
-  {/if}
+  <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Customise chat">⋯</button>
 </header>
+{#if chatMenuOpen}
+  <ChatCustomizeSheet roomId={room.id} hd={chatHd} onChooseHd={chooseHd} onClose={() => (chatMenuOpen = false)} />
+{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
@@ -1034,40 +1039,6 @@
   }
   .chat-menu-button:hover {
     background: var(--surface-2);
-  }
-  .chat-menu {
-    position: absolute;
-    top: 56px;
-    right: 12px;
-    z-index: 20;
-    display: flex;
-    flex-direction: column;
-    min-width: 220px;
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--surface-2);
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
-  }
-  .chat-menu p {
-    margin: 4px 10px 6px;
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .chat-menu button {
-    padding: 8px 10px;
-    border: none;
-    border-radius: 8px;
-    background: none;
-    text-align: left;
-    cursor: pointer;
-  }
-  .chat-menu button:hover {
-    background: var(--surface-hover);
-  }
-  .chat-menu button.active::after {
-    content: " ✓";
-    color: var(--accent-b);
   }
   .scroller {
     position: relative;
