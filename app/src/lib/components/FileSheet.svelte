@@ -9,9 +9,10 @@
   let { filename, onPick, onClose }: { filename: string; onPick: (action: Action) => void; onClose: () => void } =
     $props();
 
+  // Act before closing: the caller's props (the file message) go away once it's closed.
   function pick(action: Action) {
-    onClose();
     onPick(action);
+    onClose();
   }
 </script>
 

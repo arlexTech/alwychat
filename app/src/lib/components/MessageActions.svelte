@@ -34,10 +34,10 @@
   const reactions = $derived([...new Set(["❤️", "😂", "😮", "😢", "😡", "👍", quickReaction])]);
   const mine = $derived(new Set(msg.reactions.filter((r) => r.mine).map((r) => r.key)));
 
-  /** Close first, then act (actions may open their own page or dialog). */
+  /** Act, then close: `actions` is derived from the message, which is gone once closed. */
   function run(action: () => void) {
-    onClose();
     action();
+    onClose();
   }
 </script>
 
