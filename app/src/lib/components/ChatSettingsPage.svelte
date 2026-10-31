@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fade, fly } from "svelte/transition";
   import { roomMembers, setNickname, setQuickReaction, setTheme, type Member } from "$lib/backend";
   import { chat } from "$lib/stores/chat.svelte";
   import { DEFAULT_QUICK_REACTION, DEFAULT_THEME, QUICK_REACTIONS, THEMES } from "$lib/themes";
   import Avatar from "./Avatar.svelte";
+  import Page from "./Page.svelte";
 
   let {
     roomId,
@@ -82,11 +82,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" transition:fade={{ duration: 150 }} onclick={onClose}></div>
-<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="customize-title" transition:fly={{ y: 24, duration: 220 }}>
-  <button class="close" onclick={onClose} aria-label="Close">×</button>
-  <h2 id="customize-title">Customise chat</h2>
+<Page title="Chat settings" {onClose}>
   {#if style && !canEdit}
     <p class="muted hint">Only the chat's admins can change its theme, quick reaction and nicknames.</p>
   {/if}
@@ -161,35 +157,11 @@
   </div>
 
   {#if error}<p class="error">{error}</p>{/if}
-</div>
+</Page>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: rgb(0 0 0 / 0.55);
-  }
-  .sheet {
-    position: fixed;
-    left: 50%;
-    top: 50%;
-    z-index: 51;
-    width: min(460px, calc(100vw - 24px));
-    max-height: calc(100dvh - 48px);
-    overflow-y: auto;
-    padding: 24px;
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    background: var(--surface);
-    box-shadow: 0 24px 64px rgb(0 0 0 / 0.5);
-    translate: -50% -50%;
-  }
-  h2 {
-    margin: 0 0 12px;
-  }
   h3 {
-    margin: 0 0 10px;
+    margin: 8px 0 10px;
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -197,16 +169,6 @@
   }
   h3.section {
     margin-top: 22px;
-  }
-  .close {
-    position: absolute;
-    top: 12px;
-    right: 14px;
-    border: none;
-    background: none;
-    font-size: 1.5rem;
-    color: var(--muted);
-    cursor: pointer;
   }
   .hint {
     margin: -4px 0 14px;
@@ -232,7 +194,7 @@
     transform: scale(0.92);
   }
   .swatch.active {
-    box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--text);
+    box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--text);
   }
   .swatch:disabled:not(.active) {
     opacity: 0.45;

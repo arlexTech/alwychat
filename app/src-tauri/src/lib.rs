@@ -125,9 +125,60 @@ async fn presence(
     core.presence(&user_ids).await
 }
 
+/// Whether the app is on screen (the webview reports it on every visibility change).
+/// Window focus isn't reliable on mobile, so notifications look at this there.
+struct Visible(std::sync::atomic::AtomicBool);
+
 #[tauri::command]
-async fn report_activity(core: State<'_, Core>, active: bool) -> alwy_core::Result<()> {
+async fn report_activity(
+    core: State<'_, Core>,
+    visible: State<'_, Visible>,
+    active: bool,
+) -> alwy_core::Result<()> {
+    visible
+        .0
+        .store(active, std::sync::atomic::Ordering::Relaxed);
     core.report_activity(active).await
+}
+
+/// What can keep notifications from reaching the user (Android: permission, battery
+/// optimisation, background data). Desktop has nothing to check.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemStatus {
+    notifications: bool,
+    battery_unrestricted: bool,
+    background_data: bool,
+}
+
+/// `fix`: None just reads the status; "notifications" / "battery" / "backgroundData" asks the
+/// system or opens its settings page (the UI re-reads the status when the app comes back).
+#[tauri::command]
+async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<SystemStatus, String> {
+    #[cfg(target_os = "android")]
+    {
+        let command = match fix.as_deref() {
+            None => "status",
+            Some("notifications") => "fixNotifications",
+            Some("battery") => "fixBattery",
+            Some("backgroundData") => "fixBackgroundData",
+            Some(other) => return Err(format!("unknown setting {other}")),
+        };
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async(command, serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, fix);
+        Ok(SystemStatus {
+            notifications: true,
+            battery_unrestricted: true,
+            background_data: true,
+        })
+    }
 }
 
 #[tauri::command]
@@ -562,10 +613,17 @@ pub fn run() {
         let handle = app.handle().clone();
         core.on_notification(move |n| {
             // Only when the window isn't in front: otherwise the chat list already shows it.
-            let focused = handle
-                .get_webview_window("main")
-                .and_then(|w| w.is_focused().ok())
-                .unwrap_or(false);
+            let focused = if cfg!(mobile) {
+                handle
+                    .state::<Visible>()
+                    .0
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            } else {
+                handle
+                    .get_webview_window("main")
+                    .and_then(|w| w.is_focused().ok())
+                    .unwrap_or(false)
+            };
             if focused {
                 return;
             }
@@ -585,6 +643,7 @@ pub fn run() {
             }
         });
         app.manage(core);
+        app.manage(Visible(std::sync::atomic::AtomicBool::new(true)));
         // Picked files left over from a previous run were never sent.
         if let Ok(dir) = picked_dir(app.handle()) {
             let _ = std::fs::remove_dir_all(dir);
@@ -649,6 +708,7 @@ pub fn run() {
             call_participants,
             presence,
             report_activity,
+            system_status,
             set_quick_reaction,
             set_theme,
             set_nickname,
@@ -911,6 +971,7 @@ mod android {
     use tauri::{Manager, Wry, plugin::PluginHandle};
 
     pub struct Gallery(pub PluginHandle<Wry>);
+    pub struct System(pub PluginHandle<Wry>);
 
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -929,6 +990,8 @@ mod android {
             .setup(|app, api| {
                 let handle = api.register_android_plugin("com.alwy.chat", "GalleryPlugin")?;
                 app.manage(Gallery(handle));
+                let handle = api.register_android_plugin("com.alwy.chat", "SystemPlugin")?;
+                app.manage(System(handle));
                 Ok(())
             })
             .build()

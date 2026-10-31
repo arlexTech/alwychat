@@ -35,7 +35,7 @@
   import { presence } from "$lib/stores/presence.svelte";
   import { call } from "$lib/stores/call.svelte";
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
-  import ChatCustomizeSheet from "./ChatCustomizeSheet.svelte";
+  import ChatSettingsPage from "./ChatSettingsPage.svelte";
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
@@ -589,7 +589,7 @@
   </div>
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call">📞</button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call">🎥</button>
-  <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Customise chat">⋯</button>
+  <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings">⋯</button>
 </header>
 {#if room.in_call.length && call.roomId !== room.id}
   <button class="call-banner" onclick={() => call.join(room, false)} transition:fade={{ duration: 150 }}>
@@ -599,7 +599,7 @@
   </button>
 {/if}
 {#if chatMenuOpen}
-  <ChatCustomizeSheet roomId={room.id} hd={chatHd} onChooseHd={chooseHd} onClose={() => (chatMenuOpen = false)} />
+  <ChatSettingsPage roomId={room.id} hd={chatHd} onChooseHd={chooseHd} onClose={() => (chatMenuOpen = false)} />
 {/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

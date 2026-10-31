@@ -203,6 +203,17 @@ export const getPresence = (userIds: string[]) => invoke<Presence[]>("presence",
 /** Tell the server whether we're using the app (ignored when "Show when I'm active" is off). */
 export const reportActivity = (active: boolean) => invoke<void>("report_activity", { active });
 
+/** What can keep notifications from arriving (always all true on desktop). */
+export interface SystemStatus {
+  notifications: boolean;
+  batteryUnrestricted: boolean;
+  backgroundData: boolean;
+}
+
+/** Read the status, or with `fix`, ask Android / open its settings page for that item. */
+export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData") =>
+  invoke<SystemStatus>("system_status", { fix: fix ?? null });
+
 /** Shared look of a chat (room state `com.alwy.chat.room.*`). */
 export interface ChatStyle {
   quick_reaction: string | null;

@@ -22,7 +22,7 @@
   import { onBack } from "$lib/back.svelte";
   import { themeById } from "$lib/themes";
   import EncryptionSheet from "./EncryptionSheet.svelte";
-  import SettingsSheet from "./SettingsSheet.svelte";
+  import SettingsPage from "./SettingsPage.svelte";
 
   let { account, onSignOut }: { account: Account; onSignOut: () => void } = $props();
 
@@ -217,7 +217,7 @@
 {/if}
 
 {#if settingsOpen}
-  <SettingsSheet onClose={() => (settingsOpen = false)} />
+  <SettingsPage onClose={() => (settingsOpen = false)} />
 {/if}
 
 {#if rowMenu}
