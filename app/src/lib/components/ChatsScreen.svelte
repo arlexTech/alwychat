@@ -11,6 +11,7 @@
     type RoomSummary,
   } from "$lib/backend";
   import { chat } from "$lib/stores/chat.svelte";
+  import { presence } from "$lib/stores/presence.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
@@ -104,9 +105,25 @@
     }
   }
 
+  // Green dots on 1:1 chats: ask about the people of the first ones every couple of minutes.
+  const dmUsers = $derived(
+    chatList.rooms
+      .filter((r) => r.is_dm && r.dm_user)
+      .slice(0, 40)
+      .map((r) => r.dm_user as string)
+      .join(" "),
+  );
+  $effect(() => {
+    const ids = dmUsers.split(" ").filter(Boolean);
+    void presence.refresh(ids);
+    const timer = setInterval(() => presence.refresh(ids), 2 * 60 * 1000);
+    return () => clearInterval(timer);
+  });
+
   onMount(() => {
     chatList.start();
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
+    presence.start();
     return () => {
       chatList.reset();
       chat.close();

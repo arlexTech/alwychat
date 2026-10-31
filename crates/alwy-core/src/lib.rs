@@ -9,6 +9,7 @@ mod html;
 pub mod media;
 pub mod mentions;
 pub mod notifications;
+pub mod presence;
 pub mod rooms;
 pub mod session;
 pub mod settings;

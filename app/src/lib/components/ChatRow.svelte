@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RoomSummary } from "$lib/backend";
   import { shortTime } from "$lib/format";
+  import { presence } from "$lib/stores/presence.svelte";
   import Avatar from "./Avatar.svelte";
 
   let {
@@ -25,7 +26,10 @@
 </script>
 
 <button class="row" class:selected class:unread class:muted={room.is_muted} data-room={room.id} {onclick} {oncontextmenu}>
-  <Avatar name={room.name} mxc={room.avatar} size={52} />
+  <span class="avatar">
+    <Avatar name={room.name} mxc={room.avatar} size={52} />
+    {#if room.is_dm && presence.online(room.dm_user)}<span class="online" title="Online"></span>{/if}
+  </span>
   <div class="body">
     <div class="line">
       <span class="name">{room.name}</span>
@@ -139,5 +143,21 @@
   .muted .badge {
     background: var(--surface-hover);
     color: var(--muted);
+  }
+  .avatar {
+    position: relative;
+    flex: none;
+    display: flex;
+  }
+  /* Messenger's green dot: someone in a 1:1 chat is online. */
+  .online {
+    position: absolute;
+    right: 1px;
+    bottom: 1px;
+    width: 14px;
+    height: 14px;
+    border: 3px solid var(--surface);
+    border-radius: 50%;
+    background: #31d158;
   }
 </style>

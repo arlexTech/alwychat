@@ -118,6 +118,19 @@ async fn set_nickname(
 }
 
 #[tauri::command]
+async fn presence(
+    core: State<'_, Core>,
+    user_ids: Vec<String>,
+) -> alwy_core::Result<Vec<alwy_core::presence::Presence>> {
+    core.presence(&user_ids).await
+}
+
+#[tauri::command]
+async fn report_activity(core: State<'_, Core>, active: bool) -> alwy_core::Result<()> {
+    core.report_activity(active).await
+}
+
+#[tauri::command]
 async fn set_typing(core: State<'_, Core>, room_id: String, typing: bool) -> alwy_core::Result<()> {
     core.set_typing(&room_id, typing).await
 }
@@ -609,6 +622,8 @@ pub fn run() {
             subscribe_chat_list,
             open_chat,
             set_typing,
+            presence,
+            report_activity,
             set_quick_reaction,
             set_theme,
             set_nickname,

@@ -13,7 +13,7 @@
     own,
   }: { media: string; durationMs: number | null; waveform: number[]; own: boolean } = $props();
 
-  const BARS = 36;
+  const BARS = 28;
   const SPEEDS = [1, 1.5, 2];
 
   let audio: HTMLAudioElement;
@@ -103,8 +103,8 @@
   .voice {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-width: 220px;
+    gap: 8px;
+    width: 240px;
     max-width: 100%;
     padding: 2px 0;
   }
@@ -134,12 +134,14 @@
     align-items: center;
     gap: 2px;
     height: 30px;
+    overflow: hidden;
     cursor: pointer;
     touch-action: none;
   }
   .wave span {
-    flex: 1;
-    min-width: 2px;
+    flex: 1 1 0;
+    min-width: 1px;
+    max-width: 4px;
     border-radius: 2px;
     background: color-mix(in srgb, currentColor 35%, transparent);
     transition: background 0.1s linear;
@@ -149,6 +151,8 @@
   }
   .time {
     flex: none;
+    min-width: 2.2em;
+    text-align: right;
     font-size: 0.8rem;
     font-variant-numeric: tabular-nums;
     opacity: 0.85;

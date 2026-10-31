@@ -16,6 +16,8 @@ pub struct Settings {
     pub send_read_receipts: bool,
     /// Others see when we're typing.
     pub send_typing: bool,
+    /// Others see when we're online / last active ("Show when I'm active").
+    pub share_presence: bool,
     /// Desktop notifications for new messages.
     pub notifications: bool,
     /// Send photos in original quality by default (chats can override). Off: compressed.
@@ -27,6 +29,7 @@ impl Default for Settings {
         Self {
             send_read_receipts: true,
             send_typing: true,
+            share_presence: true,
             notifications: true,
             hd_media: false,
         }

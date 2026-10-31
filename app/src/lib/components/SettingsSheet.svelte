@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { getSettings, setSettings, type Settings } from "$lib/backend";
+  import { presence } from "$lib/stores/presence.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -24,6 +25,11 @@
     },
     { key: "send_typing", label: "Show when I'm typing", hint: "Others see the typing dots while you write." },
     {
+      key: "share_presence",
+      label: "Show when I'm active",
+      hint: "Others see when you're online or when you were last active.",
+    },
+    {
       key: "notifications",
       label: "Desktop notifications",
       hint: "New messages while AlwyChat isn't in front. Follows your mute and mention settings.",
@@ -45,6 +51,7 @@
     settings = next;
     try {
       await setSettings(next);
+      if (key === "share_presence") presence.reportNow();
     } catch (e) {
       settings = previous;
       error = String(e);

@@ -184,6 +184,17 @@ export type TimelineEntry = { key: string } & (
   | { type: "hidden" }
 );
 
+export interface Presence {
+  user_id: string;
+  online: boolean;
+  last_active_ago_ms: number | null;
+}
+
+/** Online / last active of these people (unknown ones are left out). */
+export const getPresence = (userIds: string[]) => invoke<Presence[]>("presence", { userIds });
+/** Tell the server whether we're using the app (ignored when "Show when I'm active" is off). */
+export const reportActivity = (active: boolean) => invoke<void>("report_activity", { active });
+
 /** Shared look of a chat (room state `com.alwy.chat.room.*`). */
 export interface ChatStyle {
   quick_reaction: string | null;
@@ -317,6 +328,7 @@ export const setMarkedUnread = (roomId: string, unread: boolean) =>
 export interface Settings {
   send_read_receipts: boolean;
   send_typing: boolean;
+  share_presence: boolean;
   notifications: boolean;
   /** Photos in original quality by default (chats can override). */
   hd_media: boolean;

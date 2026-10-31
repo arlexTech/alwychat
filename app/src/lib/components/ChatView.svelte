@@ -32,6 +32,7 @@
   import { MentionAutocomplete } from "$lib/mentions.svelte";
   import { pickedMediaUrl } from "$lib/media";
   import { VoiceRecorder } from "$lib/recorder.svelte";
+  import { presence } from "$lib/stores/presence.svelte";
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatCustomizeSheet from "./ChatCustomizeSheet.svelte";
   import { saveToGallery } from "$lib/save";
@@ -81,6 +82,16 @@
     const s = Math.floor(recorder.elapsedMs / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   });
+
+  // 1:1 chats: "Online" / "Last seen 5 min ago" under the name, refreshed while open.
+  $effect(() => {
+    const user = room.dm_user;
+    if (!user) return;
+    void presence.refresh([user]);
+    const timer = setInterval(() => presence.refresh([user]), 30_000);
+    return () => clearInterval(timer);
+  });
+  const status = $derived(room.is_dm ? presence.label(room.dm_user) : null);
 
   // A 1:1 chat is titled with the nickname given to the other person, if any.
   const title = $derived((room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);
@@ -569,7 +580,11 @@
   <Avatar name={room.name} mxc={room.avatar} size={40} />
   <div class="title">
     <strong>{title}</strong>
-    {#if room.is_encrypted}<span class="sub">🔒 End-to-end encrypted</span>{/if}
+    {#if status}
+      <span class="sub" class:online={presence.online(room.dm_user)}>{status}</span>
+    {:else if room.is_encrypted}
+      <span class="sub">🔒 End-to-end encrypted</span>
+    {/if}
   </div>
   <button class="chat-menu-button" onclick={() => (chatMenuOpen = true)} aria-label="Customise chat">⋯</button>
 </header>
@@ -802,6 +817,9 @@
   .sub {
     font-size: 0.8rem;
     color: var(--muted);
+  }
+  .sub.online {
+    color: #31d158;
   }
   .back {
     display: none;

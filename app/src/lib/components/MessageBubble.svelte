@@ -790,6 +790,12 @@
   .actions.open {
     opacity: 1;
   }
+  /* Touch screens: no hover, and a tap would leave the buttons stuck on. Long-press opens them. */
+  @media (hover: none) {
+    .actions:not(.open) {
+      display: none;
+    }
+  }
   .menu {
     position: absolute;
     bottom: calc(100% + 6px);
