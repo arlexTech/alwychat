@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { isAndroid, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus } from "$lib/backend";
+  import { profiles, ourZone } from "$lib/stores/profiles.svelte";
+  import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus } from "$lib/backend";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
@@ -12,7 +13,53 @@
   import type { Folder } from "$lib/backend";
   import { onBack } from "$lib/back.svelte";
 
-  let { onClose }: { onClose: () => void } = $props();
+  let { userId, onClose }: { userId: string; onClose: () => void } = $props();
+
+  // ── Status and time zone (extended profile, visible to everyone) ──
+  const STATUS_EMOJI = ["💬", "📚", "💼", "🎧", "🎮", "🏃", "✈️", "🤒", "😴", "🌙"];
+  let statusEmoji = $state("");
+  let statusText = $state("");
+  let statusSaved = $state<string | null>(null);
+  let statusBusy = $state(false);
+  let shareZone = $state(false);
+  $effect(() => {
+    void profiles.refresh([userId], true).then(() => {
+      const mine = profiles.get(userId);
+      statusEmoji = mine?.status?.emoji ?? "";
+      statusText = mine?.status?.text ?? "";
+      statusSaved = profiles.statusLabel(userId);
+      shareZone = !!mine?.time_zone;
+    });
+  });
+  const statusChanged = $derived(([statusEmoji, statusText.trim()].filter(Boolean).join(" ") || null) !== statusSaved);
+
+  async function saveStatus(clear = false) {
+    statusBusy = true;
+    try {
+      if (clear) {
+        statusEmoji = "";
+        statusText = "";
+      }
+      const empty = !statusEmoji && !statusText.trim();
+      await setStatus(empty ? null : { emoji: statusEmoji, text: statusText.trim() });
+      await profiles.refresh([userId], true);
+      statusSaved = profiles.statusLabel(userId);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      statusBusy = false;
+    }
+  }
+
+  async function toggleZone(on: boolean) {
+    try {
+      await setTimeZone(on ? ourZone() : null);
+      shareZone = on;
+    } catch (e) {
+      shareZone = !on;
+      error = String(e);
+    }
+  }
 
   const settings = $derived(prefs.settings);
   let system = $state<SystemStatus | null>(null);
@@ -139,7 +186,41 @@
 
 <Page title="Settings" {onClose}>
   {#if settings}
-    <h3>Privacy</h3>
+    <h3>Status</h3>
+    <div class="status-emoji" role="radiogroup" aria-label="Status emoji">
+      {#each STATUS_EMOJI as e (e)}
+        <button
+          role="radio"
+          aria-checked={statusEmoji === e}
+          class:on={statusEmoji === e}
+          onclick={() => (statusEmoji = statusEmoji === e ? "" : e)}>{e}</button
+        >
+      {/each}
+    </div>
+    <div class="status-row">
+      <input
+        class="status-text"
+        placeholder="What's up?"
+        maxlength="80"
+        bind:value={statusText}
+        onkeydown={(e) => e.key === "Enter" && statusChanged && saveStatus()}
+      />
+      {#if statusChanged}
+        <button class="status-save" disabled={statusBusy} onclick={() => saveStatus()}>Save</button>
+      {:else if statusSaved}
+        <button class="status-clear" disabled={statusBusy} onclick={() => saveStatus(true)}>Clear</button>
+      {/if}
+    </div>
+    <small class="status-hint">Anyone who can see your profile sees it, in AlwyChat and other apps that support statuses.</small>
+    <label class="toggle">
+      <span>
+        <strong>Share my local time</strong>
+        <small>People see your time zone ({ourZone()}) and the time it is for you.</small>
+      </span>
+      <input type="checkbox" role="switch" checked={shareZone} onchange={(e) => toggleZone(e.currentTarget.checked)} />
+    </label>
+
+    <h3 class="section">Privacy</h3>
     {#each privacy as t (t.key)}{@render row(t)}{/each}
 
     <h3 class="section">Appearance</h3>
@@ -286,6 +367,57 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--muted);
+  }
+  .status-emoji {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .status-emoji button {
+    width: 40px;
+    height: 40px;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    background: var(--surface);
+    font-size: 1.25rem;
+    cursor: pointer;
+  }
+  .status-emoji button.on {
+    border-color: var(--accent-b, #7b5cff);
+  }
+  .status-row {
+    display: flex;
+    gap: 8px;
+  }
+  .status-text {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+  }
+  .status-row button {
+    padding: 0 16px;
+    border: none;
+    border-radius: 12px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .status-save {
+    background: var(--accent);
+    color: white;
+  }
+  .status-clear {
+    background: var(--surface);
+    color: var(--danger);
+  }
+  .status-hint {
+    display: block;
+    margin: 6px 0 4px;
   }
   .folders {
     margin: 0;

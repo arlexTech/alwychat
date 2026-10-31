@@ -293,6 +293,25 @@ export interface ChatStyle {
   can_edit: boolean;
 }
 
+// ── Extended profile: status, time zone ─────────────────────────────────────
+
+/** MSC4426 status: emoji and/or short text. */
+export interface Status {
+  text: string;
+  emoji: string;
+}
+export interface ProfileExtras {
+  user_id: string;
+  status: Status | null;
+  /** IANA name, e.g. "Europe/Brussels". */
+  time_zone: string | null;
+}
+export const profileExtras = (userIds: string[]) => invoke<ProfileExtras[]>("profile_extras", { userIds });
+/** null clears it. */
+export const setStatus = (status: Status | null) => invoke<void>("set_status", { status });
+/** null stops sharing it. */
+export const setTimeZone = (timeZone: string | null) => invoke<void>("set_time_zone", { timeZone });
+
 export interface ThreadInfo {
   replies: number;
   latest_sender: string | null;

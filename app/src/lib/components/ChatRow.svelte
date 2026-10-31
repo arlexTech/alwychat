@@ -4,6 +4,7 @@
   import { shortTime } from "$lib/format";
   import { drafts } from "$lib/stores/drafts.svelte";
   import { presence } from "$lib/stores/presence.svelte";
+  import { profiles } from "$lib/stores/profiles.svelte";
   import Avatar from "./Avatar.svelte";
 
   let {
@@ -37,6 +38,9 @@
   <div class="body">
     <div class="line">
       <span class="name">{room.name}</span>
+      {#if room.is_dm && profiles.get(room.dm_user)?.status?.emoji}
+        <span class="status-emoji" title={profiles.statusLabel(room.dm_user)}>{profiles.get(room.dm_user)?.status?.emoji}</span>
+      {/if}
       {#if room.in_call.length}<span class="icon in-call" title="{room.in_call.length} in the call"><Phone size={12} /> {room.in_call.length}</span>{/if}
       {#if room.is_muted}<span class="icon" title="Muted">🔕</span>{/if}
       {#if room.is_favourite}<span class="icon" title="Pinned">📌</span>{/if}
@@ -58,6 +62,16 @@
 </button>
 
 <style>
+  /* The emoji sits right after the name; the time stays at the end. */
+  .name:has(+ .status-emoji) {
+    flex: 0 1 auto;
+  }
+  .status-emoji {
+    flex: none;
+    margin-right: auto;
+    font-size: 0.9rem;
+    line-height: 1;
+  }
   .row {
     display: flex;
     align-items: center;

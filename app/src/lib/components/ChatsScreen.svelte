@@ -40,6 +40,7 @@
   import { MessageSearch } from "$lib/stores/search.svelte";
   import SearchResults from "./SearchResults.svelte";
   import { presence } from "$lib/stores/presence.svelte";
+  import { profiles } from "$lib/stores/profiles.svelte";
   import { call } from "$lib/stores/call.svelte";
   import CallView from "./CallView.svelte";
   import IncomingCall from "./IncomingCall.svelte";
@@ -198,7 +199,8 @@
   $effect(() => {
     const ids = dmUsers.split(" ").filter(Boolean);
     void presence.refresh(ids);
-    const timer = setInterval(() => presence.refresh(ids), 2 * 60 * 1000);
+    void profiles.refresh(ids);
+    const timer = setInterval(() => (presence.refresh(ids), profiles.refresh(ids)), 2 * 60 * 1000);
     return () => clearInterval(timer);
   });
 
@@ -360,7 +362,7 @@
 {/if}
 
 {#if settingsOpen}
-  <SettingsPage onClose={() => (settingsOpen = false)} />
+  <SettingsPage userId={account.user_id} onClose={() => (settingsOpen = false)} />
 {/if}
 
 {#if rowMenu}

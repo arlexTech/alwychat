@@ -63,6 +63,7 @@
   import { pickedMediaUrl } from "$lib/media";
   import { VoiceRecorder } from "$lib/recorder.svelte";
   import { presence } from "$lib/stores/presence.svelte";
+  import { profiles } from "$lib/stores/profiles.svelte";
   import { call } from "$lib/stores/call.svelte";
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatSettingsPage from "./ChatSettingsPage.svelte";
@@ -144,10 +145,18 @@
     const user = room.dm_user;
     if (!user) return;
     void presence.refresh([user]);
-    const timer = setInterval(() => presence.refresh([user]), 30_000);
+    void profiles.refresh([user]);
+    const timer = setInterval(() => (presence.refresh([user]), profiles.refresh([user])), 30_000);
     return () => clearInterval(timer);
   });
-  const status = $derived(room.is_dm ? presence.label(room.dm_user) : null);
+  // "📚 Studying · Online · 22:14 their time": status and local time from their profile.
+  const status = $derived(
+    room.is_dm
+      ? [profiles.statusLabel(room.dm_user), presence.label(room.dm_user), profiles.localTime(room.dm_user)]
+          .filter(Boolean)
+          .join(" · ") || null
+      : null,
+  );
 
   // A 1:1 chat is titled with the nickname given to the other person, if any.
   const title = $derived((room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);

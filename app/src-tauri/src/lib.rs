@@ -780,6 +780,30 @@ async fn set_marked_unread(
 }
 
 #[tauri::command]
+async fn profile_extras(
+    core: State<'_, AppCore>,
+    user_ids: Vec<String>,
+) -> alwy_core::Result<Vec<alwy_core::profile::ProfileExtras>> {
+    core.profile_extras(&user_ids).await
+}
+
+#[tauri::command]
+async fn set_status(
+    core: State<'_, AppCore>,
+    status: Option<alwy_core::profile::Status>,
+) -> alwy_core::Result<()> {
+    core.set_status(status).await
+}
+
+#[tauri::command]
+async fn set_time_zone(
+    core: State<'_, AppCore>,
+    time_zone: Option<String>,
+) -> alwy_core::Result<()> {
+    core.set_time_zone(time_zone.as_deref()).await
+}
+
+#[tauri::command]
 async fn close_chat(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.close_chat()
 }
@@ -1147,6 +1171,9 @@ pub fn run() {
             subscribe_chat_list,
             open_chat,
             open_thread,
+            profile_extras,
+            set_status,
+            set_time_zone,
             close_thread,
             set_typing,
             join_call,

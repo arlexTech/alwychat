@@ -15,6 +15,7 @@ pub mod notifications;
 pub mod pins;
 pub mod polls;
 pub mod presence;
+pub mod profile;
 pub mod push;
 pub mod rooms;
 pub mod rtc;
