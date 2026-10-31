@@ -303,6 +303,10 @@ export const votePoll = (roomId: string, pollId: string, answers: string[]) =>
   invoke<void>("vote_poll", { roomId, pollId, answers });
 export const endPoll = (roomId: string, pollId: string) => invoke<void>("end_poll", { roomId, pollId });
 
+/** Copies of messages (event IDs) from `roomId`, sent to `targetRoomId`. Resolves to how many. */
+export const forwardMessages = (roomId: string, eventIds: string[], targetRoomId: string) =>
+  invoke<number>("forward_messages", { roomId, eventIds, targetRoomId });
+
 export const pinMessage = (roomId: string, eventId: string, pin: boolean) =>
   invoke<void>("pin_message", { roomId, eventId, pin });
 

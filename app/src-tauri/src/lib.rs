@@ -134,6 +134,17 @@ async fn presence(
 struct Visible(std::sync::atomic::AtomicBool);
 
 #[tauri::command]
+async fn forward_messages(
+    core: State<'_, AppCore>,
+    room_id: String,
+    event_ids: Vec<String>,
+    target_room_id: String,
+) -> alwy_core::Result<usize> {
+    core.forward_messages(&room_id, &event_ids, &target_room_id)
+        .await
+}
+
+#[tauri::command]
 async fn create_poll(
     core: State<'_, AppCore>,
     room_id: String,
@@ -777,7 +788,9 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(android::gallery_plugin());
+    let builder = builder
+        .plugin(android::gallery_plugin())
+        .plugin(android::system_plugin());
     let builder = builder.setup(|app| {
         #[cfg(target_os = "android")]
         init_android_tls()?;
@@ -891,6 +904,7 @@ pub fn run() {
             link_preview,
             pin_message,
             create_poll,
+            forward_messages,
             vote_poll,
             end_poll,
             setup_push,
@@ -1239,6 +1253,16 @@ mod android {
             .setup(|app, api| {
                 let handle = api.register_android_plugin("com.alwy.chat", "GalleryPlugin")?;
                 app.manage(Gallery(handle));
+                Ok(())
+            })
+            .build()
+    }
+
+    /// Separate Tauri plugin: one Tauri plugin name maps to one Kotlin class (sharing the
+    /// name sent gallery calls to SystemPlugin).
+    pub fn system_plugin() -> tauri::plugin::TauriPlugin<Wry> {
+        tauri::plugin::Builder::new("alwy-system")
+            .setup(|app, api| {
                 let handle = api.register_android_plugin("com.alwy.chat", "SystemPlugin")?;
                 app.manage(System(handle));
                 Ok(())

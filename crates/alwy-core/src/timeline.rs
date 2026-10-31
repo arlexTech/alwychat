@@ -332,6 +332,33 @@ impl crate::Core {
             .map_err(timeline_err)
     }
 
+    /// Send copies of messages from the open chat to `target_room_id` (same content, media
+    /// included without re-uploading; replies lose their quote). Returns how many were sent.
+    pub async fn forward_messages(
+        &self,
+        room_id: &str,
+        event_ids: &[String],
+        target_room_id: &str,
+    ) -> Result<usize> {
+        let timeline = self.timeline(room_id)?;
+        let target = self.room(target_room_id)?;
+        let mut sent = 0;
+        for id in event_ids {
+            let event_id = OwnedEventId::try_from(id.as_str()).map_err(|_| Error::UnknownEvent)?;
+            let Some(item) = timeline.item_by_event_id(&event_id).await else {
+                continue;
+            };
+            let Some(message) = item.content().as_message() else {
+                continue;
+            };
+            target
+                .send(RoomMessageEventContent::new(message.msgtype().clone()))
+                .await?;
+            sent += 1;
+        }
+        Ok(sent)
+    }
+
     /// Delete (redact) a message for everyone.
     pub async fn delete_message(&self, room_id: &str, item_id: &str) -> Result<()> {
         let timeline = self.timeline(room_id)?;

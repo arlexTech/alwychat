@@ -37,6 +37,7 @@
     pinned = null,
     onPin,
     roomId,
+    onLongPress,
     album = null,
   }: {
     msg: MessageEntry;
@@ -59,6 +60,8 @@
     /** Save this message's photo/video, or the whole album, to the gallery. */
     onSaveToGallery: () => void;
     roomId: string;
+    /** Touch long-press: the chat shows its action sheet (instead of the small menu). */
+    onLongPress?: () => void;
     /** Whether it's pinned; null when we can't pin in this chat. */
     pinned?: boolean | null;
     onPin?: (pin: boolean) => void;
@@ -174,10 +177,11 @@
   function pressStart(event: PointerEvent) {
     if (event.pointerType !== "touch") return;
     pressOrigin = { x: event.clientX, y: event.clientY };
-    if (hasMenu) {
+    if (onLongPress || hasMenu) {
       pressTimer = setTimeout(() => {
         navigator.vibrate?.(10);
-        openMenu(event);
+        if (onLongPress) onLongPress();
+        else openMenu(event);
       }, 450);
     }
   }
@@ -959,5 +963,13 @@
     position: fixed;
     inset: 0;
     z-index: 5;
+  }
+  /* Touch: a long-press opens the actions, not the WebView's text selection. */
+  @media (hover: none) {
+    .bubble {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
   }
 </style>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MessageActions, { type Actions } from "./MessageActions.svelte";
+  import ForwardPage from "./ForwardPage.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import ChartBar from "@lucide/svelte/icons/chart-bar";
   import PollCreator from "./PollCreator.svelte";
@@ -31,6 +33,7 @@
     saveMedia,
     sendFile,
     pinMessage,
+    forwardMessages,
     sendMessage,
     sendPicked,
     sendVoice,
@@ -556,6 +559,77 @@
     toggleReaction(room.id, msg.item_id, key).catch((e) => (sendError = String(e)));
   }
 
+  // Long-press action sheet (touch) and forwarding.
+  let actionFor = $state<{ msg: MessageEntry; album: MessageEntry[] | null } | null>(null);
+  let forwardIds = $state<string[] | null>(null);
+  $effect(() => {
+    if (actionFor) return closeOnBack(() => (actionFor = null));
+  });
+  $effect(() => {
+    if (forwardIds) return closeOnBack(() => (forwardIds = null));
+  });
+
+  function messageText(msg: MessageEntry) {
+    const c = msg.content;
+    if ("body" in c && c.body && c.kind !== "sticker") return c.body;
+    if ("caption" in c && c.caption) return c.caption;
+    return null;
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older WebViews: the legacy copy command.
+      const area = document.createElement("textarea");
+      area.value = text;
+      document.body.append(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    flash("Copied");
+  }
+
+  function actionsFor(msg: MessageEntry, album: MessageEntry[] | null): Actions {
+    const items = album ?? [msg];
+    const remote = items.every((m) => m.item_id.startsWith("$"));
+    const c = msg.content;
+    const text = messageText(msg);
+    const forwardable =
+      remote &&
+      items.every((m) => !["redacted", "unable_to_decrypt", "unsupported", "poll", "sticker"].includes(m.content.kind));
+    const visual = items.some((m) => m.content.kind === "image" || m.content.kind === "video");
+    const pinned = pinnedIds.has(msg.item_id);
+    return {
+      react: (key) => react(msg, key),
+      reply: msg.can_reply ? () => startReply(msg) : undefined,
+      copy: text ? () => copyText(text) : undefined,
+      forward: forwardable ? () => (forwardIds = items.map((m) => m.item_id)) : undefined,
+      pin: chat.pins.can_pin && remote ? { pinned, toggle: () => setPin(msg.item_id, !pinned) } : undefined,
+      save: visual
+        ? { label: items.length > 1 ? `Save all (${items.length})` : "Save to gallery", run: () => saveVisualMedia(items) }
+        : c.kind === "file"
+          ? { label: "Save", run: () => saveFile(msg) }
+          : undefined,
+      edit: msg.can_edit ? () => startEdit(msg) : undefined,
+      history: msg.is_edited && remote ? () => showHistory(msg) : undefined,
+      delete: msg.can_delete ? () => (confirmDelete = msg) : undefined,
+    };
+  }
+
+  async function forwardTo(target: RoomSummary) {
+    const ids = forwardIds;
+    forwardIds = null;
+    if (!ids) return;
+    try {
+      const sent = await forwardMessages(room.id, ids, target.id);
+      flash(sent ? `Forwarded to ${target.name}` : "Couldn't forward that message");
+    } catch (e) {
+      flash(`Couldn't forward: ${e}`);
+    }
+  }
+
   function startReply(msg: MessageEntry) {
     replyTo = msg;
     input.focus();
@@ -666,6 +740,17 @@
     <button class="pin-list" onclick={() => (pinsOpen = true)} aria-label="All pinned messages"><List size={18} /></button>
   </div>
 {/if}
+{#if actionFor}
+  <MessageActions
+    msg={actionFor.msg}
+    quickReaction={QUICK_REACTION}
+    actions={actionsFor(actionFor.msg, actionFor.album)}
+    onClose={() => (actionFor = null)}
+  />
+{/if}
+{#if forwardIds}
+  <ForwardPage onPick={forwardTo} onClose={() => (forwardIds = null)} />
+{/if}
 {#if pollOpen}
   <PollCreator roomId={room.id} onClose={() => (pollOpen = false)} />
 {/if}
@@ -740,6 +825,7 @@
             pinned={chat.pins.can_pin ? pinnedIds.has(row.msg.item_id) : null}
             onPin={(pin) => setPin(row.msg.item_id, pin)}
             roomId={room.id}
+            onLongPress={() => (actionFor = { msg: row.msg, album: row.album })}
           />
         </div>
       {:else if row.kind === "day"}
