@@ -149,6 +149,8 @@ struct SystemStatus {
     notifications: bool,
     battery_unrestricted: bool,
     background_data: bool,
+    /// Maker with its own background limits ("oneplus", "xiaomi", …), which apps can't read.
+    oem_power_manager: Option<String>,
 }
 
 /// `fix`: None just reads the status; "notifications" / "battery" / "backgroundData" asks the
@@ -162,6 +164,7 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
             Some("notifications") => "fixNotifications",
             Some("battery") => "fixBattery",
             Some("backgroundData") => "fixBackgroundData",
+            Some("appSettings") => "openAppSettings",
             Some(other) => return Err(format!("unknown setting {other}")),
         };
         app.state::<android::System>()
@@ -177,6 +180,7 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
             notifications: true,
             battery_unrestricted: true,
             background_data: true,
+            oem_power_manager: None,
         })
     }
 }

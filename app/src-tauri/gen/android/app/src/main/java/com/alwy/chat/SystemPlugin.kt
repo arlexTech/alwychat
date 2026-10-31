@@ -48,6 +48,11 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     return JSObject().apply {
       put("notifications", NotificationManagerCompat.from(activity).areNotificationsEnabled())
       put("batteryUnrestricted", runCatching { power.isIgnoringBatteryOptimizations(pkg) }.getOrDefault(true))
+      // Phones whose maker adds its own background limits on top of Android's (not readable).
+      put("oemPowerManager", Build.MANUFACTURER.lowercase().let { m ->
+        listOf("oneplus", "oppo", "realme", "xiaomi", "redmi", "poco", "huawei", "honor", "vivo", "samsung")
+          .firstOrNull { m.contains(it) }
+      } ?: JSObject.NULL)
       // Unknown counts as fine: a failed check shouldn't nag the user.
       put(
         "backgroundData",
@@ -96,6 +101,13 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     } catch (_: Exception) {
       openAppDetails()
     }
+    invoke.resolve(currentStatus())
+  }
+
+  /** The app's system page, where the maker's battery setting lives ("Battery usage"). */
+  @Command
+  fun openAppSettings(invoke: Invoke) {
+    openAppDetails()
     invoke.resolve(currentStatus())
   }
 

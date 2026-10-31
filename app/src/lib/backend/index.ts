@@ -217,10 +217,12 @@ export interface SystemStatus {
   notifications: boolean;
   batteryUnrestricted: boolean;
   backgroundData: boolean;
+  /** Maker with its own background limits ("oneplus", …), which apps can't read. */
+  oemPowerManager: string | null;
 }
 
 /** Read the status, or with `fix`, ask Android / open its settings page for that item. */
-export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData") =>
+export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData" | "appSettings") =>
   invoke<SystemStatus>("system_status", { fix: fix ?? null });
 
 /** Shared look of a chat (room state `com.alwy.chat.room.*`). */

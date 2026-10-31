@@ -37,6 +37,19 @@
   /** On only when both AlwyChat and the system allow it, so the switch matches the phone's settings. */
   const notificationsOn = $derived(!!settings?.notifications && !!system?.notifications);
 
+  const oemName = (oem: string) =>
+    ({ oneplus: "OnePlus", oppo: "OPPO", realme: "realme", xiaomi: "Xiaomi", redmi: "Xiaomi", poco: "Xiaomi", huawei: "Huawei", honor: "Honor", vivo: "vivo", samsung: "Samsung" })[oem] ?? oem;
+
+  /** Where the maker hides its own background setting, from the app's system page. */
+  function oemHint(oem: string) {
+    if (["oneplus", "oppo", "realme"].includes(oem))
+      return "Your phone has its own limit on top of Android's: open Battery usage and choose “Allow background activity”.";
+    if (["xiaomi", "redmi", "poco"].includes(oem))
+      return "Your phone has its own limit: turn on Autostart, and set Battery saver to “No restrictions”.";
+    if (oem === "samsung") return "Your phone has its own limit: under Battery, choose “Unrestricted”.";
+    return "Your phone has its own limit on top of Android's: in Battery, allow AlwyChat to run in the background.";
+  }
+
   async function refreshSystem() {
     try {
       system = await systemStatus();
@@ -79,7 +92,7 @@
     if (isAndroid) setupPush(on).catch((e) => (error = `Push: ${e}`));
   }
 
-  async function fix(what: "notifications" | "battery" | "backgroundData") {
+  async function fix(what: "notifications" | "battery" | "backgroundData" | "appSettings") {
     error = null;
     try {
       system = await systemStatus(what);
@@ -143,6 +156,16 @@
         </span>
         {#if !system.backgroundData}<button onclick={() => fix("backgroundData")}>Allow</button>{/if}
       </div>
+      {#if system.oemPowerManager}
+        <div class="check">
+          <span class="mark">?</span>
+          <span>
+            <strong>{oemName(system.oemPowerManager)} battery manager</strong>
+            <small>{oemHint(system.oemPowerManager)} AlwyChat can't check this one itself.</small>
+          </span>
+          <button onclick={() => fix("appSettings")}>Open</button>
+        </div>
+      {/if}
     {/if}
 
     <h3 class="section">Media</h3>
