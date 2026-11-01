@@ -1,0 +1,176 @@
+# Builds AlwyChat for every platform. A pushed `v*` tag also drafts a GitHub release with the
+# files under the stable names the README links to (releases/latest/download/<name>).
+#
+# Optional repository secrets:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
+#       signed release APK (without them: a debug APK, fine for testing, not for a release)
+#   GOOGLE_SERVICES_JSON_BASE64
+#       Firebase config for Android push notifications
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+            args: --target universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev rpm
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: app
+        run: pnpm tauri build ${{ matrix.args }}
+
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir out
+          b=target/release/bundle
+          case "${{ runner.os }}" in
+            Linux)
+              cp $b/appimage/*.AppImage out/AlwyChat-linux-x86_64.AppImage
+              cp $b/deb/*.deb out/AlwyChat-linux-amd64.deb
+              cp $b/rpm/*.rpm out/AlwyChat-linux-x86_64.rpm ;;
+            Windows)
+              cp $b/nsis/*-setup.exe out/AlwyChat-windows-x64-setup.exe
+              cp $b/msi/*.msi out/AlwyChat-windows-x64.msi ;;
+            macOS)
+              cp target/universal-apple-darwin/release/bundle/dmg/*.dmg out/AlwyChat-macos.dmg ;;
+          esac
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alwychat-${{ runner.os }}
+          path: out/*
+
+  android:
+    name: Android
+    runs-on: ubuntu-22.04
+    env:
+      NDK_VERSION: 29.0.14206865
+      # Secrets can't be tested in `if:` directly.
+      HAS_FIREBASE: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 != '' }}
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Firebase config
+        env:
+          GOOGLE_SERVICES: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        if: env.HAS_FIREBASE == 'true'
+        run: echo "$GOOGLE_SERVICES" | base64 -d > app/src-tauri/gen/android/app/google-services.json
+      - name: Signing key
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFile=%s\npassword=%s\nkeyAlias=%s\n' "$RUNNER_TEMP/release.jks" "$PASSWORD" "$ALIAS" \
+            > app/src-tauri/gen/android/keystore.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: app
+        run: |
+          if [ "${{ steps.signing.outputs.signed }}" = true ]; then
+            pnpm tauri android build --apk --target aarch64 armv7 x86_64
+          else
+            pnpm tauri android build --apk --debug --target aarch64 armv7 x86_64
+          fi
+      - name: Collect
+        run: |
+          mkdir out
+          apk=$(find app/src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)
+          cp "$apk" out/AlwyChat-android.apk
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alwychat-Android
+          path: out/*
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: out/*

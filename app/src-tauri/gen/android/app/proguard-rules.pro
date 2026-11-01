@@ -21,3 +21,6 @@
 #-renamesourcefileattribute SourceFile
 # rustls-platform-verifier is only called through JNI: keep it from being stripped.
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+
+# Our classes are reached by name: JNI from Rust (NativePush…), Tauri plugins, the manifest.
+-keep class com.alwy.chat.** { *; }
