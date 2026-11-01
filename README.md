@@ -2,39 +2,55 @@
 
 A chat app for [Matrix](https://matrix.org). Messages are end-to-end encrypted, and you can talk with people on Element, Element X, FluffyChat or any other Matrix app.
 
-> AlwyChat is in beta. The first release isn't out yet, so the download links below won't work until it is. Until then you can [build it yourself](#build-it-yourself).
+> AlwyChat is in beta. The first release isn't out yet, so the download links below won't work until it is. Until then, you can [build it yourself](#build-it-yourself).
 
-## Download
+## Which file do I download?
 
-| Platform | Download |
+Find your device in the table and click the file next to it.
+
+| Your device | Download |
 |---|---|
-| Android 7+ | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-android.apk) |
-| Linux (any distribution) | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.AppImage) |
-| Linux (Debian, Ubuntu, Mint) | [AlwyChat-linux-amd64.deb](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-amd64.deb) |
-| Linux (Fedora, openSUSE) | [AlwyChat-linux-x86_64.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) |
-| iPhone, iPad | Not yet |
-| Windows, macOS | Not yet |
-| Web | Not yet ([why](#web-version)) |
+| 📱 **Android** phone or tablet (Android 7 or newer) | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-android.apk) |
+| 🐧 **Linux**, any distribution | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.AppImage) |
+| 🐧 **Linux**, Debian / Ubuntu / Mint | [AlwyChat-linux-amd64.deb](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-amd64.deb) |
+| 🐧 **Linux**, Fedora / openSUSE | [AlwyChat-linux-x86_64.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) |
+| 🍎 **iPhone / iPad** | Not available yet |
+| 🪟 **Windows** · 🍏 **macOS** | Not available yet |
+| 🌐 **Web browser** | Not available yet ([why](#web-version)) |
+
+Not sure which Linux file to pick? Take the **AppImage**, it works on every distribution.
 
 Older versions are on the [releases page](https://github.com/arlexTech/alwychat/releases).
 
-### How to install
+### Installing
 
-**Android:** open the downloaded file on your phone. If Android asks, allow your browser or file manager to install apps, then tap Install.
+**📱 Android**
+1. Download the `.apk` file on your phone.
+2. Open it. If Android asks, allow your browser or file manager to install apps.
+3. Tap **Install**, then open AlwyChat and sign in.
 
-**Linux AppImage:** right-click the file, open Properties, tick "Allow executing file as program", then double-click it. Or in a terminal:
+**🐧 Linux, AppImage**
+1. Download the `.AppImage` file.
+2. Right-click it, open **Properties**, and tick **Allow executing file as program**.
+3. Double-click it to start AlwyChat.
 
+Or in a terminal:
 ```sh
 chmod +x AlwyChat-linux-x86_64.AppImage
 ./AlwyChat-linux-x86_64.AppImage
 ```
 
-**Linux .deb or .rpm:** double-click the file to open it in your software center. Or in a terminal:
+**🐧 Linux, .deb or .rpm**
+1. Download the file for your distribution.
+2. Double-click it: your software center opens. Click **Install**.
 
+Or in a terminal:
 ```sh
 sudo apt install ./AlwyChat-linux-amd64.deb    # Debian, Ubuntu, Mint
 sudo dnf install ./AlwyChat-linux-x86_64.rpm   # Fedora
 ```
+
+---
 
 ## Features
 
@@ -51,6 +67,8 @@ sudo dnf install ./AlwyChat-linux-x86_64.rpm   # Fedora
 - Light, dark and black themes
 
 See [docs/features.md](docs/features.md) for the full list, including what's planned.
+
+---
 
 ## Which server can I use?
 
@@ -71,6 +89,8 @@ Your server needs the newer sign-in system, where you log in through your browse
 
 There's no web version to host yet. The core of AlwyChat is written in Rust and has to be compiled to WebAssembly before it can run in a browser. That's planned. In the meantime, [Element Web](https://github.com/element-hq/element-web) or [Cinny](https://github.com/cinnyapp/cinny) can run on your server next to AlwyChat, with the same accounts and chats.
 
+---
+
 ## Build it yourself
 
 You need [Rust](https://rustup.rs), [Node.js](https://nodejs.org) 22 or newer, [pnpm](https://pnpm.io), and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your system.
@@ -90,6 +110,8 @@ For Android push notifications, put your Firebase project's `google-services.jso
 Calls on Linux need WebKitGTK built with WebRTC. Some distributions (Arch, CachyOS) ship it without, and calls won't work there. Everything else does.
 
 The code: [architecture notes](docs/architecture.md), the Rust core in [`crates/alwy-core`](crates/alwy-core), the app in [`app/`](app) (Tauri 2 and Svelte 5).
+
+---
 
 ## License
 
