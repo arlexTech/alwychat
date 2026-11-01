@@ -8,12 +8,16 @@ use futures_util::StreamExt;
 use matrix_sdk::{
     Client,
     ruma::{
-        OwnedRoomId, OwnedRoomOrAliasId, events::GlobalAccountDataEventType, room::RoomType,
+        OwnedRoomId, OwnedRoomOrAliasId,
+        api::client::room::create_room,
+        events::{GlobalAccountDataEventType, StateEventType},
+        room::RoomType,
         serde::Raw,
     },
 };
 use matrix_sdk_ui::spaces::{SpaceRoom, SpaceService};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tracing::warn;
 
 use crate::{Error, Result};
@@ -39,6 +43,8 @@ pub struct SpaceChild {
     pub topic: Option<String>,
     pub members: u64,
     pub is_space: bool,
+    /// A voice channel (see `rooms::is_voice_type`).
+    pub is_voice: bool,
     pub joined: bool,
     /// Recommended by the space's admins.
     pub suggested: bool,
@@ -86,6 +92,7 @@ fn child(room: SpaceRoom) -> SpaceChild {
         topic: room.topic,
         members: room.num_joined_members,
         is_space: room.room_type == Some(RoomType::Space),
+        is_voice: crate::rooms::is_voice_type(room.room_type.as_ref()),
         joined: room.state == Some(matrix_sdk::RoomState::Joined),
         suggested: room.suggested,
         via: room.via.iter().map(ToString::to_string).collect(),
@@ -184,6 +191,78 @@ impl crate::Core {
             .collect();
         self.client()?.join_room_by_id_or_alias(&id, &via).await?;
         Ok(())
+    }
+
+    /// Whether we may add chats to this space (send `m.space.child`).
+    pub async fn can_add_to_space(&self, space_id: &str) -> Result<bool> {
+        let space = self.room(space_id)?;
+        let user = space.own_user_id().to_owned();
+        Ok(space
+            .power_levels()
+            .await
+            .map(|pl| pl.user_can_send_state(&user, StateEventType::SpaceChild))
+            .unwrap_or(false))
+    }
+
+    /// Create a voice channel in a space: an Element Call "video room" that space members can
+    /// join. Not end-to-end encrypted, so Element Call users can talk with us (we don't do
+    /// call media encryption yet); its text chat isn't encrypted either.
+    pub async fn create_voice_channel(&self, space_id: &str, name: &str) -> Result<String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(Error::Call("the channel needs a name".into()));
+        }
+        let client = self.client()?;
+        let space = self.room(space_id)?;
+        let server = client.user_id().ok_or(Error::NotLoggedIn)?.server_name();
+        let via = json!([server]);
+
+        let mut request = create_room::v3::Request::new();
+        request.name = Some(name.to_owned());
+        request.creation_content =
+            Some(Raw::new(&json!({ "type": crate::rooms::VOICE_ROOM_TYPE }))?.cast_unchecked());
+        request.initial_state = vec![
+            Raw::new(&json!({
+                "type": "m.space.parent",
+                "state_key": space.room_id(),
+                "content": { "via": via, "canonical": true },
+            }))?
+            .cast_unchecked(),
+            Raw::new(&json!({
+                "type": "m.room.join_rules",
+                "state_key": "",
+                "content": {
+                    "join_rule": "restricted",
+                    "allow": [{ "type": "m.room_membership", "room_id": space.room_id() }],
+                },
+            }))?
+            .cast_unchecked(),
+            Raw::new(&json!({
+                "type": "m.room.history_visibility",
+                "state_key": "",
+                "content": { "history_visibility": "shared" },
+            }))?
+            .cast_unchecked(),
+        ];
+        // Everyone may join the call (publish their call membership), as Element does.
+        request.power_level_content_override = Some(
+            Raw::new(&json!({
+                "events": {
+                    "org.matrix.msc3401.call.member": 0,
+                    "org.matrix.msc3401.call": 0,
+                },
+            }))?
+            .cast_unchecked(),
+        );
+        let room = client.create_room(request).await?;
+        space
+            .send_state_event_raw(
+                "m.space.child",
+                room.room_id().as_str(),
+                json!({ "via": via }),
+            )
+            .await?;
+        Ok(room.room_id().to_string())
     }
 
     /// From the server when reachable, not the store: the store only catches up with our own

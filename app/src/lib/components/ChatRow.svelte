@@ -1,5 +1,8 @@
 <script lang="ts">
+  import BellOff from "@lucide/svelte/icons/bell-off";
   import Phone from "@lucide/svelte/icons/phone";
+  import Pin from "@lucide/svelte/icons/pin";
+  import Volume2 from "@lucide/svelte/icons/volume-2";
   import type { RoomSummary } from "$lib/backend";
   import { shortTime } from "$lib/format";
   import { drafts } from "$lib/stores/drafts.svelte";
@@ -37,13 +40,14 @@
   </span>
   <div class="body">
     <div class="line">
+      {#if room.is_voice}<span class="icon" title="Voice channel"><Volume2 size={14} /></span>{/if}
       <span class="name">{room.name}</span>
       {#if room.is_dm && profiles.get(room.dm_user)?.status?.emoji}
         <span class="status-emoji" title={profiles.statusLabel(room.dm_user)}>{profiles.get(room.dm_user)?.status?.emoji}</span>
       {/if}
       {#if room.in_call.length}<span class="icon in-call" title="{room.in_call.length} in the call"><Phone size={12} /> {room.in_call.length}</span>{/if}
-      {#if room.is_muted}<span class="icon" title="Muted">🔕</span>{/if}
-      {#if room.is_favourite}<span class="icon" title="Pinned">📌</span>{/if}
+      {#if room.is_muted}<span class="icon" title="Muted"><BellOff size={13} /></span>{/if}
+      {#if room.is_favourite}<span class="icon" title="Pinned"><Pin size={13} /></span>{/if}
       <span class="time">{shortTime(room.latest?.timestamp)}</span>
     </div>
     <div class="line">
@@ -160,9 +164,12 @@
     background: var(--accent);
   }
   .icon {
+    display: inline-flex;
     flex: none;
+    align-items: center;
+    gap: 2px;
+    color: var(--muted);
     font-size: 0.75rem;
-    opacity: 0.8;
   }
   .muted .badge {
     background: var(--surface-hover);

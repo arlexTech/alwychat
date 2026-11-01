@@ -174,6 +174,20 @@ async fn join_room(
 }
 
 #[tauri::command]
+async fn can_add_to_space(core: State<'_, AppCore>, space_id: String) -> alwy_core::Result<bool> {
+    core.can_add_to_space(&space_id).await
+}
+
+#[tauri::command]
+async fn create_voice_channel(
+    core: State<'_, AppCore>,
+    space_id: String,
+    name: String,
+) -> alwy_core::Result<String> {
+    core.create_voice_channel(&space_id, &name).await
+}
+
+#[tauri::command]
 async fn chat_list_prefs(
     core: State<'_, AppCore>,
 ) -> alwy_core::Result<alwy_core::spaces::ChatListPrefs> {
@@ -1281,6 +1295,8 @@ pub fn run() {
             open_space,
             close_space,
             join_room,
+            can_add_to_space,
+            create_voice_channel,
             chat_list_prefs,
             set_chat_list_prefs,
             load_newer,

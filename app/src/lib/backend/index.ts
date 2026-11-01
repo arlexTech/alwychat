@@ -98,7 +98,10 @@ export interface RoomSummary {
   is_dm: boolean;
   dm_user: string | null;
   /** Users in the room's call right now. */
-  in_call: string[];
+  /** People in the room's call right now. */
+  in_call: CallMember[];
+  /** A voice channel (Element Call video room): opening it joins the call. */
+  is_voice: boolean;
   is_invite: boolean;
   is_favourite: boolean;
   /** Low-priority tag: shown under "Archived". */
@@ -375,6 +378,12 @@ export interface SpaceInfo {
   /** Joined chats inside it, at any depth. */
   rooms: string[];
 }
+export interface CallMember {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+}
+
 export interface SpaceChild {
   id: string;
   name: string;
@@ -382,6 +391,7 @@ export interface SpaceChild {
   topic: string | null;
   members: number;
   is_space: boolean;
+  is_voice: boolean;
   joined: boolean;
   suggested: boolean;
   via: string[];
@@ -423,6 +433,9 @@ export function openSpace(spaceId: string, onChildren: (children: SpaceChild[]) 
 }
 export const closeSpace = () => invoke<void>("close_space");
 export const joinRoom = (roomId: string, via: string[]) => invoke<void>("join_room", { roomId, via });
+export const canAddToSpace = (spaceId: string) => invoke<boolean>("can_add_to_space", { spaceId });
+export const createVoiceChannel = (spaceId: string, name: string) =>
+  invoke<string>("create_voice_channel", { spaceId, name });
 export const getChatListPrefs = () => invoke<ChatListPrefs>("chat_list_prefs");
 export const setChatListPrefs = (prefs: ChatListPrefs) => invoke<void>("set_chat_list_prefs", { prefs });
 

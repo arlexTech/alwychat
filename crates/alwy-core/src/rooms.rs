@@ -11,6 +11,7 @@ use matrix_sdk::{
     ruma::{
         OwnedUserId,
         events::{AnyMessageLikeEventContent, AnySyncTimelineEvent, room::message::MessageType},
+        room::RoomType,
     },
 };
 use matrix_sdk_ui::room_list_service::{
@@ -39,8 +40,10 @@ pub struct RoomSummary {
     pub is_dm: bool,
     /// The other person of a 1:1 chat (for the nickname shown as its title).
     pub dm_user: Option<String>,
-    /// Users in the room's call right now (MatrixRTC), for call badges and voice channels.
-    pub in_call: Vec<String>,
+    /// People in the room's call right now (MatrixRTC), for call badges and voice channels.
+    pub in_call: Vec<CallMember>,
+    /// A voice channel (Element Call "video room"): opening it joins the call.
+    pub is_voice: bool,
     pub is_invite: bool,
     pub is_favourite: bool,
     /// Tagged low priority: shown under "Archived" (Element: "Low priority").
@@ -51,6 +54,21 @@ pub struct RoomSummary {
     pub unread_mentions: u64,
     pub marked_unread: bool,
     pub latest: Option<LatestMessage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CallMember {
+    pub user_id: String,
+    pub name: String,
+    pub avatar: Option<String>,
+}
+
+/// Room types of voice channels: Element Call video rooms, and Element's older Jitsi ones.
+const VOICE_ROOM_TYPES: [&str; 2] = ["org.matrix.msc3417.call", "io.element.video"];
+pub(crate) const VOICE_ROOM_TYPE: &str = VOICE_ROOM_TYPES[0];
+
+pub(crate) fn is_voice_type(room_type: Option<&RoomType>) -> bool {
+    room_type.is_some_and(|t| VOICE_ROOM_TYPES.contains(&t.as_str()))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,16 +218,8 @@ async fn summarize(room: &Room) -> RoomSummary {
                     .find_map(|t| t.as_user_id().map(ToString::to_string))
             })
             .flatten(),
-        in_call: {
-            let mut users: Vec<String> = room
-                .active_room_call_participants()
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            users.sort();
-            users.dedup();
-            users
-        },
+        in_call: call_members(room).await,
+        is_voice: is_voice_type(room.room_type().as_ref()),
         is_invite: room.state() == RoomState::Invited,
         is_favourite: room.is_favourite(),
         is_archived: room.is_low_priority(),
@@ -220,6 +230,25 @@ async fn summarize(room: &Room) -> RoomSummary {
         marked_unread: room.is_marked_unread(),
         latest: latest_message(room, is_dm).await,
     }
+}
+
+async fn call_members(room: &Room) -> Vec<CallMember> {
+    let mut users = room.active_room_call_participants();
+    users.sort();
+    users.dedup();
+    let mut out = Vec::with_capacity(users.len());
+    for user in users {
+        let member = room.get_member_no_sync(&user).await.ok().flatten();
+        out.push(CallMember {
+            name: member
+                .as_ref()
+                .and_then(|m| m.display_name().map(ToOwned::to_owned))
+                .unwrap_or_else(|| user.localpart().to_owned()),
+            avatar: member.and_then(|m| m.avatar_url().map(ToString::to_string)),
+            user_id: user.to_string(),
+        });
+    }
+    out
 }
 
 async fn latest_message(room: &Room, is_dm: bool) -> Option<LatestMessage> {
@@ -373,5 +402,18 @@ impl crate::Core {
             a.tasks.drain(..).for_each(|t| t.abort());
             a.tasks.push(task.abort_handle());
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_room_types() {
+        assert!(is_voice_type(Some(&RoomType::from("org.matrix.msc3417.call"))));
+        assert!(is_voice_type(Some(&RoomType::from("io.element.video"))));
+        assert!(!is_voice_type(Some(&RoomType::Space)));
+        assert!(!is_voice_type(None));
     }
 }

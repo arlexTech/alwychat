@@ -4,14 +4,25 @@
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Settings from "@lucide/svelte/icons/settings";
+  import Plus from "@lucide/svelte/icons/plus";
   import Users from "@lucide/svelte/icons/users";
   import { onBack } from "$lib/back.svelte";
-  import { closeSpace, joinRoom, openSpace, type SpaceChild } from "$lib/backend";
+  import {
+    canAddToSpace,
+    closeSpace,
+    createVoiceChannel,
+    joinRoom,
+    openSpace,
+    type RoomSummary,
+    type SpaceChild,
+  } from "$lib/backend";
+  import { call } from "$lib/stores/call.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import Avatar from "./Avatar.svelte";
   import ChatRow from "./ChatRow.svelte";
   import Page from "./Page.svelte";
+  import VoiceChannel from "./VoiceChannel.svelte";
 
   let { selectedId, onSelect }: { selectedId: string | null; onSelect: (roomId: string) => void } = $props();
 
@@ -48,6 +59,13 @@
   });
   onDestroy(() => void closeSpace().catch(() => {}));
 
+  let canAdd = $state(false);
+  $effect(() => {
+    const space = current;
+    canAdd = false;
+    if (space) canAddToSpace(space.id).then((ok) => current?.id === space.id && (canAdd = ok)).catch(() => {});
+  });
+
   const roomsById = $derived(new Map(chatList.rooms.map((r) => [r.id, r])));
   const unreadIn = (ids: string[]) =>
     ids.filter((id) => {
@@ -56,12 +74,69 @@
     }).length;
 
   // Joined chats in the chat list's order (most recent first); then sub-spaces; then the rest.
-  const joinedChats = $derived.by(() => {
+  const joinedRooms = $derived.by(() => {
     const ids = new Set(children.filter((c) => !c.is_space && c.joined).map((c) => c.id));
     return chatList.rooms.filter((r) => ids.has(r.id));
   });
+  const joinedChats = $derived(joinedRooms.filter((r) => !r.is_voice));
+  // Voice channels keep the space's order (not the most recent first), joined or not.
+  const voiceChannels = $derived(
+    children
+      .filter((c) => c.is_voice)
+      .map((c) => ({ child: c, room: roomsById.get(c.id) ?? null }))
+      .filter((v) => v.room || !v.child.joined),
+  );
   const subSpaces = $derived(children.filter((c) => c.is_space));
-  const joinable = $derived(children.filter((c) => !c.is_space && !c.joined && !roomsById.has(c.id)));
+  const joinable = $derived(children.filter((c) => !c.is_space && !c.is_voice && !c.joined && !roomsById.has(c.id)));
+
+  /** Wait for a just-joined (or created) room to reach the chat list. */
+  function arrival(id: string, ms = 15_000): Promise<RoomSummary> {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const look = () => {
+        const room = chatList.rooms.find((r) => r.id === id);
+        if (room) resolve(room);
+        else if (Date.now() - started > ms) reject(new Error("the channel didn't show up in time"));
+        else setTimeout(look, 250);
+      };
+      look();
+    });
+  }
+
+  async function enterVoice(child: SpaceChild, room: RoomSummary | null) {
+    error = null;
+    if (room) return void call.join(room, false, false);
+    joining = child.id;
+    try {
+      await joinRoom(child.id, child.via);
+      await call.join(await arrival(child.id), false, false);
+    } catch (e) {
+      error = `Couldn't join: ${e}`;
+    } finally {
+      joining = null;
+    }
+  }
+
+  let newChannel = $state<{ name: string; busy: boolean; error: string | null } | null>(null);
+  $effect(() => {
+    if (newChannel) return onBack(() => (newChannel = null));
+  });
+  async function createChannel() {
+    const space = current;
+    const form = newChannel;
+    if (!space || !form || !form.name.trim()) return;
+    form.busy = true;
+    form.error = null;
+    try {
+      const id = await createVoiceChannel(space.id, form.name);
+      await arrival(id).catch(() => {});
+      newChannel = null;
+    } catch (e) {
+      form.error = String(e);
+    } finally {
+      form.busy = false;
+    }
+  }
 
   async function join(child: SpaceChild) {
     joining = child.id;
@@ -106,6 +181,23 @@
     {#each joinedChats as room (room.id)}
       <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} />
     {/each}
+    {#if voiceChannels.length || canAdd}
+      <h4 class="with-action">
+        Voice channels
+        {#if canAdd}
+          <button class="icon small" onclick={() => (newChannel = { name: "", busy: false, error: null })} aria-label="New voice channel" title="New voice channel"><Plus size={18} /></button>
+        {/if}
+      </h4>
+      {#each voiceChannels as v (v.child.id)}
+        <VoiceChannel
+          room={v.room}
+          name={v.child.name}
+          busy={joining === v.child.id}
+          onJoin={() => enterVoice(v.child, v.room)}
+          onChat={v.room ? () => onSelect(v.child.id) : undefined}
+        />
+      {/each}
+    {/if}
     {#each subSpaces as sub (sub.id)}
       <button class="space" onclick={() => (path = [...path, { id: sub.id, name: sub.name, avatar: sub.avatar }])}>
         <Avatar name={sub.name} mxc={sub.avatar} size={44} square />
@@ -130,10 +222,23 @@
     {/if}
     {#if loading && !children.length}
       {#each Array(4) as _, i (i)}<div class="skeleton"></div>{/each}
-    {:else if !joinedChats.length && !subSpaces.length && !joinable.length && !error}
+    {:else if !joinedChats.length && !voiceChannels.length && !subSpaces.length && !joinable.length && !error}
       <p class="state">This space has no chats yet.</p>
     {/if}
   </div>
+{/if}
+
+{#if newChannel}
+  {@const form = newChannel}
+  <Page title="New voice channel" onClose={() => (newChannel = null)}>
+    <form class="new-channel" onsubmit={(e) => (e.preventDefault(), createChannel())}>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input placeholder="Channel name" maxlength="60" bind:value={form.name} autofocus />
+      <p class="hint">Everyone in {current?.name ?? "the space"} can join. Tapping the channel joins the call; it also has a text chat. Voice channels aren't end-to-end encrypted, so people using Element can join too.</p>
+      {#if form.error}<p class="hint error">{form.error}</p>{/if}
+      <button class="create" disabled={!form.name.trim() || form.busy}>{form.busy ? "Creating…" : "Create"}</button>
+    </form>
+  </Page>
 {/if}
 
 {#if settingsFor}
@@ -259,6 +364,53 @@
     background: var(--accent);
     color: white;
     cursor: pointer;
+  }
+  .with-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-right: 4px;
+  }
+  .icon.small {
+    width: 30px;
+    height: 30px;
+    color: var(--muted);
+  }
+  .new-channel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .new-channel input {
+    padding: 11px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    font-size: 1.05rem;
+  }
+  .hint {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+  .hint.error {
+    color: var(--danger);
+  }
+  .create {
+    padding: 11px 18px;
+    border: none;
+    border-radius: 12px;
+    background: var(--accent);
+    color: white;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .create:disabled {
+    opacity: 0.45;
   }
   .join:disabled {
     opacity: 0.6;
