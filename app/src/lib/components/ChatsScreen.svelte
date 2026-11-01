@@ -578,11 +578,25 @@
     inset: 0;
     background: linear-gradient(rgb(0 0 0 / 0.25), rgb(0 0 0 / 0.55));
   }
-  .chat-pane.scenic {
+  /* Light ink for the dark scenery, on the chat itself only: pages opened from the chat
+     (settings, members…) keep the app theme's colours. */
+  .chat-pane.scenic > :global(header),
+  .chat-pane.scenic > :global(.scroller),
+  .chat-pane.scenic > :global(form),
+  .chat-pane.scenic > :global(.pin-banner),
+  .chat-pane.scenic > :global(.live-bar),
+  .chat-pane.scenic > :global(.timeline),
+  .chat-pane.scenic > :global(.call-banner),
+  .chat-pane.scenic > :global(.typing),
+  .chat-pane.scenic > :global(.to-bottom),
+  .chat-pane.scenic > :global(.latest) {
     --text: #f2f4f8;
     --muted: rgb(235 240 255 / 0.72);
+    --surface: rgb(16 20 34 / 0.72);
     --surface-2: rgb(10 14 28 / 0.55);
+    --surface-hover: rgb(255 255 255 / 0.08);
     --border: rgb(255 255 255 / 0.1);
+    --bg: #0b0f1c;
     color: var(--text);
     color-scheme: dark;
   }

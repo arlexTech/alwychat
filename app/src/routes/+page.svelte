@@ -117,7 +117,7 @@
   label {
     display: block;
     margin-bottom: 0.5rem;
-    color: #8a90a0;
+    color: var(--muted);
   }
   .row {
     display: flex;
@@ -128,8 +128,8 @@
     font: inherit;
     padding: 0.65rem 1rem;
     border-radius: 999px;
-    border: 1px solid #2a2f3a;
-    background: #181b22;
+    border: 1px solid var(--border);
+    background: var(--surface);
     color: inherit;
   }
   input {
@@ -149,7 +149,7 @@
     opacity: 0.5;
   }
   .muted {
-    color: #8a90a0;
+    color: var(--muted);
     margin: 0.4rem 0 0;
   }
   .waiting {
@@ -157,15 +157,15 @@
   }
   .ghost {
     margin-top: 1.5rem;
-    background: #181b22;
-    border: 1px solid #2a2f3a;
+    background: var(--surface);
+    border: 1px solid var(--border);
   }
   .spinner {
     width: 36px;
     height: 36px;
     margin: 1rem auto;
     border-radius: 50%;
-    border: 3px solid #2a2f3a;
+    border: 3px solid var(--border);
     border-top-color: #ff5c8a;
     animation: spin 0.8s linear infinite;
   }
@@ -175,7 +175,7 @@
     }
   }
   .error {
-    color: #ff6b6b;
+    color: var(--danger);
   }
   main.hidden {
     visibility: hidden;

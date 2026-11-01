@@ -138,7 +138,7 @@
 
 {#if preview}
   {@const t = preview.theme}
-  <div class="preview" style:--accent-a={t.a} style:--accent-b={t.b} transition:fly={{ y: 40, duration: 220 }}>
+  <div class="preview" class:plain={!preview.photo && !t.scene} style:--accent-a={t.a} style:--accent-b={t.b} transition:fly={{ y: 40, duration: 220 }}>
     {#if preview.photo}
       <div class="bg photo" style:background-image="url({preview.photo.url})"></div>
     {:else if t.scene}
@@ -200,7 +200,8 @@
     overflow: hidden;
     border: 2px solid transparent;
     border-radius: 16px;
-    background: #0e1014;
+    background: var(--bg);
+    box-shadow: inset 0 0 0 1px var(--border);
   }
   .card.on .thumb {
     border-color: var(--a);
@@ -274,6 +275,10 @@
   .bg {
     position: absolute;
     inset: 0;
+  }
+  /* A theme without scenery is previewed on the app's own background and text colours. */
+  .preview.plain {
+    color: var(--text);
   }
   .bg.plain {
     background: var(--bg);

@@ -162,7 +162,7 @@
     padding: 2px 7px;
     border: none;
     border-radius: 999px;
-    background: rgb(255 255 255 / 0.15);
+    background: color-mix(in srgb, currentColor 15%, transparent);
     color: inherit;
     font-size: 0.75rem;
     font-weight: 600;

@@ -100,7 +100,7 @@
     gap: 8px;
     padding: 9px 12px;
     overflow: hidden;
-    border: 1px solid rgb(255 255 255 / 0.18);
+    border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
     border-radius: 12px;
     background: rgb(0 0 0 / 0.12);
     color: inherit;
@@ -112,16 +112,16 @@
     cursor: default;
   }
   .answer.chosen {
-    border-color: rgb(255 255 255 / 0.7);
+    border-color: color-mix(in srgb, currentColor 70%, transparent);
   }
   .fill {
     position: absolute;
     inset: 0 auto 0 0;
-    background: rgb(255 255 255 / 0.14);
+    background: color-mix(in srgb, currentColor 14%, transparent);
     transition: width 0.3s var(--ease);
   }
   .winner .fill {
-    background: rgb(255 255 255 / 0.24);
+    background: color-mix(in srgb, currentColor 24%, transparent);
   }
   .mark {
     position: relative;
@@ -130,13 +130,13 @@
     place-items: center;
     width: 18px;
     height: 18px;
-    border: 2px solid rgb(255 255 255 / 0.6);
+    border: 2px solid color-mix(in srgb, currentColor 60%, transparent);
     border-radius: 50%;
   }
   .chosen .mark {
-    border-color: white;
-    background: white;
-    color: #111;
+    border-color: currentColor;
+    background: var(--accent);
+    color: white;
   }
   .label {
     position: relative;
@@ -159,7 +159,7 @@
   }
   .end {
     padding: 4px 10px;
-    border: 1px solid rgb(255 255 255 / 0.4);
+    border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
     border-radius: 999px;
     background: none;
     color: inherit;

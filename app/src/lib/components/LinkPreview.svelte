@@ -65,7 +65,7 @@
     padding: 0;
     overflow: hidden;
     border: none;
-    border-left: 3px solid rgb(255 255 255 / 0.5);
+    border-left: 3px solid color-mix(in srgb, currentColor 50%, transparent);
     border-radius: 10px;
     background: rgb(0 0 0 / 0.18);
     color: inherit;
@@ -81,7 +81,7 @@
     width: 72px;
     height: 72px;
     object-fit: cover;
-    background: rgb(255 255 255 / 0.06);
+    background: color-mix(in srgb, currentColor 6%, transparent);
   }
   .wide img {
     width: 100%;
