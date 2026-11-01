@@ -21,6 +21,19 @@ use crate::Result;
 pub const PUSH_GATEWAY: &str = "https://matrix.example.org/_matrix/push/v1/notify";
 /// Must match the app id in the gateway's config.
 pub const PUSH_APP_ID: &str = "com.alwy.chat";
+/// Event ID of the test notification (see `test_push`).
+pub const TEST_EVENT: &str = "$alwychat-push-test";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PushTest {
+    /// The homeserver has this phone's pusher, pointing at our gateway.
+    pub registered: bool,
+    /// The gateway took the test notification.
+    pub gateway_ok: bool,
+    /// Google said this phone's token is unknown (app reinstalled, data cleared…).
+    pub rejected: bool,
+    pub error: Option<String>,
+}
 
 /// What the phone shows for one pushed event.
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +48,61 @@ pub struct PushNotification {
 
 impl crate::Core {
     /// Ask the homeserver to push this device's events to `token` (an FCM registration token).
+    /// Check push end to end for `token`: is the pusher registered on the homeserver with our
+    /// gateway, and does the gateway accept a (test) notification for it? The phone then shows
+    /// it (PushService.kt recognises `TEST_EVENT`).
+    pub async fn test_push(&self, token: &str) -> Result<PushTest> {
+        use matrix_sdk::ruma::api::client::push::get_pushers;
+        let client = self.client()?;
+        let pushers = client.send(get_pushers::v3::Request::new()).await?.pushers;
+        let registered = pushers.iter().any(|p| {
+            p.ids.pushkey == token
+                && p.ids.app_id == PUSH_APP_ID
+                && matches!(&p.kind, matrix_sdk::ruma::api::client::push::PusherKind::Http(h) if h.url == PUSH_GATEWAY)
+        });
+        let body = serde_json::json!({
+            "notification": {
+                "event_id": TEST_EVENT,
+                "room_id": "!alwychat-push-test:example.org",
+                "counts": { "unread": 1 },
+                "prio": "high",
+                "devices": [{
+                    "app_id": PUSH_APP_ID,
+                    "pushkey": token,
+                    "pushkey_ts": 0,
+                    "data": { "format": "event_id_only" },
+                }],
+            },
+        });
+        let (gateway_ok, rejected, error) = match reqwest::Client::new()
+            .post(PUSH_GATEWAY)
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(20))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                let answer: serde_json::Value = r.json().await.unwrap_or_default();
+                let rejected = answer["rejected"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|k| k == token));
+                (true, rejected, None)
+            }
+            Ok(r) => (
+                false,
+                false,
+                Some(format!("the push gateway answered {}", r.status())),
+            ),
+            Err(e) => (false, false, Some(format!("push gateway unreachable: {e}"))),
+        };
+        Ok(PushTest {
+            registered,
+            gateway_ok,
+            rejected,
+            error,
+        })
+    }
+
     pub async fn register_pusher(&self, token: &str, device_name: &str) -> Result<()> {
         let client = self.client()?;
         let mut data = HttpPusherData::new(PUSH_GATEWAY.to_owned());

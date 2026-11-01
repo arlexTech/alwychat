@@ -39,6 +39,8 @@
     setNotificationRule,
     setOwnAvatar,
     type NotificationRules,
+    testPush,
+    type PushTestResult,
   } from "$lib/backend";
   import { me } from "$lib/stores/me.svelte";
   import AvatarEdit from "./AvatarEdit.svelte";
@@ -108,6 +110,33 @@
     } catch (e) {
       error = String(e);
     }
+  }
+
+  // ── Push test (Android) ──
+  let pushTest = $state<PushTestResult | "running" | { error: string } | null>(null);
+  async function runPushTest() {
+    pushTest = "running";
+    try {
+      pushTest = await testPush();
+    } catch (e) {
+      pushTest = { error: String(e) };
+    }
+  }
+  type Step = { label: string; ok: boolean | null; hint?: string };
+  function pushSteps(t: PushTestResult | { error: string }): Step[] {
+    if (!("permission" in t)) return [{ label: "The test couldn't run", ok: false, hint: t.error }];
+    const steps: Step[] = [
+      { label: "Allowed to show notifications", ok: t.permission, hint: t.permission ? undefined : "Turn on “New messages” above, or allow AlwyChat in Android's settings." },
+      { label: "Push available in this app", ok: t.token, hint: t.token ? undefined : "This build has no Firebase setup: notifications only arrive while AlwyChat is open." },
+    ];
+    if (!t.token) return steps;
+    steps.push({ label: "Your server knows this phone", ok: !!t.registered, hint: t.registered ? undefined : "The registration didn't stick; try again in a moment." });
+    steps.push({
+      label: "Push gateway → Google → this phone",
+      ok: !!t.gateway_ok && !t.rejected,
+      hint: t.error ?? (t.rejected ? "Google doesn't know this phone's token: restart AlwyChat and try again." : "A notification should appear within a few seconds."),
+    });
+    return steps;
   }
 
   let version = $state("");
@@ -490,6 +519,22 @@
         </form>
       </div>
     {/if}
+    {#if isAndroid}
+      <h3 class="section">Test</h3>
+      <button class="m-btn plain wide-btn" disabled={pushTest === "running"} onclick={runPushTest}>
+        {pushTest === "running" ? "Testing…" : "Send a test notification"}
+      </button>
+      {#if pushTest && pushTest !== "running"}
+        <ul class="push-test">
+          {#each pushSteps(pushTest) as step (step.label)}
+            <li class:ok={step.ok} class:bad={step.ok === false}>
+              <span class="mark">{step.ok ? "✓" : step.ok === false ? "!" : "·"}</span>
+              <span><strong>{step.label}</strong>{#if step.hint}<small>{step.hint}</small>{/if}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {/if}
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </Page>
@@ -655,6 +700,45 @@
 {/if}
 
 <style>
+  .wide-btn {
+    width: 100%;
+  }
+  .push-test {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .push-test li {
+    display: flex;
+    gap: 10px;
+    padding: 6px 2px;
+  }
+  .push-test li > span:last-child {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .push-test small {
+    color: var(--muted);
+  }
+  .push-test .mark {
+    display: grid;
+    flex: none;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--surface-2);
+    font-size: 0.8rem;
+  }
+  .push-test .ok .mark {
+    background: #31d158;
+    color: white;
+  }
+  .push-test .bad .mark {
+    background: var(--danger);
+    color: white;
+  }
   .profile {
     display: flex;
     flex-direction: column;

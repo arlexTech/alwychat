@@ -905,3 +905,14 @@ export const updateLiveLocation = (roomId: string, shareId: string, geoUri: stri
 export const stopLiveLocation = (roomId: string) => invoke<void>("stop_live_location", { roomId });
 /** Send a message that failed again. */
 export const retrySend = (roomId: string, itemId: string) => invoke<void>("retry_send", { roomId, itemId });
+
+export interface PushTestResult {
+  permission: boolean;
+  token: boolean;
+  registered?: boolean;
+  gateway_ok?: boolean;
+  rejected?: boolean;
+  error?: string | null;
+}
+/** Android: check push end to end; a test notification should appear. */
+export const testPush = () => invoke<PushTestResult>("test_push");

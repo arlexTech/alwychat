@@ -1537,6 +1537,69 @@ async fn setup_push(
     }
 }
 
+/// Settings → Notifications → "Send a test notification" (Android).
+#[derive(serde::Serialize)]
+struct PushTestResult {
+    /// Allowed to show notifications.
+    permission: bool,
+    /// This build has push (Firebase) and the phone got a token.
+    token: bool,
+    #[serde(flatten)]
+    test: Option<alwy_core::push::PushTest>,
+}
+
+#[tauri::command]
+async fn test_push(
+    app: tauri::AppHandle,
+    core: State<'_, AppCore>,
+) -> Result<PushTestResult, String> {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Deserialize)]
+        struct Token {
+            token: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Status {
+            notifications: bool,
+        }
+        let plugin = &app.state::<android::System>().0;
+        let permission = plugin
+            .run_mobile_plugin_async::<Status>("status", serde_json::json!({}))
+            .await
+            .map(|s| s.notifications)
+            .unwrap_or(false);
+        let token = match plugin
+            .run_mobile_plugin_async::<Token>("pushToken", serde_json::json!({}))
+            .await
+        {
+            Ok(t) => t.token,
+            Err(_) => {
+                return Ok(PushTestResult {
+                    permission,
+                    token: false,
+                    test: None,
+                });
+            }
+        };
+        // Make sure the pusher is there (as every start does), then test it.
+        core.register_pusher(&token, "AlwyChat (Android)")
+            .await
+            .map_err(|e| e.to_string())?;
+        let test = core.test_push(&token).await.map_err(|e| e.to_string())?;
+        Ok(PushTestResult {
+            permission,
+            token: true,
+            test: Some(test),
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, core);
+        Err("push notifications are for the Android app".into())
+    }
+}
+
 /// `com.alwy.chat:/room?id=!room:server` (a tapped notification) → the room ID.
 #[cfg_attr(not(mobile), allow(dead_code))]
 fn room_link(url: &tauri::Url) -> Option<String> {
@@ -1818,6 +1881,7 @@ pub fn run() {
             vote_poll,
             end_poll,
             setup_push,
+            test_push,
             launch_room,
             clear_notifications,
             set_quick_reaction,

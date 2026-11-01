@@ -22,6 +22,14 @@ class PushService : FirebaseMessagingService() {
   override fun onMessageReceived(message: RemoteMessage) {
     val roomId = message.data["room_id"] ?: return
     val eventId = message.data["event_id"] ?: return
+    // Settings → Notifications → "Send a test notification": shown even with the app open.
+    if (eventId == TEST_EVENT) {
+      show(this, JSONObject()
+        .put("room_id", roomId)
+        .put("title", "AlwyChat")
+        .put("body", "Notifications work: this one came from your server's push gateway, through Google, to this phone."))
+      return
+    }
     // On screen, the chat list already shows it.
     if (MainActivity.visible) return
     val json = try {
@@ -41,6 +49,8 @@ class PushService : FirebaseMessagingService() {
 
   companion object {
     const val CHANNEL = "messages"
+    /** Matches `alwy_core::push::TEST_EVENT`. */
+    const val TEST_EVENT = "\$alwychat-push-test"
 
     fun show(context: Context, n: JSONObject) {
       val manager = NotificationManagerCompat.from(context)
