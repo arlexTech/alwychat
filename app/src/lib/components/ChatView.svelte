@@ -443,6 +443,11 @@
     return () => clearTimeout(readTimer);
   });
 
+  /** Buttons next to the field keep the focus in it (on a phone, losing it closes the keyboard). */
+  function keepFocus(event: MouseEvent) {
+    if (document.activeElement === input) event.preventDefault();
+  }
+
   async function send(event?: SubmitEvent) {
     event?.preventDefault();
     const body = draft.trim();
@@ -1371,7 +1376,8 @@
       <button type="button" class="emoji-toggle" class:on={emojiOpen} onclick={toggleEmoji} aria-label="Emoji"><SmilePlus size={22} /></button>
     </div>
     {#if draft.trim() || editing || pending.length}
-      <button class="send" aria-label={editing ? "Save edit" : "Send"} transition:fly={{ x: 8, duration: 140 }}
+      <!-- Never takes the focus: the keyboard stays open for the next message. -->
+      <button class="send" aria-label={editing ? "Save edit" : "Send"} onmousedown={keepFocus} transition:fly={{ x: 8, duration: 140 }}
         >{#if editing}<Check size={20} />{:else}<SendHorizontal size={20} />{/if}</button
       >
     {:else}
@@ -1379,6 +1385,7 @@
         type="button"
         class="quick"
         aria-label="Send {QUICK_REACTION}"
+        onmousedown={keepFocus}
         onclick={() => sendMessage(target, QUICK_REACTION, null).catch((e) => (sendError = String(e)))}
       >{QUICK_REACTION}</button>
     {/if}
