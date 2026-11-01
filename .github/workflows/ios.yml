@@ -49,13 +49,25 @@ jobs:
       - name: Build
         working-directory: app
         # The archive is what we need; exporting a signed .ipa afterwards is expected to fail.
-        run: pnpm tauri ios build --target aarch64 || echo "build step ended with an error (export needs signing)"
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! pnpm tauri ios build --target aarch64 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            # Logs need a GitHub sign-in to read; annotations don't: show the end there.
+            tail -n 45 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-220 \
+              | awk 'BEGIN{ORS="%0A"} {print}' | sed 's/^/::warning title=ios build tail::/'
+            echo
+          fi
 
       - name: Package the .ipa
         run: |
-          app=$(find app/src-tauri/gen/apple -path '*.xcarchive/Products/Applications/*.app' -maxdepth 6 -type d | head -1)
-          [ -z "$app" ] && app=$(find app/src-tauri/gen/apple/build -name '*.app' -type d | grep -i iphoneos | head -1)
-          if [ -z "$app" ]; then echo "no .app found"; find app/src-tauri/gen/apple/build -maxdepth 4; exit 1; fi
+          roots="app/src-tauri/gen/apple $HOME/Library/Developer/Xcode"
+          app=$(find $roots -path '*.xcarchive/Products/Applications/*.app' -type d -prune 2>/dev/null | head -1)
+          [ -z "$app" ] && app=$(find $roots -path '*iphoneos*' -name '*.app' -type d -prune 2>/dev/null | head -1)
+          if [ -z "$app" ]; then
+            echo "::error title=no .app::$(find $roots \( -name '*.app' -o -name '*.xcarchive' -o -name '*.ipa' \) 2>/dev/null | head -20 | tr '\n' ' ')"
+            exit 1
+          fi
           echo "app: $app"
           mkdir -p ipa/Payload out
           cp -R "$app" ipa/Payload/
