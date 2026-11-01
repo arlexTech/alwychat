@@ -8,6 +8,8 @@
   import History from "@lucide/svelte/icons/history";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SmilePlus from "@lucide/svelte/icons/smile-plus";
+  import Plus from "@lucide/svelte/icons/plus";
+  import EmojiPicker from "./EmojiPicker.svelte";
   import Reply from "@lucide/svelte/icons/reply";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
@@ -95,6 +97,8 @@
   const PREVIEW_MAX = 300;
 
   let pickerOpen = $state(false);
+  /** The full emoji picker, from the quick picker's "+". */
+  let anyEmoji = $state(false);
   $effect(() => {
     if (menuOpen || pickerOpen) return onBack(() => ((menuOpen = false), (pickerOpen = false)));
   });
@@ -237,8 +241,15 @@
     tapTimer = setTimeout(action, 260);
   }
 
+  /** Opens below the bubble when there's no room above it. */
+  let anyBelow = $state(false);
+  function openAnyEmoji(event: MouseEvent) {
+    anyBelow = (event.currentTarget as HTMLElement).getBoundingClientRect().top < 340;
+    anyEmoji = !anyEmoji;
+  }
   function react(key: string) {
     pickerOpen = false;
+    anyEmoji = false;
     onReact(key);
   }
 
@@ -410,7 +421,7 @@
       {#if canReact || msg.can_reply || hasMenu}
         <div class="actions" class:open={menuOpen || pickerOpen}>
           {#if canReact}
-            <button onclick={() => ((pickerOpen = !pickerOpen), (menuOpen = false))} aria-label="React"><SmilePlus size={18} /></button>
+            <button onclick={() => ((pickerOpen = !pickerOpen), (menuOpen = false), (anyEmoji = false))} aria-label="React"><SmilePlus size={18} /></button>
           {/if}
           {#if msg.can_reply}
             <button onclick={onReply} aria-label="Reply"><Reply size={18} /></button>
@@ -423,7 +434,7 @@
       <!-- Anchored to the bubble's outer edge so they always open into the chat, never under the list. -->
       {#if pickerOpen || menuOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="outside" onclick={() => ((menuOpen = false), (pickerOpen = false))}></div>
+        <div class="outside" onclick={() => ((menuOpen = false), (pickerOpen = false), (anyEmoji = false))}></div>
         
       {/if}
       {#if pickerOpen}
@@ -431,7 +442,11 @@
           {#each QUICK as key (key)}
             <button onclick={() => react(key)}>{key}</button>
           {/each}
+          <button class="more" class:on={anyEmoji} onclick={openAnyEmoji} aria-label="Other reaction"><Plus size={20} /></button>
         </div>
+        {#if anyEmoji}
+          <div class="any-emoji" class:below={anyBelow} transition:scale={{ duration: 140, start: 0.9 }}><EmojiPicker onPick={react} /></div>
+        {/if}
       {/if}
       {#if menuOpen}
         <div class="menu" transition:fade={{ duration: 100 }}>
@@ -756,6 +771,41 @@
   }
   .picker button:hover {
     transform: scale(1.3);
+  }
+  .picker .more {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+  }
+  .picker .more:hover {
+    transform: none;
+    background: var(--surface);
+  }
+  .picker .more.on {
+    background: var(--accent);
+    color: #fff;
+  }
+  .any-emoji {
+    position: absolute;
+    bottom: calc(100% + 54px);
+    left: 0;
+    z-index: 5;
+    width: min(340px, 86vw);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+  }
+  .any-emoji.below {
+    top: calc(100% + 6px);
+    bottom: auto;
+  }
+  .own .any-emoji {
+    left: auto;
+    right: 0;
+  }
+  .any-emoji :global(.picker) {
+    border-top: none;
   }
 
   .thread {

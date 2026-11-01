@@ -10,6 +10,8 @@
   import Reply from "@lucide/svelte/icons/reply";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
+  import Plus from "@lucide/svelte/icons/plus";
+  import EmojiPicker from "./EmojiPicker.svelte";
   import type { MessageEntry } from "$lib/backend";
 
   export interface Actions {
@@ -34,6 +36,8 @@
   } = $props();
 
   const reactions = $derived([...new Set(["❤️", "😂", "😮", "😢", "😡", "👍", quickReaction])]);
+  /** "+": any emoji, from the full picker (replaces the actions list). */
+  let anyEmoji = $state(false);
   const mine = $derived(new Set(msg.reactions.filter((r) => r.mine).map((r) => r.key)));
 
   /** Act, then close: `actions` is derived from the message, which is gone once closed. */
@@ -51,7 +55,11 @@
     {#each reactions as key (key)}
       <button class:mine={mine.has(key)} onclick={() => run(() => actions.react(key))}>{key}</button>
     {/each}
+    <button class="more" class:on={anyEmoji} onclick={() => (anyEmoji = !anyEmoji)} aria-label="Other reaction"><Plus size={22} /></button>
   </div>
+  {#if anyEmoji}
+    <div class="any"><EmojiPicker onPick={(e) => run(() => actions.react(e))} /></div>
+  {:else}
   <div class="list">
     {#if actions.reply}<button onclick={() => run(actions.reply!)}><Reply size={20} />Reply</button>{/if}
     {#if actions.thread}<button onclick={() => run(actions.thread!)}><MessagesSquare size={20} />Reply in thread</button>{/if}
@@ -71,6 +79,7 @@
     {#if actions.history}<button onclick={() => run(actions.history!)}><History size={20} />Edit history</button>{/if}
     {#if actions.delete}<button class="danger" onclick={() => run(actions.delete!)}><Trash2 size={20} />Delete</button>{/if}
   </div>
+  {/if}
 </div>
 
 <style>
@@ -107,8 +116,12 @@
     border-bottom: 1px solid var(--border);
   }
   .reactions button {
-    width: 44px;
-    height: 44px;
+    display: grid;
+    flex: 0 1 44px;
+    min-width: 0;
+    aspect-ratio: 1;
+    place-items: center;
+    padding: 0;
     border: none;
     border-radius: 50%;
     background: var(--surface-2);
@@ -118,6 +131,16 @@
   }
   .reactions button:active {
     transform: scale(0.85);
+  }
+  .reactions .more {
+    color: var(--muted);
+  }
+  .reactions .more.on {
+    background: var(--accent);
+    color: #fff;
+  }
+  .any :global(.picker) {
+    border-top: none;
   }
   .reactions button.mine {
     box-shadow: inset 0 0 0 2px var(--accent-a);
