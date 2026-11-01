@@ -1,0 +1,27 @@
+# Static files only. ALWY_ADDRESS: where to listen (default plain http on :80, for a reverse
+# proxy in front). ALWY_TLS: e.g. "tls internal" for a local https test.
+{$ALWY_ADDRESS::80} {
+	{$ALWY_TLS}
+	root * /srv
+	encode zstd gzip
+	try_files {path} /index.html
+
+	header {
+		# The page's own Content-Security-Policy is in index.html (it needs a hash of
+		# SvelteKit's start script); this one adds what a <meta> tag can't do.
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=(self), display-capture=(self)"
+		Cross-Origin-Opener-Policy "same-origin-allow-popups"
+		-Server
+	}
+	# File names with a content hash never change.
+	header /_app/immutable/* Cache-Control "public, max-age=31536000, immutable"
+	# Always fresh, so updates reach everyone.
+	header /index.html Cache-Control "no-cache"
+	header /media-sw.js Cache-Control "no-cache"
+
+	file_server
+}

@@ -1,0 +1,10 @@
+# Only sources go into the web image build.
+.git
+target
+**/node_modules
+app/build
+app/build-web
+app/.svelte-kit
+app/src/lib/backend/wasm
+app/src-tauri/gen
+app/src-tauri/target

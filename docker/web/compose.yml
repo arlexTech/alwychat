@@ -1,0 +1,12 @@
+# Next to Element Web: build the image and put your reverse proxy in front of port 8080
+# (https://chat.example.org -> http://127.0.0.1:8080).
+#   docker compose -f docker/web/compose.yml up -d --build
+services:
+  alwychat-web:
+    build:
+      context: ../..
+      dockerfile: docker/web/Dockerfile
+    image: alwychat-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"

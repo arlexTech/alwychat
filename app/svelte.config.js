@@ -20,6 +20,27 @@ const config = {
       pages: process.env.ALWY_WEB ? "build-web" : "build",
       assets: process.env.ALWY_WEB ? "build-web" : "build",
     }),
+    // Web version: what the page may load and talk to (the apps get theirs from Tauri).
+    // Any https/wss server: the homeserver, its sign-in service and call server are the user's.
+    csp: process.env.ALWY_WEB
+      ? {
+          mode: "hash",
+          directives: {
+            "default-src": ["self"],
+            "script-src": ["self", "wasm-unsafe-eval"],
+            // Component CSS is injected at runtime (see vitePlugin.emitCss above).
+            "style-src": ["self", "unsafe-inline"],
+            "img-src": ["self", "blob:", "data:"],
+            "media-src": ["self", "blob:"],
+            "connect-src": ["self", "https:", "wss:"],
+            "worker-src": ["self"],
+            "font-src": ["self"],
+            "object-src": ["none"],
+            "base-uri": ["self"],
+            "form-action": ["none"],
+          },
+        }
+      : undefined,
     // Web version hosted under a sub-path (e.g. ALWY_WEB_BASE=/chat for example.org/chat/).
     paths: { base: process.env.ALWY_WEB_BASE ?? "" },
   },
