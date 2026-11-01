@@ -41,9 +41,14 @@ jobs:
         working-directory: app
         run: |
           pnpm tauri ios init --ci
-          # No signing: SideStore/AltStore sign the app on the phone's side.
-          find src-tauri/gen/apple -name project.pbxproj -exec sed -i '' \
-            -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = "";/' {} +
+          # No signing: SideStore/AltStore sign the app on the phone's side. Tauri regenerates the
+          # Xcode project from project.yml, so the settings go there (and in the current project).
+          cd src-tauri/gen/apple
+          yq -i '(.targets[] | select(has("settings"))).settings.base += {"CODE_SIGNING_ALLOWED": "NO", "CODE_SIGNING_REQUIRED": "NO", "CODE_SIGN_IDENTITY": "", "CODE_SIGN_STYLE": "Manual", "DEVELOPMENT_TEAM": ""}' project.yml
+          find . -name project.pbxproj -exec sed -i '' \
+            -e 's/buildSettings = {/buildSettings = { CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = ""; /' {} +
+          echo "::notice title=signing settings::$(yq '.targets[].settings.base | with_entries(select(.key | test("SIGN|TEAM")))' -o json project.yml | tr -d '\n')"
+          cd ../../..
           plutil -p src-tauri/gen/apple/*_iOS/Info.plist || true
 
       - name: Build
