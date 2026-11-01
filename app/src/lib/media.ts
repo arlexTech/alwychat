@@ -23,3 +23,24 @@ export function eventMediaUrl(key: string, thumb = false): string {
   const path = `_event/${encodeURIComponent(key)}${thumb ? "?thumb=1" : ""}`;
   return usesHttpScheme ? `http://media.localhost/${path}` : `media://localhost/${path}`;
 }
+
+/** Desktop Linux: WebKitGTK's audio/video player can't stream from the media:// scheme. */
+const needsBlob = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+const blobs = new Map<string, Promise<string>>();
+
+/**
+ * A URL an <audio>/<video> element can play: the media URL itself, or on desktop Linux a
+ * blob URL of its bytes (kept for the session, so replaying doesn't download again).
+ */
+export function playableUrl(url: string): Promise<string> {
+  if (!needsBlob) return Promise.resolve(url);
+  let blob = blobs.get(url);
+  if (!blob) {
+    blob = fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`media ${r.status}`))))
+      .then((b) => URL.createObjectURL(b));
+    blob.catch(() => blobs.delete(url));
+    blobs.set(url, blob);
+  }
+  return blob;
+}

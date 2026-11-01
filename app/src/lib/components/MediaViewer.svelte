@@ -4,7 +4,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import { onMount, untrack } from "svelte";
   import { fade, scale } from "svelte/transition";
-  import { eventMediaUrl } from "$lib/media";
+  import { eventMediaUrl, playableUrl } from "$lib/media";
   import { saveToGallery } from "$lib/save";
 
   type Item = { media: string; kind: "image" | "video"; caption: string | null };
@@ -128,7 +128,13 @@
               />
             {:else if i === index}
               <!-- svelte-ignore a11y_media_has_caption -->
-              <video src={eventMediaUrl(it.media)} controls autoplay onclick={(e) => e.stopPropagation()}></video>
+              {#await playableUrl(eventMediaUrl(it.media))}
+                <div class="video-placeholder">…</div>
+              {:then url}
+                <video src={url} controls autoplay onclick={(e) => e.stopPropagation()}></video>
+              {:catch}
+                <div class="video-placeholder">Couldn't load the video</div>
+              {/await}
             {:else}
               <div class="video-placeholder">▶</div>
             {/if}

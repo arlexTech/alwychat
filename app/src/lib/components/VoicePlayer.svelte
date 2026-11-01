@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import { eventMediaUrl } from "$lib/media";
+  import { eventMediaUrl, playableUrl } from "$lib/media";
 
   let {
     media,
@@ -22,8 +22,14 @@
   let duration = $state(0);
   let speed = $state(1);
   let failed = $state(false);
+  let src = $state<string | undefined>();
+  $effect(() => {
+    const url = eventMediaUrl(media);
+    playableUrl(url).then((u) => (src = u), () => (failed = true));
+  });
 
-  const total = $derived(duration || (durationMs ?? 0) / 1000);
+  // The duration sent with the message first: recorded files can carry a wrong one (WebKitGTK).
+  const total = $derived(durationMs ? durationMs / 1000 : duration);
   const progress = $derived(total ? Math.min(1, current / total) : 0);
 
   /** The sender's waveform squeezed to BARS bars (0–1); a gentle placeholder if there's none. */
@@ -88,7 +94,7 @@
   <button class="speed" onclick={cycleSpeed} aria-label="Playback speed">{speed}×</button>
   <audio
     bind:this={audio}
-    src={eventMediaUrl(media)}
+    {src}
     preload="metadata"
     onplay={() => (paused = false)}
     onpause={() => (paused = true)}

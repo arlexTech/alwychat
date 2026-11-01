@@ -1700,7 +1700,7 @@ pub fn run() {
         #[cfg(target_os = "android")]
         init_android_tls()?;
         #[cfg(target_os = "linux")]
-        enable_webrtc(app)?;
+        enable_media_capture(app)?;
         let data_dir = app.path().app_data_dir()?;
         let core = shared_core(data_dir);
         let handle = app.handle().clone();
@@ -2103,12 +2103,14 @@ async fn serve_media(
 }
 
 /// `media://localhost/_picked/<file name>`: preview of a file waiting to be sent.
-/// WebKitGTK has WebRTC and media capture off by default: calls failed at once ("joined",
-/// then "left" 0.1 s later). Turn them on, and grant the microphone, camera and screen to the
-/// app's own pages (the CSP keeps anything else out); other permission requests keep the
-/// default answer.
+/// WebKitGTK refuses microphone / camera access unless the app answers its permission
+/// requests (voice messages failed with NotAllowedError). Grant them to the app's own pages
+/// (the CSP keeps anything else out); other requests keep the default answer.
+///
+/// Calls can't run in this webview on Arch/CachyOS: its WebKitGTK is built without WebRTC
+/// (no `RTCPeerConnection`, whatever the settings), so LiveKit refuses to start.
 #[cfg(target_os = "linux")]
-fn enable_webrtc(app: &tauri::App) -> tauri::Result<()> {
+fn enable_media_capture(app: &tauri::App) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
@@ -2118,14 +2120,8 @@ fn enable_webrtc(app: &tauri::App) -> tauri::Result<()> {
             PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, WebViewExt,
         };
         let view = webview.inner();
-        if let Some(settings) = WebViewExt::settings(&view)
-            && !(settings.enables_webrtc() && settings.enables_media_stream())
-        {
-            settings.set_enable_webrtc(true);
+        if let Some(settings) = WebViewExt::settings(&view) {
             settings.set_enable_media_stream(true);
-            // The page has already started loading, and these APIs only appear in pages
-            // loaded after the change: load it again (once, before anything happened).
-            view.reload();
         }
         view.connect_permission_request(|_, request| {
             if request
@@ -2151,6 +2147,12 @@ fn harden(mut response: http::Response<Vec<u8>>) -> http::Response<Vec<u8>> {
     headers.insert(
         http::header::CONTENT_SECURITY_POLICY,
         http::HeaderValue::from_static("default-src 'none'; sandbox"),
+    );
+    // Only this app's webview can reach media://; let its code read the bytes (Linux plays
+    // audio/video from a blob: WebKitGTK's player can't stream a custom scheme).
+    headers.insert(
+        http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        http::HeaderValue::from_static("*"),
     );
     // Scripting content types are served as plain bytes.
     if let Some(kind) = headers
