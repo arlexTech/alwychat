@@ -85,6 +85,7 @@
   import { call } from "$lib/stores/call.svelte";
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatSettingsPage from "./ChatSettingsPage.svelte";
+  import CustomizePage from "./CustomizePage.svelte";
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
@@ -203,6 +204,10 @@
   // The composer is swapped out while recording a voice message, so this can change.
   let fileInput = $state<HTMLInputElement>() as HTMLInputElement;
   let chatMenuOpen = $state(false);
+  let customizeOpen = $state(false);
+  $effect(() => {
+    if (customizeOpen) return closeOnBack(() => (customizeOpen = false));
+  });
   /** This chat's HD choice: null = app default. */
   let chatHd = $state<boolean | null>(null);
   let confirmDelete = $state<MessageEntry | null>(null);
@@ -331,7 +336,7 @@
         album: MessageEntry[] | null;
       }
     | { kind: "day"; key: string; label: string }
-    | { kind: "notice"; key: string; text: string }
+    | { kind: "notice"; key: string; text: string; action?: "theme" }
     | { kind: "unread"; key: string }
     | { kind: "start"; key: string };
 
@@ -360,7 +365,7 @@
           // "Alex changed the chat theme" twice in a row (trying colours): show it once.
           const prev = out.at(-1);
           if (prev?.kind === "notice" && prev.text === e.text) prev.key = e.key;
-          else out.push({ kind: "notice", key: e.key, text: e.text });
+          else out.push({ kind: "notice", key: e.key, text: e.text, action: e.action });
           break;
         }
         case "read_marker":
@@ -1094,6 +1099,9 @@
     <strong>Join</strong>
   </button>
 {/if}
+{#if customizeOpen}
+  <CustomizePage roomId={room.id} onClose={() => (customizeOpen = false)} />
+{/if}
 {#if chatMenuOpen}
   <ChatSettingsPage
     roomId={room.id}
@@ -1156,7 +1164,10 @@
       {:else if row.kind === "day"}
         <div class="day"><span>{row.label}</span></div>
       {:else if row.kind === "notice"}
-        <p class="center notice">{row.text}</p>
+        <p class="center notice">
+          {row.text}{#if row.action === "theme" && !thread}
+            · <button class="notice-link" onclick={() => (customizeOpen = true)}>Change</button>{/if}
+        </p>
       {:else if row.kind === "unread"}
         <div class="unread"><span>New messages</span></div>
       {:else if row.kind === "start" && !thread}
@@ -1595,6 +1606,15 @@
   .notice {
     font-size: 0.82rem;
     color: var(--muted);
+  }
+  .notice-link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent-b);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
   }
   .error {
     color: var(--danger);

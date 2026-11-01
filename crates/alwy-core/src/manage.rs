@@ -532,7 +532,7 @@ impl crate::Core {
 
     /// A state event's content, from the server (fresh, and not limited to what sliding sync
     /// keeps in the store).
-    async fn state_content(
+    pub(crate) async fn state_content(
         &self,
         room: &Room,
         kind: StateEventType,

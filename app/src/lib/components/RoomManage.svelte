@@ -43,7 +43,8 @@
     onLeft,
   }: {
     room: RoomDetails;
-    part: "header" | "body";
+    /** "body": everything below the header; or one group of it. */
+    part: "header" | "body" | "people" | "notify" | "privacy" | "leave";
     reload: () => void;
     onLeft?: () => void;
   } = $props();
@@ -151,8 +152,9 @@
     {/if}
   </div>
 {:else}
-  {#if !room.is_dm}
-    <h3 class="m-section">People</h3>
+  {@const all = part === "body"}
+  {#if (all || part === "people") && !room.is_dm}
+    {#if all}<h3 class="m-section">People</h3>{/if}
     <button class="m-row" onclick={() => (page = "members")}>
       <span class="m-icon"><Users size={20} /></span><span class="m-text"><strong>Members</strong></span>
       <span class="m-end">{room.members}</span><ChevronRight size={18} />
@@ -169,8 +171,8 @@
     {/if}
   {/if}
 
-  {#if !room.is_space}
-    <h3 class="m-section">Notifications</h3>
+  {#if (all || part === "notify") && !room.is_space}
+    {#if all}<h3 class="m-section">Notifications</h3>{/if}
     <div class="m-seg">
       <button class:on={!room.notify_custom} onclick={() => act(() => setNotifyMode(room.id, "default"))}>Default</button>
       <button class:on={room.notify_custom && room.notify === "all"} onclick={() => act(() => setNotifyMode(room.id, "all"))}>All</button>
@@ -183,7 +185,7 @@
     </p>
   {/if}
 
-  {#if !room.is_dm}
+  {#if (all || part === "privacy") && !room.is_dm}
     <h3 class="m-section">Privacy</h3>
     <div class="m-row">
       <span class="m-text"><span>Who can join</span></span>
@@ -215,7 +217,7 @@
     {/if}
   {/if}
 
-  {#if !room.is_space}
+  {#if (all || part === "privacy") && !room.is_space}
     <h3 class="m-section">Security</h3>
     {#if room.encrypted}
       <div class="m-row">
@@ -230,7 +232,7 @@
     {/if}
   {/if}
 
-  {#if !room.is_dm}
+  {#if (all || part === "privacy") && !room.is_dm}
     <button class="m-row" onclick={() => (page = "roles")}>
       <span class="m-icon"><ShieldCheck size={20} /></span>
       <span class="m-text"><strong>Roles & permissions</strong><small>{may("m.room.power_levels") ? "Who can invite, remove, change settings…" : "See who can do what"}</small></span>
@@ -238,13 +240,15 @@
     </button>
   {/if}
 
-  <h3 class="m-section">Leave</h3>
+  {#if all || part === "leave"}
+  {#if all}<h3 class="m-section">Leave</h3>{/if}
   <button class="m-row danger" onclick={startLeave}>
     <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>Leave {kind}</strong></span>
   </button>
   <button class="m-row danger" onclick={() => (confirm = "report")}>
     <span class="m-icon"><Flag size={20} /></span><span class="m-text"><strong>Report {kind}</strong><small>To your server's admins</small></span>
   </button>
+  {/if}
 
   {#if confirm}
     <div class="confirm">

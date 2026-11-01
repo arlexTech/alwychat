@@ -7,7 +7,7 @@ const MIN_INTERVAL_MS = 15_000;
 const MIN_MOVE_M = 25;
 const KEY = "alwychat.liveLocation";
 
-type Share = { roomId: string; endsAt: number };
+type Share = { roomId: string; shareId: string; endsAt: number };
 
 export const geoUri = (lat: number, lon: number, accuracy?: number | null) =>
   `geo:${lat.toFixed(6)},${lon.toFixed(6)}${accuracy ? `;u=${Math.round(accuracy)}` : ""}`;
@@ -23,7 +23,7 @@ function distance(a: GeolocationCoordinates, b: GeolocationCoordinates) {
 }
 
 class LiveLocation {
-  shares = $state<Share[]>(JSON.parse(localStorage.getItem(KEY) ?? "[]").filter((s: Share) => s.endsAt > Date.now()));
+  shares = $state<Share[]>(JSON.parse(localStorage.getItem(KEY) ?? "[]").filter((s: Share) => s.shareId && s.endsAt > Date.now()));
   error = $state<string | null>(null);
   #watch: number | null = null;
   #last: { at: number; coords: GeolocationCoordinates } | null = null;
@@ -39,8 +39,8 @@ class LiveLocation {
   }
 
   async share(roomId: string, durationMs: number, first: GeolocationCoordinates) {
-    await startLiveLocation(roomId, durationMs, geoUri(first.latitude, first.longitude, first.accuracy));
-    this.shares = [...this.shares.filter((s) => s.roomId !== roomId), { roomId, endsAt: Date.now() + durationMs }];
+    const shareId = await startLiveLocation(roomId, durationMs, geoUri(first.latitude, first.longitude, first.accuracy));
+    this.shares = [...this.shares.filter((s) => s.roomId !== roomId), { roomId, shareId, endsAt: Date.now() + durationMs }];
     this.#last = { at: Date.now(), coords: first };
     this.#save();
     this.#follow();
@@ -84,7 +84,7 @@ class LiveLocation {
     this.#last = { at: now, coords };
     const uri = geoUri(coords.latitude, coords.longitude, coords.accuracy);
     for (const s of this.shares) {
-      if (s.endsAt > now) await updateLiveLocation(s.roomId, uri).catch((e) => (this.error = String(e)));
+      if (s.endsAt > now) await updateLiveLocation(s.roomId, s.shareId, uri).catch((e) => (this.error = String(e)));
     }
   }
 }

@@ -3,7 +3,7 @@
 import { discardPicked, isAndroid, pickFiles } from "$lib/backend";
 import { pickedMediaUrl } from "$lib/media";
 
-const MAX = 512;
+const AVATAR_MAX = 512;
 
 export interface PickedImage {
   /** Base64 JPEG, for `setOwnAvatar` / `setRoomAvatar`. */
@@ -33,11 +33,11 @@ async function pickBlob(): Promise<Blob | null> {
 }
 
 /** Null when cancelled. */
-export async function pickImage(): Promise<PickedImage | null> {
+export async function pickImage(max = AVATAR_MAX): Promise<PickedImage | null> {
   const blob = await pickBlob();
   if (!blob) return null;
   const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
-  const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height));
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);

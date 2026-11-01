@@ -38,6 +38,8 @@ pub struct ChatStyle {
     pub theme: Option<String>,
     /// User ID → nickname given in this chat.
     pub nicknames: BTreeMap<String, String>,
+    /// `mxc://` background image, shown instead of the theme's scenery.
+    pub wallpaper: Option<String>,
     /// Whether our power level allows changing these.
     pub can_edit: bool,
 }
@@ -50,6 +52,9 @@ struct QuickReactionContent {
 #[derive(Deserialize)]
 struct ThemeContent {
     preset: Option<String>,
+    /// `mxc://` background image chosen for the chat (over the preset's scenery).
+    #[serde(default)]
+    wallpaper: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -93,11 +98,30 @@ impl crate::Core {
         Ok(())
     }
 
-    pub async fn set_theme(&self, room_id: &str, preset: Option<String>) -> Result<()> {
+    /// The chat's theme for everyone: a preset, and optionally a background image (`mxc://`).
+    pub async fn set_theme(
+        &self,
+        room_id: &str,
+        preset: Option<String>,
+        wallpaper: Option<String>,
+    ) -> Result<()> {
         let room = self.room(room_id)?;
-        room.send_state_event_raw(THEME, "", json!({ "preset": preset }))
-            .await?;
+        let mut content = json!({ "preset": preset });
+        if let Some(w) = wallpaper.filter(|w| w.starts_with("mxc://")) {
+            content["wallpaper"] = json!(w);
+        }
+        room.send_state_event_raw(THEME, "", content).await?;
         Ok(())
+    }
+
+    /// Upload a chat background image (already resized by the UI); returns its `mxc://` URI.
+    /// Like room avatars it isn't encrypted (state events can't point at encrypted media).
+    pub async fn upload_wallpaper(&self, bytes: Vec<u8>, mime: &str) -> Result<String> {
+        let mime = mime
+            .parse()
+            .map_err(|_| Error::InvalidMedia(mime.to_owned()))?;
+        let response = self.client()?.media().upload(&mime, bytes, None).await?;
+        Ok(response.content_uri.to_string())
     }
 
     /// Give `user_id` a nickname in this chat (`None` removes it).
@@ -146,6 +170,12 @@ async fn chat_style(room: &Room) -> ChatStyle {
             .flatten()
             .and_then(|c| c.emoji)
             .filter(|e| !e.is_empty()),
+        wallpaper: theme
+            .as_ref()
+            .ok()
+            .and_then(|t| t.as_ref())
+            .and_then(|c| c.wallpaper.clone())
+            .filter(|w| w.starts_with("mxc://")),
         theme: theme
             .inspect_err(|e| log("theme", e))
             .ok()

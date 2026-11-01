@@ -537,7 +537,7 @@ async fn start_live_location(
     room_id: String,
     duration_ms: u64,
     geo_uri: String,
-) -> alwy_core::Result<()> {
+) -> alwy_core::Result<String> {
     core.start_live_location(&room_id, duration_ms, &geo_uri)
         .await
 }
@@ -546,9 +546,11 @@ async fn start_live_location(
 async fn update_live_location(
     core: State<'_, AppCore>,
     room_id: String,
+    share_id: String,
     geo_uri: String,
 ) -> alwy_core::Result<()> {
-    core.update_live_location(&room_id, &geo_uri).await
+    core.update_live_location(&room_id, &share_id, &geo_uri)
+        .await
 }
 
 #[tauri::command]
@@ -605,8 +607,21 @@ async fn set_theme(
     core: State<'_, AppCore>,
     room_id: String,
     preset: Option<String>,
+    wallpaper: Option<String>,
 ) -> alwy_core::Result<()> {
-    core.set_theme(&room_id, preset).await
+    core.set_theme(&room_id, preset, wallpaper).await
+}
+
+/// A chat background image (base64 JPEG, resized in the webview) → its `mxc://` URI.
+#[tauri::command]
+async fn upload_wallpaper(core: State<'_, AppCore>, image: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(image)
+        .map_err(|e| e.to_string())?;
+    core.upload_wallpaper(bytes, "image/jpeg")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1797,6 +1812,7 @@ pub fn run() {
             clear_notifications,
             set_quick_reaction,
             set_theme,
+            upload_wallpaper,
             set_nickname,
             edit_message,
             delete_message,

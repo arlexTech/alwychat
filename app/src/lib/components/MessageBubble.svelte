@@ -530,7 +530,7 @@
     min-width: 0;
     padding: 8px 12px;
     border-radius: var(--t) var(--r) var(--r) var(--t);
-    background: var(--surface-2);
+    background: var(--incoming, var(--surface-2));
     overflow-wrap: anywhere;
     line-height: 1.35;
     user-select: text;
@@ -547,7 +547,7 @@
   }
   .own .bubble {
     border-radius: var(--r) var(--t) var(--t) var(--r);
-    background: var(--accent);
+    background: var(--bubble, var(--accent));
     background-attachment: fixed;
     color: white;
   }

@@ -12,13 +12,21 @@
   import RoomManage from "./RoomManage.svelte";
   import UserPage from "./UserPage.svelte";
   import UserRound from "@lucide/svelte/icons/user-round";
+  import Users from "@lucide/svelte/icons/users";
+  import CaseSensitive from "@lucide/svelte/icons/case-sensitive";
+  import Palette from "@lucide/svelte/icons/palette";
+  import ImageUp from "@lucide/svelte/icons/image-up";
+  import LayoutGrid from "@lucide/svelte/icons/layout-grid";
+  import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import CustomizePage from "./CustomizePage.svelte";
+  import MembersPage from "./MembersPage.svelte";
   import Search from "@lucide/svelte/icons/search";
   import { nav } from "$lib/stores/nav.svelte";
   import { onBack } from "$lib/back.svelte";
   import { chat } from "$lib/stores/chat.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
-  import { DEFAULT_QUICK_REACTION, DEFAULT_THEME, QUICK_REACTIONS, THEMES } from "$lib/themes";
+  import { DEFAULT_QUICK_REACTION, themeById } from "$lib/themes";
   import Avatar from "./Avatar.svelte";
   import Page from "./Page.svelte";
   import Images from "@lucide/svelte/icons/images";
@@ -45,9 +53,9 @@
   } = $props();
 
   let details = $state<RoomDetails | null>(null);
-  let profileOpen = $state(false);
+  let sub = $state<"profile" | "members" | "nicknames" | "customize" | "privacy" | null>(null);
   $effect(() => {
-    if (profileOpen) return onBack(() => (profileOpen = false));
+    if (sub) return onBack(() => (sub = null));
   });
   function loadDetails() {
     roomDetails(roomId)
@@ -59,11 +67,10 @@
 
   const style = $derived(chat.style);
   const canEdit = $derived(style?.can_edit ?? false);
-  const theme = $derived(style?.theme ?? DEFAULT_THEME.id);
+  const currentTheme = $derived(themeById(style?.theme));
   const quick = $derived(style?.quick_reaction ?? DEFAULT_QUICK_REACTION);
 
   let members = $state<Member[]>([]);
-  let customEmoji = $state("");
   /** User ID whose nickname is being edited, and the draft. */
   let editing = $state<{ userId: string; value: string } | null>(null);
   let error = $state<string | null>(null);
@@ -86,16 +93,6 @@
       chat.style = previous;
       error = String(e);
     }
-  }
-
-  const chooseTheme = (id: string) => apply({ theme: id }, () => setTheme(roomId, id));
-  const chooseQuick = (emoji: string) => apply({ quick_reaction: emoji }, () => setQuickReaction(roomId, emoji));
-
-  function submitCustomEmoji(event: SubmitEvent) {
-    event.preventDefault();
-    const emoji = [...new Intl.Segmenter().segment(customEmoji.trim())][0]?.segment;
-    if (emoji) chooseQuick(emoji);
-    customEmoji = "";
   }
 
   function saveNickname(member: Member) {
@@ -121,228 +118,155 @@
   }
 </script>
 
-<Page title="Chat settings" {onClose}>
+<Page title="" {onClose}>
   {#if details}<RoomManage room={details} part="header" reload={loadDetails} />{/if}
-  {#if style && !canEdit}
-    <p class="muted hint">Only the chat's admins can change its theme, quick reaction and nicknames.</p>
-  {/if}
 
-  {#if summary?.is_dm && summary.dm_user}
-    <button class="link-row" onclick={() => (profileOpen = true)}>
-      <UserRound size={20} />
-      <span><strong>Profile</strong><small>{summary.dm_user}</small></span>
-      <ChevronRight size={18} />
+  <div class="actions">
+    {#if summary?.is_dm && summary.dm_user}
+      <button onclick={() => (sub = "profile")}><span class="circle"><UserRound size={22} /></span>Profile</button>
+    {:else if details}
+      <button onclick={() => (sub = "members")}><span class="circle"><Users size={22} /></span>Members</button>
+    {/if}
+    <button onclick={() => (sub = "nicknames")}><span class="circle"><CaseSensitive size={24} /></span>Nicknames</button>
+    <button onclick={onSearch}><span class="circle"><Search size={22} /></span>Search</button>
+    <button onclick={() => (sub = "customize")}>
+      <span class="circle themed" style:--a={currentTheme.a} style:--b={currentTheme.b}><Palette size={22} /></span>Customize
     </button>
-  {/if}
-  <button class="link-row" onclick={onSearch}>
-    <Search size={20} />
-    <span><strong>Search in chat</strong><small>Messages, including encrypted ones</small></span>
-    <ChevronRight size={18} />
-  </button>
-  <button class="link-row" onclick={onSharedMedia}>
-    <Images size={20} />
-    <span><strong>Shared media</strong><small>Photos, videos, files and links</small></span>
-    <ChevronRight size={18} />
-  </button>
+  </div>
 
+  <h3 class="m-section">Chat info</h3>
+  <button class="m-row" onclick={onSharedMedia}>
+    <span class="m-icon"><Images size={20} /></span><span class="m-text"><strong>Media, files & links</strong></span><ChevronRight size={18} />
+  </button>
+  <button class="m-row" onclick={() => (sub = "customize")}>
+    <span class="m-icon"><Palette size={20} /></span>
+    <span class="m-text"><strong>Theme</strong><small>{style?.wallpaper ? "Your photo" : `${currentTheme.name} ${currentTheme.emoji}`}</small></span>
+    <span class="m-end quick">{quick}</span><ChevronRight size={18} />
+  </button>
+  <div class="m-row">
+    <span class="m-icon"><ImageUp size={20} /></span>
+    <span class="m-text"><strong>Photos you send here</strong></span>
+    <select class="m-select" value={hd === null ? "default" : hd ? "hd" : "compressed"} onchange={(e) => onChooseHd(e.currentTarget.value === "default" ? null : e.currentTarget.value === "hd")}>
+      <option value="default">App default</option>
+      <option value="hd">Always HD</option>
+      <option value="compressed">Compressed</option>
+    </select>
+  </div>
   {#if summary && !summary.is_dm && spaces.spacesOf(roomId).length}
-    <label class="switch-row">
-      <span>
-        <strong>Show in Chats</strong>
-        <small>This chat is in a space. On: it's also listed in the Chats tab.</small>
-      </span>
-      <input
-        type="checkbox"
-        role="switch"
-        checked={spaces.inChats(summary)}
-        onchange={(e) => spaces.setRoom(roomId, e.currentTarget.checked).catch(() => {})}
-      />
+    <label class="m-row">
+      <span class="m-icon"><LayoutGrid size={20} /></span>
+      <span class="m-text"><strong>Show in Chats</strong><small>It's in a space; on: also listed in the Chats tab</small></span>
+      <input type="checkbox" role="switch" checked={spaces.inChats(summary)} onchange={(e) => spaces.setRoom(roomId, e.currentTarget.checked).catch(() => {})} />
     </label>
   {/if}
 
-  <h3 class="section">Theme</h3>
-  <div class="themes">
-    {#each THEMES as t (t.id)}
-      <button
-        class="swatch"
-        class:active={t.id === theme}
-        style:--a={t.a}
-        style:--b={t.b}
-        disabled={!canEdit}
-        onclick={() => chooseTheme(t.id)}
-        aria-label={t.name}
-        title={t.name}
-      ></button>
-    {/each}
-  </div>
+  {#if details && !details.is_dm}
+    <h3 class="m-section">People</h3>
+    <RoomManage room={details} part="people" reload={loadDetails} />
+  {/if}
 
-  <h3 class="section">Quick reaction</h3>
-  <div class="emojis">
-    {#each QUICK_REACTIONS as e (e)}
-      <button class="emoji" class:active={e === quick} disabled={!canEdit} onclick={() => chooseQuick(e)}>{e}</button>
-    {/each}
-    {#if !QUICK_REACTIONS.includes(quick)}
-      <button class="emoji active" disabled>{quick}</button>
-    {/if}
-  </div>
-  <form class="custom-emoji" onsubmit={submitCustomEmoji}>
-    <input bind:value={customEmoji} placeholder="Or type any emoji" disabled={!canEdit} maxlength="16" />
-    <button disabled={!canEdit || !customEmoji.trim()}>Use</button>
-  </form>
+  {#if details}
+    <h3 class="m-section">Notifications</h3>
+    <RoomManage room={details} part="notify" reload={loadDetails} />
 
-  <h3 class="section">Nicknames</h3>
-  <ul class="members">
-    {#each members as m (m.user_id)}
-      <li>
-        <Avatar name={m.name} mxc={m.avatar} size={36} />
-        {#if editing?.userId === m.user_id}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="nick-input"
-            bind:value={editing.value}
-            placeholder={m.name}
-            autofocus
-            onkeydown={(e) => {
-              if (e.key === "Enter") saveNickname(m);
-              if (e.key === "Escape") editing = null;
-            }}
-            onblur={() => saveNickname(m)}
-          />
-        {:else}
-          <button
-            class="member"
-            disabled={!canEdit && !m.is_me}
-            onclick={() => (editing = { userId: m.user_id, value: m.is_me ? "" : (style?.nicknames[m.user_id] ?? "") })}
-          >
-            <strong>{shownName(m)}{m.is_me ? " (you)" : ""}</strong>
-            <small>{style?.nicknames[m.user_id] || m.is_me ? m.user_id : "Set a nickname"}</small>
-          </button>
-        {/if}
-      </li>
-    {/each}
-  </ul>
-
-  <h3 class="section">Photos sent in this chat</h3>
-  <div class="choices">
-    <button class:active={hd === null} onclick={() => onChooseHd(null)}>App default</button>
-    <button class:active={hd === true} onclick={() => onChooseHd(true)}>Always HD</button>
-    <button class:active={hd === false} onclick={() => onChooseHd(false)}>Compressed</button>
-  </div>
-
-  {#if error}<p class="error">{error}</p>{/if}
-  {#if details}<RoomManage room={details} part="body" reload={loadDetails} {onLeft} />{/if}
+    <h3 class="m-section">Privacy & support</h3>
+    <button class="m-row" onclick={() => (sub = "privacy")}>
+      <span class="m-icon"><ShieldCheck size={20} /></span>
+      <span class="m-text"><strong>Privacy & security</strong><small>{details.encrypted ? "End-to-end encrypted" : "Not encrypted"}{details.is_dm ? "" : " · who can join, roles"}</small></span>
+      <ChevronRight size={18} />
+    </button>
+    <RoomManage room={details} part="leave" reload={loadDetails} {onLeft} />
+  {/if}
+  {#if error}<p class="m-error">{error}</p>{/if}
 </Page>
-{#if profileOpen && summary?.dm_user}
-  <UserPage userId={summary.dm_user} onClose={() => (profileOpen = false)} onOpenChat={(id) => ((profileOpen = false), onClose(), nav.openChat(id))} />
+
+{#if sub === "customize"}
+  <CustomizePage {roomId} onClose={() => (sub = null)} />
+{:else if sub === "privacy" && details}
+  <Page title="Privacy & security" onClose={() => (sub = null)}>
+    <RoomManage room={details} part="privacy" reload={loadDetails} />
+  </Page>
+{:else if sub === "members" && details}
+  <MembersPage room={details} onClose={() => (sub = null)} onOpenChat={(id) => ((sub = null), onClose(), nav.openChat(id))} onChanged={loadDetails} />
+{:else if sub === "nicknames"}
+  <Page title="Nicknames" onClose={() => (sub = null)}>
+    {#if style && !canEdit}<p class="m-hint">Only the chat's admins can give nicknames to others. Yours is yours to change.</p>{/if}
+    <ul class="members">
+      {#each members as m (m.user_id)}
+        <li>
+          <Avatar name={m.name} mxc={m.avatar} size={40} />
+          {#if editing?.userId === m.user_id}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="nick-input"
+              bind:value={editing.value}
+              placeholder={m.name}
+              autofocus
+              onkeydown={(e) => {
+                if (e.key === "Enter") saveNickname(m);
+                if (e.key === "Escape") editing = null;
+              }}
+              onblur={() => saveNickname(m)}
+            />
+          {:else}
+            <button
+              class="member"
+              disabled={!canEdit && !m.is_me}
+              onclick={() => (editing = { userId: m.user_id, value: m.is_me ? "" : (style?.nicknames[m.user_id] ?? "") })}
+            >
+              <strong>{shownName(m)}{m.is_me ? " (you)" : ""}</strong>
+              <small>{style?.nicknames[m.user_id] || m.is_me ? m.user_id : "Set a nickname"}</small>
+            </button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+    {#if error}<p class="m-error">{error}</p>{/if}
+  </Page>
+{/if}
+{#if sub === "profile" && summary?.dm_user}
+  <UserPage userId={summary.dm_user} onClose={() => (sub = null)} onOpenChat={(id) => ((sub = null), onClose(), nav.openChat(id))} />
 {/if}
 
 <style>
-  .switch-row {
+  .actions {
     display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-top: 12px;
-    padding: 12px 14px;
-    border-radius: 14px;
-    background: var(--surface-2);
-  }
-  .switch-row span {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .switch-row small {
-    color: var(--muted);
-  }
-  .link-row {
-    display: flex;
-    align-items: center;
+    justify-content: center;
     gap: 14px;
-    width: 100%;
-    padding: 12px 14px;
-    border: none;
-    border-radius: 14px;
-    background: var(--surface-2);
-    color: var(--text);
-    text-align: left;
-    cursor: pointer;
+    margin: 6px 0 4px;
   }
-  .link-row span {
+  .actions button {
     display: flex;
-    flex: 1;
     flex-direction: column;
-  }
-  .link-row small {
-    color: var(--muted);
-  }
-  h3 {
-    margin: 8px 0 10px;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-  h3.section {
-    margin-top: 22px;
-  }
-  .hint {
-    margin: -4px 0 14px;
-    font-size: 0.85rem;
-  }
-  button:disabled {
-    cursor: default;
-  }
-  .themes {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 12px;
-  }
-  .swatch {
-    aspect-ratio: 1;
+    align-items: center;
+    gap: 6px;
+    width: 74px;
+    padding: 0;
     border: none;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--a), var(--b));
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.82rem;
     cursor: pointer;
-    transition: transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
   }
-  .swatch:not(:disabled):active {
+  .circle {
+    display: grid;
+    width: 48px;
+    height: 48px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--surface-2);
+  }
+  .circle.themed {
+    background: linear-gradient(135deg, var(--a), var(--b));
+    color: white;
+  }
+  .actions button:active .circle {
     transform: scale(0.92);
   }
-  .swatch.active {
-    box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--text);
+  .quick {
+    font-size: 1.3rem;
   }
-  .swatch:disabled:not(.active) {
-    opacity: 0.45;
-  }
-  .emojis {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .emoji {
-    width: 44px;
-    height: 44px;
-    border: none;
-    border-radius: 12px;
-    background: var(--surface-2);
-    font-size: 1.5rem;
-    cursor: pointer;
-    transition: transform 0.15s var(--ease);
-  }
-  .emoji:not(:disabled):active {
-    transform: scale(0.88);
-  }
-  .emoji.active {
-    background: color-mix(in srgb, var(--accent-a) 35%, var(--surface-2));
-    box-shadow: inset 0 0 0 2px var(--accent-a);
-  }
-  .custom-emoji {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-  }
-  .custom-emoji input,
   .nick-input {
     flex: 1;
     min-width: 0;
@@ -351,17 +275,6 @@
     border-radius: 999px;
     background: var(--surface-2);
     outline: none;
-  }
-  .custom-emoji button {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 999px;
-    background: var(--accent);
-    color: white;
-    cursor: pointer;
-  }
-  .custom-emoji button:disabled {
-    opacity: 0.4;
   }
   .members {
     margin: 0;
@@ -390,7 +303,6 @@
   .member:not(:disabled):hover {
     background: var(--surface-hover);
   }
-  .member strong,
   .member small {
     max-width: 100%;
     overflow: hidden;
@@ -399,29 +311,5 @@
   }
   .member small {
     color: var(--muted);
-  }
-  .choices {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  .choices button {
-    padding: 7px 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: transparent;
-    cursor: pointer;
-  }
-  .choices button.active {
-    border-color: transparent;
-    background: var(--accent);
-    color: white;
-  }
-  .muted {
-    color: var(--muted);
-  }
-  .error {
-    margin: 14px 0 0;
-    color: var(--danger);
   }
 </style>

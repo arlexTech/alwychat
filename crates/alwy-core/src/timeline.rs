@@ -49,6 +49,9 @@ pub enum EntryKind {
     /// A small centred line: joins, leaves, name changes…
     Notice {
         text: String,
+        /// A link after the text: "theme" (opens the theme picker).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<&'static str>,
     },
     /// Milliseconds since the Unix epoch, on the day to show.
     DateDivider {
@@ -412,34 +415,48 @@ impl crate::Core {
     }
 
     /// Start sharing our live location in a chat for `duration_ms`, with a first position.
+    /// Returns the share's event ID, which every later position refers to (sliding sync
+    /// doesn't keep `beacon_info` state in the store, so the SDK's own helpers can't find it).
     pub async fn start_live_location(
         &self,
         room_id: &str,
         duration_ms: u64,
         geo_uri: &str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let room = self.room(room_id)?;
-        room.start_live_location_share(duration_ms, None).await?;
-        room.send_location_beacon(geo_uri.to_owned())
-            .await
-            .map_err(|e| Error::Timeline(e.to_string()))?;
-        Ok(())
+        let share = room.start_live_location_share(duration_ms, None).await?;
+        self.update_live_location(room_id, share.event_id.as_str(), geo_uri)
+            .await?;
+        Ok(share.event_id.to_string())
     }
 
-    /// A new position for our live share.
-    pub async fn update_live_location(&self, room_id: &str, geo_uri: &str) -> Result<()> {
+    /// A new position for our live share `share_id`.
+    pub async fn update_live_location(
+        &self,
+        room_id: &str,
+        share_id: &str,
+        geo_uri: &str,
+    ) -> Result<()> {
+        use matrix_sdk::ruma::events::beacon::BeaconEventContent;
+        let share = OwnedEventId::try_from(share_id).map_err(|_| Error::UnknownEvent)?;
         self.room(room_id)?
-            .send_location_beacon(geo_uri.to_owned())
-            .await
-            .map_err(|e| Error::Timeline(e.to_string()))?;
+            .send(BeaconEventContent::new(share, geo_uri.to_owned(), None))
+            .await?;
         Ok(())
     }
 
+    /// End our live share: the server's copy of it, marked not live.
     pub async fn stop_live_location(&self, room_id: &str) -> Result<()> {
-        self.room(room_id)?
-            .stop_live_location_share()
-            .await
-            .map_err(|e| Error::Timeline(e.to_string()))?;
+        use matrix_sdk::ruma::events::StateEventType;
+        let room = self.room(room_id)?;
+        let me = room.own_user_id().to_owned();
+        let kind = StateEventType::from("org.matrix.msc3672.beacon_info");
+        let Some(mut content) = self.state_content(&room, kind, me.as_str()).await? else {
+            return Ok(());
+        };
+        content["live"] = serde_json::json!(false);
+        room.send_state_event_raw("org.matrix.msc3672.beacon_info", me.as_str(), content)
+            .await?;
         Ok(())
     }
 
@@ -835,6 +852,7 @@ impl Mapper {
                             .display_name()
                             .unwrap_or_else(|| change.user_id().localpart().to_owned())
                     ),
+                    action: None,
                 },
                 None => EntryKind::Hidden,
             },
@@ -845,14 +863,43 @@ impl Mapper {
                         (None, Some(new)) => format!("{} is now {new}", change.user_id()),
                         _ => format!("{name} removed their display name"),
                     },
+                    action: None,
                 },
                 // Avatar-only changes are noise in a chat.
                 None => EntryKind::Hidden,
             },
             TimelineItemContent::OtherState(state) => {
-                match custom_state_verb(&state.content().event_type().to_string()) {
+                let kind = state.content().event_type().to_string();
+                if kind == crate::custom::THEME {
+                    // "… changed the theme to Ocean" (the preset id, capitalised: the UI's names).
+                    let preset = event
+                        .original_json()
+                        .and_then(|j| j.get_field::<serde_json::Value>("content").ok().flatten())
+                        .and_then(|c| {
+                            c.get("preset")
+                                .and_then(|p| p.as_str())
+                                .map(ToOwned::to_owned)
+                        });
+                    let text = match preset {
+                        Some(p) if !p.is_empty() => {
+                            let mut chars = p.chars();
+                            let first = chars
+                                .next()
+                                .map(|c| c.to_uppercase().to_string())
+                                .unwrap_or_default();
+                            format!("{name} changed the theme to {first}{}", chars.as_str())
+                        }
+                        _ => format!("{name} changed the chat theme"),
+                    };
+                    return EntryKind::Notice {
+                        text,
+                        action: Some("theme"),
+                    };
+                }
+                match custom_state_verb(&kind) {
                     Some(verb) => EntryKind::Notice {
                         text: format!("{name} {verb}"),
+                        action: None,
                     },
                     None => EntryKind::Hidden,
                 }
@@ -860,6 +907,7 @@ impl Mapper {
             TimelineItemContent::CallInvite | TimelineItemContent::RtcNotification { .. } => {
                 EntryKind::Notice {
                     text: format!("📞 {name} started a call"),
+                    action: None,
                 }
             }
             _ => EntryKind::Hidden,

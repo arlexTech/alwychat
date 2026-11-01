@@ -247,7 +247,7 @@ export type AppTheme = "system" | "light" | "dark" | "amoled";
 
 export type TimelineEntry = { key: string } & (
   | ({ type: "message" } & MessageEntry)
-  | { type: "notice"; text: string }
+  | { type: "notice"; text: string; action?: "theme" }
   | { type: "date_divider"; timestamp: number }
   | { type: "read_marker" }
   | { type: "timeline_start" }
@@ -302,6 +302,8 @@ export interface ChatStyle {
   theme: string | null;
   /** User ID → nickname given in this chat. */
   nicknames: Record<string, string>;
+  /** `mxc://` background image (over the theme's scenery). */
+  wallpaper: string | null;
   can_edit: boolean;
 }
 
@@ -541,7 +543,10 @@ export const pinMessage = (roomId: string, eventId: string, pin: boolean) =>
 
 export const setQuickReaction = (roomId: string, emoji: string | null) =>
   invoke<void>("set_quick_reaction", { roomId, emoji });
-export const setTheme = (roomId: string, preset: string | null) => invoke<void>("set_theme", { roomId, preset });
+export const setTheme = (roomId: string, preset: string | null, wallpaper: string | null = null) =>
+  invoke<void>("set_theme", { roomId, preset, wallpaper });
+/** A chat background image (base64 JPEG) → its `mxc://` URI, for `setTheme`. */
+export const uploadWallpaper = (image: string) => invoke<string>("upload_wallpaper", { image });
 export const setNickname = (roomId: string, userId: string, nickname: string | null) =>
   invoke<void>("set_nickname", { roomId, userId, nickname });
 
@@ -892,8 +897,9 @@ export function subscribeConnection(onStatus: (status: ConnectionStatus) => void
 }
 /** Back in front: make sure the sync runs. */
 export const resumeSync = () => invoke<void>("resume_sync");
+/** Resolves to the share's ID, for `updateLiveLocation`. */
 export const startLiveLocation = (roomId: string, durationMs: number, geoUri: string) =>
-  invoke<void>("start_live_location", { roomId, durationMs, geoUri });
-export const updateLiveLocation = (roomId: string, geoUri: string) =>
-  invoke<void>("update_live_location", { roomId, geoUri });
+  invoke<string>("start_live_location", { roomId, durationMs, geoUri });
+export const updateLiveLocation = (roomId: string, shareId: string, geoUri: string) =>
+  invoke<void>("update_live_location", { roomId, shareId, geoUri });
 export const stopLiveLocation = (roomId: string) => invoke<void>("stop_live_location", { roomId });

@@ -51,6 +51,8 @@
   import ChatView from "./ChatView.svelte";
   import { onBack } from "$lib/back.svelte";
   import { themeById } from "$lib/themes";
+  import ChatScene from "./ChatScene.svelte";
+  import { mediaUrl } from "$lib/media";
   import EncryptionSheet from "./EncryptionSheet.svelte";
   import SettingsPage from "./SettingsPage.svelte";
   import SquarePen from "@lucide/svelte/icons/square-pen";
@@ -364,7 +366,18 @@
     </nav>
   </aside>
 
-  <section class="chat-pane" style:--accent-a={theme.a} style:--accent-b={theme.b}>
+  <section
+    class="chat-pane"
+    class:scenic={!!selected && !selected.is_invite && (!!theme.scene || !!chat.style?.wallpaper)}
+    style:--accent-a={theme.a}
+    style:--accent-b={theme.b}
+    style:--incoming={theme.incoming ?? (chat.style?.wallpaper ? "rgb(20 22 30 / 0.82)" : null)}
+  >
+    {#if selected && !selected.is_invite && chat.style?.wallpaper}
+      <div class="wallpaper" style:background-image="url({mediaUrl(chat.style.wallpaper, 1200)})"></div>
+    {:else if selected && !selected.is_invite && theme.scene}
+      {#key theme.scene}<div class="scene-wrap" in:fade={{ duration: 300 }}><ChatScene scene={theme.scene} /></div>{/key}
+    {/if}
     {#if selected?.is_invite}
       <InvitePane
         room={selected}
@@ -538,6 +551,48 @@
       transform: rotate(360deg);
     }
   }
+  /* A theme with scenery or a photo: the chat sits on it, always dark. */
+  .scene-wrap,
+  .wallpaper {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+  }
+  .wallpaper {
+    background-position: center;
+    background-size: cover;
+  }
+  .wallpaper::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(rgb(0 0 0 / 0.25), rgb(0 0 0 / 0.55));
+  }
+  .chat-pane.scenic {
+    --text: #f2f4f8;
+    --muted: rgb(235 240 255 / 0.72);
+    --surface-2: rgb(10 14 28 / 0.55);
+    --border: rgb(255 255 255 / 0.1);
+    color: var(--text);
+    color-scheme: dark;
+  }
+  .chat-pane.scenic > :global(header),
+  .chat-pane.scenic > :global(.scroller),
+  .chat-pane.scenic > :global(form),
+  .chat-pane.scenic > :global(.pin-banner),
+  .chat-pane.scenic > :global(.call-banner),
+  .chat-pane.scenic > :global(.typing) {
+    position: relative;
+    z-index: 1;
+  }
+  .chat-pane.scenic > :global(header) {
+    border-bottom-color: transparent;
+    background: rgb(0 0 0 / 0.18);
+    backdrop-filter: blur(12px);
+  }
+  .chat-pane.scenic > :global(form) {
+    border-top-color: transparent;
+  }
   .new-chat {
     display: grid;
     width: 40px;
@@ -701,6 +756,8 @@
   .chat-pane {
     /* Re-derived here: --accent on :root was computed from the default colours. */
     --accent: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    /* Your bubbles: one gradient over the whole screen (Messenger), top to bottom. */
+    --bubble: linear-gradient(to bottom, var(--accent-a), var(--accent-b));
     position: relative;
     display: flex;
     flex-direction: column;
