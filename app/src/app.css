@@ -113,3 +113,172 @@ input[type="checkbox"][role="switch"]:checked {
 input[type="checkbox"][role="switch"]:checked::after {
   transform: translateX(18px);
 }
+
+/* ---- Shared building blocks of the settings / management pages (Page.svelte bodies) ---- */
+.m-section {
+  margin: 26px 4px 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.m-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 11px 6px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.m-row:hover,
+label.m-row:hover {
+  background: var(--surface-hover);
+}
+.m-row > .m-icon {
+  display: grid;
+  flex: none;
+  width: 22px;
+  place-items: center;
+  color: var(--muted);
+}
+.m-row > .m-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.m-row > .m-text > strong,
+.m-row > .m-text > span {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-row small,
+.m-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.m-hint {
+  margin: 6px 4px;
+}
+.m-row.danger,
+.m-row.danger > .m-icon {
+  color: var(--danger);
+}
+.m-row > .m-end {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.m-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.m-input,
+.m-select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+textarea.m-input {
+  min-height: 70px;
+  resize: vertical;
+}
+.m-select {
+  width: auto;
+  padding: 7px 10px;
+}
+.m-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.m-btn.plain {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.m-btn.danger {
+  background: var(--danger);
+}
+.m-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.m-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.m-buttons > .m-btn {
+  flex: 1;
+}
+.m-seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.m-seg > button {
+  flex: 1;
+  padding: 8px 6px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.m-seg > button.on {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+.m-error {
+  margin: 8px 4px;
+  color: var(--danger);
+}
+.m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.m-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}

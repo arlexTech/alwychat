@@ -1,6 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { roomMembers, setNickname, setQuickReaction, setTheme, type Member } from "$lib/backend";
+  import {
+    roomDetails,
+    roomMembers,
+    setNickname,
+    setQuickReaction,
+    setTheme,
+    type Member,
+    type RoomDetails,
+  } from "$lib/backend";
+  import RoomManage from "./RoomManage.svelte";
+  import UserPage from "./UserPage.svelte";
+  import UserRound from "@lucide/svelte/icons/user-round";
+  import { nav } from "$lib/stores/nav.svelte";
+  import { onBack } from "$lib/back.svelte";
   import { chat } from "$lib/stores/chat.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
@@ -16,6 +29,7 @@
     onChooseHd,
     onSharedMedia,
     onClose,
+    onLeft,
   }: {
     roomId: string;
     /** This chat's photo quality: null = app default. */
@@ -23,7 +37,20 @@
     onChooseHd: (hd: boolean | null) => void;
     onSharedMedia: () => void;
     onClose: () => void;
+    /** We left the chat: close it. */
+    onLeft: () => void;
   } = $props();
+
+  let details = $state<RoomDetails | null>(null);
+  let profileOpen = $state(false);
+  $effect(() => {
+    if (profileOpen) return onBack(() => (profileOpen = false));
+  });
+  function loadDetails() {
+    roomDetails(roomId)
+      .then((d) => (details = d))
+      .catch((e) => (error = String(e)));
+  }
 
   const summary = $derived(chatList.rooms.find((r) => r.id === roomId) ?? null);
 
@@ -39,6 +66,7 @@
   let error = $state<string | null>(null);
 
   onMount(() => {
+    loadDetails();
     roomMembers(roomId)
       .then((list) => (members = list.sort((a, b) => Number(b.is_me) - Number(a.is_me))))
       .catch((e) => (error = String(e)));
@@ -91,10 +119,18 @@
 </script>
 
 <Page title="Chat settings" {onClose}>
+  {#if details}<RoomManage room={details} part="header" reload={loadDetails} />{/if}
   {#if style && !canEdit}
     <p class="muted hint">Only the chat's admins can change its theme, quick reaction and nicknames.</p>
   {/if}
 
+  {#if summary?.is_dm && summary.dm_user}
+    <button class="link-row" onclick={() => (profileOpen = true)}>
+      <UserRound size={20} />
+      <span><strong>Profile</strong><small>{summary.dm_user}</small></span>
+      <ChevronRight size={18} />
+    </button>
+  {/if}
   <button class="link-row" onclick={onSharedMedia}>
     <Images size={20} />
     <span><strong>Shared media</strong><small>Photos, videos, files and links</small></span>
@@ -186,7 +222,11 @@
   </div>
 
   {#if error}<p class="error">{error}</p>{/if}
+  {#if details}<RoomManage room={details} part="body" reload={loadDetails} {onLeft} />{/if}
 </Page>
+{#if profileOpen && summary?.dm_user}
+  <UserPage userId={summary.dm_user} onClose={() => (profileOpen = false)} onOpenChat={(id) => ((profileOpen = false), onClose(), nav.openChat(id))} />
+{/if}
 
 <style>
   .switch-row {

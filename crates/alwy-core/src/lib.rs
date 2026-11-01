@@ -10,6 +10,7 @@ pub mod encryption;
 pub mod error;
 mod html;
 pub mod links;
+pub mod manage;
 pub mod media;
 pub mod mentions;
 pub mod notifications;

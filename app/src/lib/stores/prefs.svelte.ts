@@ -19,6 +19,7 @@ class Prefs {
     if (!hasBackend) return;
     this.settings = await getSettings();
     this.#applyTheme();
+    this.#applyTextScale();
     if (this.settings.hide_in_switcher) setSecureScreen(true).catch(() => {});
   }
 
@@ -28,18 +29,26 @@ class Prefs {
     const previous = this.settings;
     this.settings = { ...this.settings, ...change };
     if ("app_theme" in change) this.#applyTheme();
+    if ("text_scale" in change) this.#applyTextScale();
     if ("hide_in_switcher" in change) setSecureScreen(!!change.hide_in_switcher).catch(() => {});
     try {
       await setSettings(this.settings);
     } catch (e) {
       this.settings = previous;
       this.#applyTheme();
+      this.#applyTextScale();
       throw e;
     }
   }
 
   get effects() {
     return this.settings?.chat_effects ?? true;
+  }
+
+  /** Text sized in rem/em (messages, most of the UI) follows the root font size. */
+  #applyTextScale() {
+    const scale = this.settings?.text_scale ?? 100;
+    document.documentElement.style.fontSize = scale === 100 ? "" : `${scale}%`;
   }
 
   #applyTheme() {

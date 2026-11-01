@@ -23,16 +23,45 @@
   import ChatRow from "./ChatRow.svelte";
   import Page from "./Page.svelte";
   import VoiceChannel from "./VoiceChannel.svelte";
+  import SpaceSettingsPage from "./SpaceSettingsPage.svelte";
+  import CreateRoomPage from "./CreateRoomPage.svelte";
+  import { nav } from "$lib/stores/nav.svelte";
 
   let { selectedId, onSelect }: { selectedId: string | null; onSelect: (roomId: string) => void } = $props();
 
   type Ref = { id: string; name: string; avatar: string | null };
   /** Spaces opened, outermost first (sub-spaces push onto it). */
   let path = $state<Ref[]>([]);
-  const current = $derived(path.at(-1) ?? null);
+  const opened = $derived(path.at(-1) ?? null);
+  // Name and photo follow the live list (a just-created space syncs its name a bit later).
+  const current = $derived.by(() => {
+    if (!opened) return null;
+    const live = spaces.list.find((s) => s.id === opened.id);
+    return live ? { id: live.id, name: live.name, avatar: live.avatar } : opened;
+  });
   let children = $state<SpaceChild[]>([]);
   let loading = $state(false);
   let settingsFor = $state<Ref | null>(null);
+  let newSpace = $state(false);
+  /** A space to open once it shows up (just created or joined). */
+  let pending = $state<string | null>(null);
+  $effect(() => {
+    if (nav.space) {
+      pending = nav.space;
+      nav.space = null;
+    }
+  });
+  $effect(() => {
+    const id = pending;
+    const space = id && spaces.list.find((s) => s.id === id);
+    if (space) {
+      pending = null;
+      path = [{ id: space.id, name: space.name, avatar: space.avatar }];
+    }
+  });
+  $effect(() => {
+    if (newSpace) return onBack(() => (newSpace = false));
+  });
   let joining = $state<string | null>(null);
   let error = $state<string | null>(null);
 
@@ -44,14 +73,16 @@
     if (settingsFor) return onBack(() => (settingsFor = null));
   });
 
+  /** Effects keyed on the space, not on its (live) name. */
+  const currentId = $derived(opened?.id ?? null);
   $effect(() => {
-    const space = current;
+    const id = currentId;
     children = [];
     error = null;
-    if (!space) return void closeSpace().catch(() => {});
+    if (!id) return void closeSpace().catch(() => {});
     loading = true;
-    openSpace(space.id, (list) => {
-      if (current?.id === space.id) {
+    openSpace(id, (list) => {
+      if (currentId === id) {
         children = list;
         loading = false;
       }
@@ -61,9 +92,9 @@
 
   let canAdd = $state(false);
   $effect(() => {
-    const space = current;
+    const id = currentId;
     canAdd = false;
-    if (space) canAddToSpace(space.id).then((ok) => current?.id === space.id && (canAdd = ok)).catch(() => {});
+    if (id) canAddToSpace(id).then((ok) => currentId === id && (canAdd = ok)).catch(() => {});
   });
 
   const roomsById = $derived(new Map(chatList.rooms.map((r) => [r.id, r])));
@@ -153,6 +184,10 @@
 
 {#if !current}
   <div class="list">
+    <button class="space new" onclick={() => (newSpace = true)}>
+      <span class="plus"><Plus size={22} /></span>
+      <span class="text"><strong>New space</strong><small>Group chats and voice channels, like a server</small></span>
+    </button>
     {#if spaces.loaded && spaces.list.length === 0}
       <p class="state">You haven't joined any spaces yet.<br />Spaces group chats together, like Discord servers.</p>
     {/if}
@@ -175,7 +210,7 @@
       <button class="icon" onclick={() => (path = path.slice(0, -1))} aria-label="Back"><ChevronLeft size={22} /></button>
       <Avatar name={current.name} mxc={current.avatar} size={32} square />
       <strong class="title">{current.name}</strong>
-      <button class="icon" onclick={() => (settingsFor = path[0])} aria-label="Space settings"><Settings size={20} /></button>
+      <button class="icon" onclick={() => (settingsFor = current)} aria-label="Space settings"><Settings size={20} /></button>
     </header>
     {#if error}<p class="state error">{error}</p>{/if}
     {#each joinedChats as room (room.id)}
@@ -243,20 +278,21 @@
 
 {#if settingsFor}
   {@const space = settingsFor}
-  <Page title={space.name} onClose={() => (settingsFor = null)}>
-    <label class="toggle">
-      <span>
-        <strong>Show its chats in Chats</strong>
-        <small>Its chats also appear in the Chats tab. Each chat can override this in its settings.</small>
-      </span>
-      <input
-        type="checkbox"
-        role="switch"
-        checked={spaces.spaceShown(space.id)}
-        onchange={(e) => spaces.setSpace(space.id, e.currentTarget.checked).catch(() => {})}
-      />
-    </label>
-  </Page>
+  <SpaceSettingsPage
+    spaceId={space.id}
+    {children}
+    onClose={() => (settingsFor = null)}
+    onLeft={() => ((settingsFor = null), (path = path.slice(0, -1)))}
+    onNewVoiceChannel={() => ((settingsFor = null), (newChannel = { name: "", busy: false, error: null }))}
+  />
+{/if}
+
+{#if newSpace}
+  <CreateRoomPage
+    kind="space"
+    onClose={() => (newSpace = false)}
+    onCreated={(id) => ((newSpace = false), (pending = id))}
+  />
 {/if}
 
 <style>
@@ -276,6 +312,16 @@
     color: var(--text);
     text-align: left;
     cursor: pointer;
+  }
+  .new .plus {
+    display: grid;
+    width: 48px;
+    height: 48px;
+    place-items: center;
+    border: 2px dashed var(--border);
+    border-radius: 14px;
+    color: var(--muted);
+    box-sizing: border-box;
   }
   .space:hover {
     background: var(--surface-hover);
@@ -428,20 +474,5 @@
     margin: 4px 8px;
     border-radius: 14px;
     background: var(--surface-2);
-  }
-  .toggle {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 12px 4px;
-  }
-  .toggle span {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .toggle small {
-    color: var(--muted);
   }
 </style>

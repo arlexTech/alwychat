@@ -15,8 +15,101 @@
   import Plus from "@lucide/svelte/icons/plus";
   import type { Folder } from "$lib/backend";
   import { onBack } from "$lib/back.svelte";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
+  import KeyRound from "@lucide/svelte/icons/key-round";
+  import Laptop from "@lucide/svelte/icons/laptop";
+  import LogOut from "@lucide/svelte/icons/log-out";
+  import UserX from "@lucide/svelte/icons/user-x";
+  import X from "@lucide/svelte/icons/x";
+  import {
+    accountUrl,
+    appVersion,
+    hasBackend,
+    notificationRules,
+    openExternal,
+    setDisplayName,
+    setKeyword,
+    setNotificationRule,
+    setOwnAvatar,
+    type NotificationRules,
+  } from "$lib/backend";
+  import { me } from "$lib/stores/me.svelte";
+  import AvatarEdit from "./AvatarEdit.svelte";
+  import BlockedPage from "./BlockedPage.svelte";
+  import DevicesPage from "./DevicesPage.svelte";
+  import SecurityPage from "./SecurityPage.svelte";
 
-  let { userId, onClose }: { userId: string; onClose: () => void } = $props();
+  let { userId, onClose, onSignOut }: { userId: string; onClose: () => void; onSignOut: () => void } = $props();
+
+  // ── Profile ──
+  let nameDraft = $state<string | null>(null);
+  let nameBusy = $state(false);
+  async function saveName() {
+    if (nameDraft === null) return;
+    nameBusy = true;
+    try {
+      await setDisplayName(nameDraft);
+      await me.refresh();
+      nameDraft = null;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      nameBusy = false;
+    }
+  }
+  async function savePhoto(data: string) {
+    await setOwnAvatar(data);
+    await me.refresh();
+  }
+
+  // ── Account pages ──
+  let sub = $state<"devices" | "security" | "blocked" | null>(null);
+  $effect(() => {
+    if (sub) return onBack(() => (sub = null));
+  });
+  async function openAccount(action: string) {
+    try {
+      await openExternal(await accountUrl(action));
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  // ── Notification rules (push rules, shared with other apps) ──
+  let rules = $state<NotificationRules | null>(null);
+  let keyword = $state("");
+  $effect(() => {
+    if (hasBackend) notificationRules().then((r) => (rules = r)).catch(() => {});
+  });
+  async function changeRule(rule: "room_mentions" | "invites", on: boolean) {
+    if (!rules) return;
+    rules[rule] = on;
+    await setNotificationRule(rule, on).catch((e) => ((error = String(e)), rules && (rules[rule] = !on)));
+  }
+  async function changeKeyword(word: string, add: boolean) {
+    word = word.trim();
+    if (!word || !rules) return;
+    try {
+      await setKeyword(word, add);
+      rules.keywords = add ? [...rules.keywords.filter((k) => k !== word), word] : rules.keywords.filter((k) => k !== word);
+      if (add) keyword = "";
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  let version = $state("");
+  $effect(() => {
+    appVersion().then((v) => (version = v)).catch(() => {});
+  });
+  const server = $derived(userId.split(":").slice(1).join(":"));
+  const TEXT_SIZES = [
+    { value: 90, label: "Small" },
+    { value: 100, label: "Default" },
+    { value: 115, label: "Large" },
+    { value: 130, label: "Huge" },
+  ];
 
   // ── Status and time zone (extended profile, visible to everyone) ──
   const STATUS_EMOJI = ["💬", "📚", "💼", "🎧", "🎮", "🏃", "✈️", "🤒", "😴", "🌙"];
@@ -248,6 +341,20 @@
 
 <Page title="Settings" {onClose}>
   {#if settings}
+    <div class="profile">
+      <AvatarEdit name={me.profile?.name ?? userId} mxc={me.profile?.avatar ?? null} onPicked={savePhoto} />
+      {#if nameDraft !== null}
+        <form class="name-row" onsubmit={(e) => (e.preventDefault(), saveName())}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="m-input" bind:value={nameDraft} maxlength="60" placeholder="Your name" autofocus />
+          <button class="m-btn" disabled={nameBusy}>Save</button>
+        </form>
+      {:else}
+        <button class="name" onclick={() => (nameDraft = me.profile?.name ?? "")} title="Change your name">{me.profile?.name ?? userId}</button>
+      {/if}
+      <small>{userId}</small>
+    </div>
+
     <h3>Status</h3>
     <div class="status-emoji" role="radiogroup" aria-label="Status emoji">
       {#each STATUS_EMOJI as e (e)}
@@ -416,8 +523,69 @@
       {/if}
     {/if}
 
+    {#if rules}
+      <label class="toggle">
+        <span><strong>@room mentions</strong><small>Notify when someone alerts a whole group.</small></span>
+        <input type="checkbox" role="switch" checked={rules.room_mentions} onchange={(e) => changeRule("room_mentions", e.currentTarget.checked)} />
+      </label>
+      <label class="toggle">
+        <span><strong>Invites</strong><small>Notify when you're invited to a chat or space.</small></span>
+        <input type="checkbox" role="switch" checked={rules.invites} onchange={(e) => changeRule("invites", e.currentTarget.checked)} />
+      </label>
+      <div class="keywords">
+        <strong>Keywords</strong>
+        <small>Messages containing these notify you, even in chats set to mentions only. Synced with your other apps.</small>
+        <div class="m-chips">
+          {#each rules.keywords as k (k)}
+            <button class="m-chip kw" onclick={() => changeKeyword(k, false)} aria-label="Remove {k}">{k}<X size={14} /></button>
+          {/each}
+        </div>
+        <form class="name-row" onsubmit={(e) => (e.preventDefault(), changeKeyword(keyword, true))}>
+          <input class="m-input" bind:value={keyword} placeholder="Add a keyword" maxlength="40" />
+          <button class="m-btn plain" disabled={!keyword.trim()}>Add</button>
+        </form>
+      </div>
+    {/if}
+
     <h3 class="section">Media</h3>
     {#each media as t (t.key)}{@render row(t)}{/each}
+
+    <h3 class="section">Text & typing</h3>
+    <div class="m-seg">
+      {#each TEXT_SIZES as t (t.value)}
+        <button class:on={settings.text_scale === t.value} onclick={() => save({ text_scale: t.value })}>{t.label}</button>
+      {/each}
+    </div>
+    {#if !isAndroid}
+      <label class="toggle">
+        <span><strong>Enter sends</strong><small>{settings.enter_sends ? "Shift+Enter adds a new line." : "Enter adds a new line, Ctrl+Enter sends."}</small></span>
+        <input type="checkbox" role="switch" checked={settings.enter_sends} onchange={() => toggle("enter_sends")} />
+      </label>
+    {/if}
+
+    <h3 class="section">Account</h3>
+    <button class="m-row" onclick={() => (sub = "devices")}>
+      <span class="m-icon"><Laptop size={20} /></span><span class="m-text"><strong>Sessions</strong><small>Where you're signed in</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (sub = "security")}>
+      <span class="m-icon"><KeyRound size={20} /></span><span class="m-text"><strong>Security & recovery</strong><small>Verification, key backup, recovery key</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (sub = "blocked")}>
+      <span class="m-icon"><UserX size={20} /></span><span class="m-text"><strong>Blocked people</strong></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => openAccount("profile")}>
+      <span class="m-icon"><ExternalLink size={20} /></span><span class="m-text"><strong>Manage account</strong><small>Email, password, deactivation (your server's account page)</small></span>
+    </button>
+    <button class="m-row danger" onclick={onSignOut}>
+      <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>Sign out</strong></span>
+    </button>
+
+    <h3 class="section">About</h3>
+    <div class="about">
+      <p><strong>AlwyChat</strong> {version}</p>
+      <p>Server: {server}</p>
+      <p>Free software (AGPL-3.0-or-later). <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>Source code</button></p>
+    </div>
   {:else if !error}
     <p class="muted">Loading…</p>
   {/if}
@@ -436,11 +604,73 @@
     </div>
   </Page>
 {/if}
+{#if sub === "devices"}
+  <DevicesPage onClose={() => (sub = null)} />
+{:else if sub === "security"}
+  <SecurityPage onClose={() => (sub = null)} />
+{:else if sub === "blocked"}
+  <BlockedPage onClose={() => (sub = null)} />
+{/if}
 {#if folderEdit}
   <FolderPage folder={folderEdit === "new" ? null : folderEdit} onClose={() => (folderEdit = null)} />
 {/if}
 
 <style>
+  .profile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin: 6px 0 4px;
+  }
+  .profile small {
+    color: var(--muted);
+  }
+  .name {
+    margin-top: 8px;
+    border: none;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 1.3rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .name-row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+  }
+  .keywords {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .keywords small {
+    color: var(--muted);
+  }
+  .kw {
+    padding: 5px 8px 5px 12px;
+  }
+  .about p {
+    margin: 4px 4px;
+    color: var(--muted);
+  }
+  .about strong {
+    color: var(--text);
+  }
+  .link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent-a);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
   .themes {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

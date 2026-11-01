@@ -642,7 +642,12 @@
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    const enterSends = prefs.settings?.enter_sends ?? true;
+    if (
+      event.key === "Enter" &&
+      !event.isComposing &&
+      (enterSends ? !event.shiftKey : event.ctrlKey || event.metaKey)
+    ) {
       event.preventDefault();
       send();
     } else if (event.key === "Escape") {
@@ -948,6 +953,7 @@
     onChooseHd={chooseHd}
     onSharedMedia={() => ((chatMenuOpen = false), (mediaOpen = true))}
     onClose={() => (chatMenuOpen = false)}
+    onLeft={() => ((chatMenuOpen = false), onBack?.())}
   />
 {/if}
 

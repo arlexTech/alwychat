@@ -1,5 +1,5 @@
 // The only module allowed to call Tauri's invoke(). Everything else imports from here.
-import { onBackButtonPress } from "@tauri-apps/api/app";
+import { getVersion, onBackButtonPress } from "@tauri-apps/api/app";
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -102,6 +102,8 @@ export interface RoomSummary {
   in_call: CallMember[];
   /** A voice channel (Element Call video room): opening it joins the call. */
   is_voice: boolean;
+  /** Only for invites (joined spaces aren't in the chat list). */
+  is_space: boolean;
   is_invite: boolean;
   is_favourite: boolean;
   /** Low-priority tag: shown under "Archived". */
@@ -653,6 +655,10 @@ export interface Settings {
   app_lock_biometric: boolean;
   /** Android: blank in the app switcher, no screenshots. */
   hide_in_switcher: boolean;
+  /** Enter sends (Shift+Enter: new line); off: Ctrl+Enter sends. */
+  enter_sends: boolean;
+  /** Text size in percent. */
+  text_scale: number;
 }
 /** Android: dark system bar icons on a light theme, and the colour behind the bars. */
 export const setSystemBars = (light: boolean, background: string) =>
@@ -727,3 +733,135 @@ export const verifyThisDevice = () => invoke<void>("verify_this_device");
 export const acceptVerification = () => invoke<void>("accept_verification");
 export const confirmEmojis = (matching: boolean) => invoke<void>("confirm_emojis", { matching });
 export const cancelVerification = () => invoke<void>("cancel_verification");
+
+// ---- Managing chats, spaces and the account ----
+
+export interface UserResult {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+}
+
+export interface InviteInfo {
+  inviter_id: string;
+  inviter_name: string | null;
+  inviter_avatar: string | null;
+  is_space: boolean;
+  topic: string | null;
+  members: number;
+}
+
+export interface NewRoom {
+  kind: "group" | "space";
+  name: string;
+  topic: string;
+  /** Invite only, members of `parent`, or anyone with the link. */
+  access: "private" | "space" | "public";
+  encrypted: boolean;
+  parent: string | null;
+  invite: string[];
+}
+
+export interface MemberInfo {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+  is_me: boolean;
+  power: number;
+  membership: "join" | "invite" | "ban" | "knock" | "leave";
+}
+
+export interface RoomDetails {
+  id: string;
+  name: string;
+  topic: string | null;
+  avatar: string | null;
+  alias: string | null;
+  is_space: boolean;
+  is_dm: boolean;
+  encrypted: boolean;
+  join_rule: string;
+  allow_spaces: string[];
+  history: string;
+  members: number;
+  notify: "all" | "mentions" | "mute";
+  notify_custom: boolean;
+  my_power: number;
+  /** Level needed per permission key (power-levels key or event type). */
+  levels: Record<string, number>;
+  parent_spaces: string[];
+}
+
+export interface DeviceInfo {
+  device_id: string;
+  name: string | null;
+  last_seen_ip: string | null;
+  last_seen_ts: number | null;
+  is_current: boolean;
+  verified: boolean | null;
+}
+
+export interface SecurityStatus {
+  recovery: string;
+  backup: string;
+  cross_signed: boolean;
+}
+
+export interface NotificationRules {
+  keywords: string[];
+  room_mentions: boolean;
+  invites: boolean;
+}
+
+export const inviteInfo = (roomId: string) => invoke<InviteInfo>("invite_info", { roomId });
+export const acceptInvite = (roomId: string) => invoke<void>("accept_invite", { roomId });
+/** Decline an invite, or leave a chat or space. */
+export const leaveRoom = (roomId: string) => invoke<void>("leave_room", { roomId });
+export const searchUsers = (term: string) => invoke<UserResult[]>("search_users", { term });
+export const openDm = (userId: string) => invoke<string>("open_dm", { userId });
+export const createRoom = (room: NewRoom) => invoke<string>("create_room", { room });
+export const joinAddress = (address: string) => invoke<string>("join_address", { address });
+export const spaceRoomsJoined = (spaceId: string) => invoke<string[]>("space_rooms_joined", { spaceId });
+export const members = (roomId: string) => invoke<MemberInfo[]>("members", { roomId });
+export const inviteUser = (roomId: string, userId: string) => invoke<void>("invite_user", { roomId, userId });
+export const moderate = (roomId: string, userId: string, action: "kick" | "ban" | "unban", reason: string | null = null) =>
+  invoke<void>("moderate", { roomId, userId, action, reason });
+export const setUserPower = (roomId: string, userId: string, power: number) =>
+  invoke<void>("set_user_power", { roomId, userId, power });
+export const setPermission = (roomId: string, key: string, power: number) =>
+  invoke<void>("set_permission", { roomId, key, power });
+export const roomDetails = (roomId: string) => invoke<RoomDetails>("room_details", { roomId });
+export const setRoomName = (roomId: string, name: string) => invoke<void>("set_room_name", { roomId, name });
+export const setRoomTopic = (roomId: string, topic: string) => invoke<void>("set_room_topic", { roomId, topic });
+export const setRoomAvatar = (roomId: string, image: string | null, mime = "image/jpeg") =>
+  invoke<void>("set_room_avatar", { roomId, image, mime });
+export const setJoinRule = (roomId: string, rule: string, spaces: string[] = []) =>
+  invoke<void>("set_join_rule", { roomId, rule, spaces });
+export const setHistoryVisibility = (roomId: string, history: string) =>
+  invoke<void>("set_history_visibility", { roomId, history });
+export const enableRoomEncryption = (roomId: string) => invoke<void>("enable_room_encryption", { roomId });
+export const setNotifyMode = (roomId: string, mode: "all" | "mentions" | "mute" | "default") =>
+  invoke<void>("set_notify_mode", { roomId, mode });
+export const reportRoom = (roomId: string, reason: string) => invoke<void>("report_room", { roomId, reason });
+export const addToSpace = (spaceId: string, roomId: string) => invoke<void>("add_to_space", { spaceId, roomId });
+export const removeFromSpace = (spaceId: string, roomId: string) =>
+  invoke<void>("remove_from_space", { spaceId, roomId });
+export const setSuggested = (spaceId: string, roomId: string, suggested: boolean) =>
+  invoke<void>("set_suggested", { spaceId, roomId, suggested });
+export const ownProfile = () => invoke<UserResult>("own_profile");
+export const setDisplayName = (name: string) => invoke<void>("set_display_name", { name });
+export const setOwnAvatar = (image: string | null, mime = "image/jpeg") => invoke<void>("set_own_avatar", { image, mime });
+export const userProfile = (userId: string) => invoke<UserResult>("user_profile", { userId });
+export const devices = () => invoke<DeviceInfo[]>("devices");
+export const renameDevice = (deviceId: string, name: string) => invoke<void>("rename_device", { deviceId, name });
+/** The account page: "profile", "devices", "sign_out:<device>", "deactivate", "reset_identity". */
+export const accountUrl = (action: string) => invoke<string>("account_url", { action });
+export const securityStatus = () => invoke<SecurityStatus>("security_status");
+export const newRecoveryKey = () => invoke<string>("new_recovery_key");
+export const ignoredUsers = () => invoke<UserResult[]>("ignored_users");
+export const setIgnored = (userId: string, ignored: boolean) => invoke<void>("set_ignored", { userId, ignored });
+export const notificationRules = () => invoke<NotificationRules>("notification_rules");
+export const setNotificationRule = (rule: "room_mentions" | "invites", enabled: boolean) =>
+  invoke<void>("set_notification_rule", { rule, enabled });
+export const setKeyword = (keyword: string, add: boolean) => invoke<void>("set_keyword", { keyword, add });
+export const appVersion = () => getVersion();

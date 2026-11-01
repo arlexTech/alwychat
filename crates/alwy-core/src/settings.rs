@@ -32,6 +32,11 @@ pub struct Settings {
     pub app_lock_biometric: bool,
     /// Android: blank in the app switcher, no screenshots.
     pub hide_in_switcher: bool,
+    /// Enter sends (Shift+Enter: new line); off: Enter adds a line, Ctrl+Enter sends.
+    /// Keyboards (desktop) only: on touch screens the send button sends.
+    pub enter_sends: bool,
+    /// Text size, in percent of the default.
+    pub text_scale: u16,
 }
 
 impl Default for Settings {
@@ -47,6 +52,8 @@ impl Default for Settings {
             app_lock_after_s: 60,
             app_lock_biometric: true,
             hide_in_switcher: false,
+            enter_sends: true,
+            text_scale: 100,
         }
     }
 }

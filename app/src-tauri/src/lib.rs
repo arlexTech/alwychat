@@ -173,6 +173,337 @@ async fn join_room(
     core.join_room(&room_id, &via).await
 }
 
+// ---- Managing chats, spaces and the account (alwy_core::manage) ----
+
+#[tauri::command]
+async fn invite_info(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<alwy_core::manage::InviteInfo> {
+    core.invite_info(&room_id).await
+}
+
+#[tauri::command]
+async fn accept_invite(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<()> {
+    core.accept_invite(&room_id).await
+}
+
+#[tauri::command]
+async fn leave_room(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<()> {
+    core.leave_room(&room_id).await
+}
+
+#[tauri::command]
+async fn search_users(
+    core: State<'_, AppCore>,
+    term: String,
+) -> alwy_core::Result<Vec<alwy_core::manage::UserResult>> {
+    core.search_users(&term).await
+}
+
+#[tauri::command]
+async fn open_dm(core: State<'_, AppCore>, user_id: String) -> alwy_core::Result<String> {
+    core.open_dm(&user_id).await
+}
+
+#[tauri::command]
+async fn create_room(
+    core: State<'_, AppCore>,
+    room: alwy_core::manage::NewRoom,
+) -> alwy_core::Result<String> {
+    core.create_room(room).await
+}
+
+#[tauri::command]
+async fn join_address(core: State<'_, AppCore>, address: String) -> alwy_core::Result<String> {
+    core.join_address(&address).await
+}
+
+#[tauri::command]
+async fn space_rooms_joined(
+    core: State<'_, AppCore>,
+    space_id: String,
+) -> alwy_core::Result<Vec<String>> {
+    core.space_rooms_joined(&space_id).await
+}
+
+#[tauri::command]
+async fn members(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Vec<alwy_core::manage::MemberInfo>> {
+    core.members(&room_id).await
+}
+
+#[tauri::command]
+async fn invite_user(
+    core: State<'_, AppCore>,
+    room_id: String,
+    user_id: String,
+) -> alwy_core::Result<()> {
+    core.invite_user(&room_id, &user_id).await
+}
+
+#[tauri::command]
+async fn moderate(
+    core: State<'_, AppCore>,
+    room_id: String,
+    user_id: String,
+    action: String,
+    reason: Option<String>,
+) -> alwy_core::Result<()> {
+    core.moderate(&room_id, &user_id, &action, reason.as_deref())
+        .await
+}
+
+#[tauri::command]
+async fn set_user_power(
+    core: State<'_, AppCore>,
+    room_id: String,
+    user_id: String,
+    power: i64,
+) -> alwy_core::Result<()> {
+    core.set_user_power(&room_id, &user_id, power).await
+}
+
+#[tauri::command]
+async fn set_permission(
+    core: State<'_, AppCore>,
+    room_id: String,
+    key: String,
+    power: i64,
+) -> alwy_core::Result<()> {
+    core.set_permission(&room_id, &key, power).await
+}
+
+#[tauri::command]
+async fn room_details(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<alwy_core::manage::RoomDetails> {
+    core.room_details(&room_id).await
+}
+
+#[tauri::command]
+async fn set_room_name(
+    core: State<'_, AppCore>,
+    room_id: String,
+    name: String,
+) -> alwy_core::Result<()> {
+    core.set_room_name(&room_id, &name).await
+}
+
+#[tauri::command]
+async fn set_room_topic(
+    core: State<'_, AppCore>,
+    room_id: String,
+    topic: String,
+) -> alwy_core::Result<()> {
+    core.set_room_topic(&room_id, &topic).await
+}
+
+#[tauri::command]
+async fn set_join_rule(
+    core: State<'_, AppCore>,
+    room_id: String,
+    rule: String,
+    spaces: Vec<String>,
+) -> alwy_core::Result<()> {
+    core.set_join_rule(&room_id, &rule, &spaces).await
+}
+
+#[tauri::command]
+async fn set_history_visibility(
+    core: State<'_, AppCore>,
+    room_id: String,
+    history: String,
+) -> alwy_core::Result<()> {
+    core.set_history_visibility(&room_id, &history).await
+}
+
+#[tauri::command]
+async fn enable_room_encryption(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<()> {
+    core.enable_room_encryption(&room_id).await
+}
+
+#[tauri::command]
+async fn set_notify_mode(
+    core: State<'_, AppCore>,
+    room_id: String,
+    mode: String,
+) -> alwy_core::Result<()> {
+    core.set_notify_mode(&room_id, &mode).await
+}
+
+#[tauri::command]
+async fn report_room(
+    core: State<'_, AppCore>,
+    room_id: String,
+    reason: String,
+) -> alwy_core::Result<()> {
+    core.report_room(&room_id, &reason).await
+}
+
+#[tauri::command]
+async fn add_to_space(
+    core: State<'_, AppCore>,
+    space_id: String,
+    room_id: String,
+) -> alwy_core::Result<()> {
+    core.add_to_space(&space_id, &room_id).await
+}
+
+#[tauri::command]
+async fn remove_from_space(
+    core: State<'_, AppCore>,
+    space_id: String,
+    room_id: String,
+) -> alwy_core::Result<()> {
+    core.remove_from_space(&space_id, &room_id).await
+}
+
+#[tauri::command]
+async fn set_suggested(
+    core: State<'_, AppCore>,
+    space_id: String,
+    room_id: String,
+    suggested: bool,
+) -> alwy_core::Result<()> {
+    core.set_suggested(&space_id, &room_id, suggested).await
+}
+
+#[tauri::command]
+async fn own_profile(core: State<'_, AppCore>) -> alwy_core::Result<alwy_core::manage::UserResult> {
+    core.own_profile().await
+}
+
+#[tauri::command]
+async fn set_display_name(core: State<'_, AppCore>, name: String) -> alwy_core::Result<()> {
+    core.set_display_name(&name).await
+}
+
+#[tauri::command]
+async fn user_profile(
+    core: State<'_, AppCore>,
+    user_id: String,
+) -> alwy_core::Result<alwy_core::manage::UserResult> {
+    core.user_profile(&user_id).await
+}
+
+#[tauri::command]
+async fn devices(
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<Vec<alwy_core::manage::DeviceInfo>> {
+    core.devices().await
+}
+
+#[tauri::command]
+async fn rename_device(
+    core: State<'_, AppCore>,
+    device_id: String,
+    name: String,
+) -> alwy_core::Result<()> {
+    core.rename_device(&device_id, &name).await
+}
+
+#[tauri::command]
+async fn account_url(core: State<'_, AppCore>, action: String) -> alwy_core::Result<String> {
+    core.account_url(&action).await
+}
+
+#[tauri::command]
+async fn security_status(
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<alwy_core::manage::SecurityStatus> {
+    core.security_status().await
+}
+
+#[tauri::command]
+async fn new_recovery_key(core: State<'_, AppCore>) -> alwy_core::Result<String> {
+    core.new_recovery_key().await
+}
+
+#[tauri::command]
+async fn ignored_users(
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<Vec<alwy_core::manage::UserResult>> {
+    core.ignored_users().await
+}
+
+#[tauri::command]
+async fn set_ignored(
+    core: State<'_, AppCore>,
+    user_id: String,
+    ignored: bool,
+) -> alwy_core::Result<()> {
+    core.set_ignored(&user_id, ignored).await
+}
+
+#[tauri::command]
+async fn notification_rules(
+    core: State<'_, AppCore>,
+) -> alwy_core::Result<alwy_core::manage::NotificationRules> {
+    core.notification_rules().await
+}
+
+#[tauri::command]
+async fn set_notification_rule(
+    core: State<'_, AppCore>,
+    rule: String,
+    enabled: bool,
+) -> alwy_core::Result<()> {
+    core.set_notification_rule(&rule, enabled).await
+}
+
+#[tauri::command]
+async fn set_keyword(
+    core: State<'_, AppCore>,
+    keyword: String,
+    add: bool,
+) -> alwy_core::Result<()> {
+    core.set_keyword(&keyword, add).await
+}
+
+fn decode_image(image: Option<String>, mime: String) -> Result<Option<(Vec<u8>, String)>, String> {
+    use base64::Engine;
+    image
+        .map(|data| {
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map(|bytes| (bytes, mime))
+                .map_err(|e| e.to_string())
+        })
+        .transpose()
+}
+
+/// A chat's or space's photo (base64, small: resized in the webview); `None` removes it.
+#[tauri::command]
+async fn set_room_avatar(
+    core: State<'_, AppCore>,
+    room_id: String,
+    image: Option<String>,
+    mime: String,
+) -> Result<(), String> {
+    core.set_room_avatar(&room_id, decode_image(image, mime)?)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Our photo (base64); `None` removes it.
+#[tauri::command]
+async fn set_own_avatar(
+    core: State<'_, AppCore>,
+    image: Option<String>,
+    mime: String,
+) -> Result<(), String> {
+    core.set_own_avatar(decode_image(image, mime)?)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn can_add_to_space(core: State<'_, AppCore>, space_id: String) -> alwy_core::Result<bool> {
     core.can_add_to_space(&space_id).await
@@ -1296,6 +1627,45 @@ pub fn run() {
             close_space,
             join_room,
             can_add_to_space,
+            invite_info,
+            accept_invite,
+            leave_room,
+            search_users,
+            open_dm,
+            create_room,
+            join_address,
+            space_rooms_joined,
+            members,
+            invite_user,
+            moderate,
+            set_user_power,
+            set_permission,
+            room_details,
+            set_room_name,
+            set_room_topic,
+            set_join_rule,
+            set_history_visibility,
+            enable_room_encryption,
+            set_notify_mode,
+            report_room,
+            add_to_space,
+            remove_from_space,
+            set_suggested,
+            own_profile,
+            set_display_name,
+            user_profile,
+            devices,
+            rename_device,
+            account_url,
+            security_status,
+            new_recovery_key,
+            ignored_users,
+            set_ignored,
+            notification_rules,
+            set_notification_rule,
+            set_keyword,
+            set_room_avatar,
+            set_own_avatar,
             create_voice_channel,
             chat_list_prefs,
             set_chat_list_prefs,

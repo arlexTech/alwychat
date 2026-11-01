@@ -17,8 +17,8 @@ use matrix_sdk::{
 use matrix_sdk_ui::room_list_service::{
     RoomListItem, RoomListService,
     filters::{
-        new_filter_all, new_filter_deduplicate_versions, new_filter_non_left, new_filter_not,
-        new_filter_space,
+        new_filter_all, new_filter_any, new_filter_deduplicate_versions, new_filter_invite,
+        new_filter_non_left, new_filter_not, new_filter_space,
     },
 };
 use serde::Serialize;
@@ -44,6 +44,8 @@ pub struct RoomSummary {
     pub in_call: Vec<CallMember>,
     /// A voice channel (Element Call "video room"): opening it joins the call.
     pub is_voice: bool,
+    /// Only for invites (joined spaces aren't in the chat list).
+    pub is_space: bool,
     pub is_invite: bool,
     pub is_favourite: bool,
     /// Tagged low priority: shown under "Archived" (Element: "Low priority").
@@ -112,7 +114,11 @@ pub(crate) async fn stream_chat_list(
     let (stream, controller) = all_rooms.entries_with_dynamic_adapters(PAGE_SIZE);
     controller.set_filter(Box::new(new_filter_all(vec![
         Box::new(new_filter_non_left()),
-        Box::new(new_filter_not(Box::new(new_filter_space()))),
+        // Spaces live in the Spaces tab, but their invites are answered from the chat list.
+        Box::new(new_filter_any(vec![
+            Box::new(new_filter_not(Box::new(new_filter_space()))),
+            Box::new(new_filter_invite()),
+        ])),
         Box::new(new_filter_deduplicate_versions()),
     ])));
 
@@ -220,6 +226,7 @@ async fn summarize(room: &Room) -> RoomSummary {
             .flatten(),
         in_call: call_members(room).await,
         is_voice: is_voice_type(room.room_type().as_ref()),
+        is_space: room.is_space(),
         is_invite: room.state() == RoomState::Invited,
         is_favourite: room.is_favourite(),
         is_archived: room.is_low_priority(),
@@ -411,7 +418,9 @@ mod tests {
 
     #[test]
     fn voice_room_types() {
-        assert!(is_voice_type(Some(&RoomType::from("org.matrix.msc3417.call"))));
+        assert!(is_voice_type(Some(&RoomType::from(
+            "org.matrix.msc3417.call"
+        ))));
         assert!(is_voice_type(Some(&RoomType::from("io.element.video"))));
         assert!(!is_voice_type(Some(&RoomType::Space)));
         assert!(!is_voice_type(None));

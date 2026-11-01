@@ -53,6 +53,11 @@
   import { themeById } from "$lib/themes";
   import EncryptionSheet from "./EncryptionSheet.svelte";
   import SettingsPage from "./SettingsPage.svelte";
+  import SquarePen from "@lucide/svelte/icons/square-pen";
+  import InvitePane from "./InvitePane.svelte";
+  import NewChatPage from "./NewChatPage.svelte";
+  import { me } from "$lib/stores/me.svelte";
+  import { nav } from "$lib/stores/nav.svelte";
 
   let { account, onSignOut }: { account: Account; onSignOut: () => void } = $props();
 
@@ -104,6 +109,10 @@
   let selectedId = $state<string | null>(null);
   let menuOpen = $state(false);
   let settingsOpen = $state(false);
+  let newChatOpen = $state(false);
+  $effect(() => {
+    if (newChatOpen) return onBack(() => (newChatOpen = false));
+  });
   /** Right-click menu on a chat row. */
   let rowMenu = $state<{ room: RoomSummary; x: number; y: number } | null>(null);
   let actionError = $state<string | null>(null);
@@ -131,7 +140,7 @@
     if (rowMenu) return onBack(() => (rowMenu = null));
   });
 
-  const myName = $derived(account.display_name ?? account.user_id.slice(1).split(":")[0]);
+  const myName = $derived(me.profile?.name ?? account.display_name ?? account.user_id.slice(1).split(":")[0]);
   const selected = $derived(chatList.rooms.find((r) => r.id === selectedId) ?? null);
 
   // Archived chats only appear under "Archived" (and in search).
@@ -206,6 +215,11 @@
 
   onMount(() => {
     chatList.start();
+    void me.refresh();
+    nav.attach(
+      (id) => ((selectedId = id), (newChatOpen = false), (settingsOpen = false)),
+      () => ((tab = "spaces"), (selectedId = null), (newChatOpen = false)),
+    );
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
     presence.start();
     call.listen();
@@ -244,9 +258,10 @@
   <aside class="list-pane">
     <header>
       <button class="me" onclick={() => (menuOpen = !menuOpen)} aria-label="Account">
-        <Avatar name={myName} size={36} />
+        <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
       <h1>{tab === "chats" ? "Chats" : "Spaces"}</h1>
+      <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label="New chat" title="New chat"><SquarePen size={21} /></button>
       {#if menuOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="outside" onclick={() => (menuOpen = false)}></div>
@@ -349,7 +364,16 @@
   </aside>
 
   <section class="chat-pane" style:--accent-a={theme.a} style:--accent-b={theme.b}>
-    {#if selected}
+    {#if selected?.is_invite}
+      <InvitePane
+        room={selected}
+        onBack={closeChat}
+        onAccepted={() => {
+          if (selected?.is_space) nav.openSpace(selected.id);
+        }}
+        onDeclined={closeChat}
+      />
+    {:else if selected}
       <ChatView room={selected} onBack={closeChat} />
     {:else}
       <div class="placeholder">Select a chat to start messaging</div>
@@ -361,8 +385,15 @@
   <EncryptionSheet />
 {/if}
 
+{#if newChatOpen}
+  <NewChatPage
+    onClose={() => (newChatOpen = false)}
+    onOpen={(id, isSpace) => (isSpace ? nav.openSpace(id) : nav.openChat(id))}
+  />
+{/if}
+
 {#if settingsOpen}
-  <SettingsPage userId={account.user_id} onClose={() => (settingsOpen = false)} />
+  <SettingsPage userId={account.user_id} onClose={() => (settingsOpen = false)} {onSignOut} />
 {/if}
 
 {#if rowMenu}
@@ -428,9 +459,24 @@
     padding: 16px 16px 8px;
   }
   h1 {
+    flex: 1;
     margin: 0;
     font-size: 1.6rem;
     font-weight: 700;
+  }
+  .new-chat {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .new-chat:hover {
+    background: var(--surface-hover);
   }
   .me {
     padding: 0;
