@@ -3,6 +3,7 @@
   import type { RoomSummary } from "$lib/backend";
   import type { Snippet } from "svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
+  import { saved } from "$lib/stores/saved.svelte";
   import Avatar from "./Avatar.svelte";
   import Page from "./Page.svelte";
 
@@ -20,8 +21,12 @@
   } = $props();
 
   let query = $state("");
+  // Saved messages first: keeping something for later is the most common forward.
   const rooms = $derived(
-    chatList.rooms.filter((r) => !r.is_invite && !r.is_space).filter((r) => !query.trim() || r.name.toLowerCase().includes(query.trim().toLowerCase())),
+    chatList.rooms
+      .filter((r) => !r.is_invite && !r.is_space)
+      .filter((r) => !query.trim() || r.name.toLowerCase().includes(query.trim().toLowerCase()))
+      .sort((a, b) => Number(saved.is(b.id)) - Number(saved.is(a.id))),
   );
 </script>
 
@@ -32,7 +37,7 @@
     {#each rooms as r (r.id)}
       <li>
         <button onclick={() => onPick(r)}>
-          <Avatar name={r.name} mxc={r.avatar} size={40} />
+          <Avatar name={r.name} mxc={r.avatar} size={40} saved={saved.is(r.id)} />
           <span>{r.name}</span>
           <Send size={18} />
         </button>

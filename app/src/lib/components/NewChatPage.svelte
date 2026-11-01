@@ -1,10 +1,12 @@
 <script lang="ts">
+  import Bookmark from "@lucide/svelte/icons/bookmark";
   import Hash from "@lucide/svelte/icons/hash";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Users from "@lucide/svelte/icons/users";
   import { onBack } from "$lib/back.svelte";
   import { joinAddress, openDm, type UserResult } from "$lib/backend";
   import { chatList } from "$lib/stores/chatList.svelte";
+  import { saved } from "$lib/stores/saved.svelte";
   import CreateRoomPage from "./CreateRoomPage.svelte";
   import Page from "./Page.svelte";
   import UserPicker from "./UserPicker.svelte";
@@ -43,6 +45,20 @@
     }
   }
 
+  async function openSaved() {
+    busy = true;
+    error = null;
+    try {
+      const id = await saved.open();
+      await waitFor(id);
+      onOpen(id);
+    } catch (e) {
+      error = `Couldn't open Saved messages: ${e}`;
+    } finally {
+      busy = false;
+    }
+  }
+
   async function join() {
     if (!address.trim()) return;
     busy = true;
@@ -66,6 +82,10 @@
   <button class="m-row" onclick={() => (creating = "space")}>
     <span class="m-icon"><LayoutGrid size={20} /></span
     ><span class="m-text"><strong>New space</strong><small>Group chats and voice channels together</small></span>
+  </button>
+  <button class="m-row" onclick={openSaved} disabled={busy}>
+    <span class="m-icon"><Bookmark size={20} /></span
+    ><span class="m-text"><strong>Saved messages</strong><small>Notes and things to keep, only you see them</small></span>
   </button>
   <button class="m-row" onclick={() => (joining = !joining)}>
     <span class="m-icon"><Hash size={20} /></span

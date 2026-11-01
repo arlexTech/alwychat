@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Bookmark from "@lucide/svelte/icons/bookmark";
   import { mediaUrl } from "$lib/media";
   import { initials } from "$lib/format";
 
@@ -7,7 +8,16 @@
     mxc = null,
     size = 48,
     square = false,
-  }: { name: string; mxc?: string | null; size?: number; /** Spaces: rounded square. */ square?: boolean } = $props();
+    saved = false,
+  }: {
+    name: string;
+    mxc?: string | null;
+    size?: number;
+    /** Spaces: rounded square. */
+    square?: boolean;
+    /** Our "Saved messages" chat: a bookmark instead of initials. */
+    saved?: boolean;
+  } = $props();
 
   let failed = $state(false);
   const src = $derived(failed ? null : mediaUrl(mxc, size));
@@ -24,12 +34,15 @@
 <div
   class="avatar"
   class:square
+  class:saved
   style:width="{size}px"
   style:height="{size}px"
   style:font-size="{size * 0.4}px"
   style:--h={hue}
 >
-  {#if src}
+  {#if saved && !src}
+    <Bookmark size={size * 0.46} fill="currentColor" />
+  {:else if src}
     <img {src} alt="" loading="lazy" decoding="async" onerror={() => (failed = true)} />
   {:else}
     {initials(name)}
@@ -37,6 +50,10 @@
 </div>
 
 <style>
+  .avatar.saved {
+    background: var(--accent);
+    color: #fff;
+  }
   .avatar.square,
   .avatar.square img {
     border-radius: 28%;

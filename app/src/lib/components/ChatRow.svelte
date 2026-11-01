@@ -11,6 +11,7 @@
   import { presence } from "$lib/stores/presence.svelte";
   import { profiles } from "$lib/stores/profiles.svelte";
   import Avatar from "./Avatar.svelte";
+  import { saved } from "$lib/stores/saved.svelte";
 
   let {
     room,
@@ -37,7 +38,7 @@
 
 <button class="row" class:selected class:unread class:muted={room.is_muted} data-room={room.id} {onclick} {oncontextmenu}>
   <span class="avatar">
-    <Avatar name={room.name} mxc={room.avatar} size={52} />
+    <Avatar name={room.name} mxc={room.avatar} size={52} saved={saved.is(room.id)} />
     {#if room.is_dm && presence.online(room.dm_user)}<span class="online" title="Online"></span>{/if}
   </span>
   <div class="body">

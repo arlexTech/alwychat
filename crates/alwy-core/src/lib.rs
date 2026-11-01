@@ -21,6 +21,7 @@ pub mod profile;
 pub mod push;
 pub mod rooms;
 pub mod rtc;
+pub mod saved;
 pub mod search;
 pub mod session;
 pub mod settings;

@@ -75,6 +75,7 @@
   import SharedMediaPage from "./SharedMediaPage.svelte";
   import { encryption } from "$lib/stores/encryption.svelte";
   import Avatar from "./Avatar.svelte";
+  import { saved } from "$lib/stores/saved.svelte";
   import MediaViewer from "./MediaViewer.svelte";
   import MentionSuggestions from "./MentionSuggestions.svelte";
   import { MentionAutocomplete } from "$lib/mentions.svelte";
@@ -1073,7 +1074,7 @@
   </span>
   {:else}
   <button class="who" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings">
-    <Avatar name={room.name} mxc={room.avatar} size={40} />
+    <Avatar name={room.name} mxc={room.avatar} size={40} saved={saved.is(room.id)} />
     <span class="title">
       <strong>{title}</strong>
       {#if status}
@@ -1215,6 +1216,7 @@
             onPin={(pin) => setPin(row.msg.item_id, pin)}
             roomId={target}
             onThread={thread ? undefined : () => (threadRoot = row.msg.item_id)}
+            onForward={actionsFor(row.msg, row.album).forward}
             onLongPress={() => (actionFor = { msg: row.msg, album: row.album })}
           />
         </div>

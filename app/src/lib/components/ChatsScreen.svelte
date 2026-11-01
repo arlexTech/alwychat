@@ -62,6 +62,7 @@
   import { me } from "$lib/stores/me.svelte";
   import { nav } from "$lib/stores/nav.svelte";
   import { share } from "$lib/stores/share.svelte";
+  import { saved } from "$lib/stores/saved.svelte";
   import { connection } from "$lib/stores/connection.svelte";
   import { liveLocation } from "$lib/stores/liveLocation.svelte";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
@@ -234,6 +235,7 @@
     presence.start();
     call.listen();
     spaces.start();
+    saved.start();
     drafts.start();
     startSearchBackfill().catch(() => {});
     messageSearch.start();

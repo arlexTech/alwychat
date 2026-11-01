@@ -4,6 +4,7 @@
   import Pin from "@lucide/svelte/icons/pin";
   import PinOff from "@lucide/svelte/icons/pin-off";
   import Pencil from "@lucide/svelte/icons/pencil";
+  import Forward from "@lucide/svelte/icons/forward";
   import History from "@lucide/svelte/icons/history";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SmilePlus from "@lucide/svelte/icons/smile-plus";
@@ -44,6 +45,7 @@
     roomId,
     onLongPress,
     onThread,
+    onForward,
     album = null,
   }: {
     msg: MessageEntry;
@@ -70,6 +72,8 @@
     onLongPress?: () => void;
     /** Open the thread on this message (absent inside a thread). */
     onThread?: () => void;
+    /** Forward to another chat (absent when the message can't be forwarded). */
+    onForward?: () => void;
     /** Whether it's pinned; null when we can't pin in this chat. */
     pinned?: boolean | null;
     onPin?: (pin: boolean) => void;
@@ -173,7 +177,7 @@
   const albumSize = $derived(album && album.length > 1 ? album.length : 0);
   const canSaveToGallery = $derived(albumSize > 0 || ((c.kind === "image" || c.kind === "video") && !muted));
   const hasMenu = $derived(
-    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || (!!onThread && remote && msg.can_reply),
+    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || !!onForward || (!!onThread && remote && msg.can_reply),
   );
 
   // Right-click (desktop) or long-press (touch) opens the same menu as ⋯.
@@ -442,6 +446,7 @@
           {#if onThread && remote && msg.can_reply}
             <button onclick={() => pick(onThread)}><MessagesSquare size={16} />Reply in thread</button>
           {/if}
+          {#if onForward}<button onclick={() => pick(onForward)}><Forward size={16} />Forward</button>{/if}
           {#if msg.can_edit}<button onclick={() => pick(onEdit)}><Pencil size={16} />Edit</button>{/if}
           {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}><History size={16} />Edit history</button>{/if}
           {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}><Trash2 size={16} />Delete</button>{/if}

@@ -833,6 +833,10 @@ export const acceptInvite = (roomId: string) => invoke<void>("accept_invite", { 
 export const leaveRoom = (roomId: string) => invoke<void>("leave_room", { roomId });
 export const searchUsers = (term: string) => invoke<UserResult[]>("search_users", { term });
 export const openDm = (userId: string) => invoke<string>("open_dm", { userId });
+/** Our "Saved messages" chat (only us in it), if it exists. */
+export const savedMessagesId = () => invoke<string | null>("saved_messages_id");
+/** Our "Saved messages" chat, created on first use. */
+export const openSavedMessages = () => invoke<string>("open_saved_messages");
 export const createRoom = (room: NewRoom) => invoke<string>("create_room", { room });
 export const joinAddress = (address: string) => invoke<string>("join_address", { address });
 export const spaceRoomsJoined = (spaceId: string) => invoke<string[]>("space_rooms_joined", { spaceId });

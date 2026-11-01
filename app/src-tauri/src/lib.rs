@@ -613,6 +613,16 @@ async fn set_chat_list_prefs(
     core.set_chat_list_prefs(prefs).await
 }
 
+#[tauri::command]
+async fn saved_messages_id(core: State<'_, AppCore>) -> alwy_core::Result<Option<String>> {
+    core.saved_messages_id().await
+}
+
+#[tauri::command]
+async fn open_saved_messages(core: State<'_, AppCore>) -> alwy_core::Result<String> {
+    core.open_saved_messages().await
+}
+
 /// Start indexing older messages for search (once per session).
 #[tauri::command]
 async fn start_search_backfill(core: State<'_, AppCore>) -> alwy_core::Result<()> {
@@ -1887,6 +1897,8 @@ pub fn run() {
             create_voice_channel,
             chat_list_prefs,
             set_chat_list_prefs,
+            saved_messages_id,
+            open_saved_messages,
             load_newer,
             search_messages,
             shared_media,
