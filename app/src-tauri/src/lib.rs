@@ -1800,7 +1800,7 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol("media", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn(async move {
-                responder.respond(serve_media(&app, &request).await);
+                responder.respond(harden(serve_media(&app, &request).await));
             });
         })
         .invoke_handler(tauri::generate_handler![
@@ -2101,6 +2101,34 @@ async fn serve_media(
 }
 
 /// `media://localhost/_picked/<file name>`: preview of a file waiting to be sent.
+/// Media bytes come from other people, with the type they declared: never let the webview
+/// guess another type, and never let a response act as a page (no scripts, no forms).
+fn harden(mut response: http::Response<Vec<u8>>) -> http::Response<Vec<u8>> {
+    let headers = response.headers_mut();
+    headers.insert(
+        http::header::X_CONTENT_TYPE_OPTIONS,
+        http::HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        http::header::CONTENT_SECURITY_POLICY,
+        http::HeaderValue::from_static("default-src 'none'; sandbox"),
+    );
+    // Scripting content types are served as plain bytes.
+    if let Some(kind) = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
+        let kind = kind.to_ascii_lowercase();
+        if kind.contains("html") || kind.contains("xml") || kind.contains("javascript") {
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("application/octet-stream"),
+            );
+        }
+    }
+    response
+}
+
 fn serve_picked(
     app: &tauri::AppHandle,
     request: &http::Request<Vec<u8>>,

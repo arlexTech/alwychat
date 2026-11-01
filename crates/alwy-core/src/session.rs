@@ -65,8 +65,9 @@ pub struct Account {
     pub display_name: Option<String>,
 }
 
-/// What we persist between launches.
-// TODO: move tokens and store passphrase to the OS keychain before the first release.
+/// What we persist between launches. On desktop the secrets (tokens, store passphrase) go to
+/// the OS keychain and are blanked in the file (`in_keychain`); if the keychain isn't
+/// available they stay in the file (0600), as on Android (app-private storage).
 #[derive(Serialize, Deserialize)]
 struct StoredSession {
     homeserver: Url,
@@ -76,6 +77,67 @@ struct StoredSession {
     /// Folder name inside the data dir.
     #[serde(default = "legacy_store_dir")]
     store_dir: String,
+    #[serde(default)]
+    in_keychain: bool,
+}
+
+/// What the keychain holds for a session.
+#[derive(Serialize, Deserialize)]
+struct Secrets {
+    tokens: matrix_sdk::SessionTokens,
+    store_passphrase: String,
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod keychain {
+    use super::Secrets;
+
+    const SERVICE: &str = "com.alwy.chat";
+
+    fn entry(account: &str) -> keyring::Result<keyring::Entry> {
+        keyring::Entry::new(SERVICE, account)
+    }
+
+    pub(super) fn save(account: &str, secrets: &Secrets) -> bool {
+        let json = serde_json::to_string(secrets).expect("serializable");
+        match entry(account).and_then(|e| e.set_password(&json)) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("keychain unavailable, keeping the session in its file: {e}");
+                false
+            }
+        }
+    }
+
+    pub(super) fn load(account: &str) -> Result<Secrets, String> {
+        let json = entry(account)
+            .and_then(|e| e.get_password())
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(&json).map_err(|e| e.to_string())
+    }
+
+    pub(super) fn delete(account: &str) {
+        if let Ok(e) = entry(account) {
+            let _ = e.delete_credential();
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+mod keychain {
+    use super::Secrets;
+    pub(super) fn save(_: &str, _: &Secrets) -> bool {
+        false
+    }
+    pub(super) fn load(_: &str) -> Result<Secrets, String> {
+        Err("no keychain on this platform".into())
+    }
+    pub(super) fn delete(_: &str) {}
+}
+
+/// The keychain entry of a session: one per account and device.
+fn keychain_account(user: &UserSession) -> String {
+    format!("{}/{}", user.meta.user_id, user.meta.device_id)
 }
 
 fn legacy_store_dir() -> String {
@@ -179,11 +241,25 @@ impl Core {
             return Ok(Some(account(&client).await));
         }
         let path = self.data_dir.join(SESSION_FILE);
-        let stored: StoredSession = match tokio::fs::read(&path).await {
+        let mut stored: StoredSession = match tokio::fs::read(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
+        if stored.in_keychain {
+            let account = keychain_account(&stored.user);
+            // Never treat this as signed out: the store and session are fine, only locked.
+            let secrets = tokio::task::spawn_blocking(move || keychain::load(&account))
+                .await
+                .map_err(|e| Error::Keychain(e.to_string()))?
+                .map_err(|e| {
+                    Error::Keychain(format!(
+                        "couldn't read the session from the keychain ({e}); unlock your keyring and restart"
+                    ))
+                })?;
+            stored.user.tokens = secrets.tokens;
+            stored.store_passphrase = secrets.store_passphrase;
+        }
 
         // Restoring a session onto a missing store would recreate this device with new keys
         // under its old device ID, breaking encryption for it. Treat it as signed out instead.
@@ -569,6 +645,13 @@ impl Core {
                 _ => {}
             }
         }
+        // The previous session's keychain entry.
+        if let Ok(bytes) = tokio::fs::read(self.data_dir.join(SESSION_FILE)).await
+            && let Ok(old) = serde_json::from_slice::<StoredSession>(&bytes)
+        {
+            let account = keychain_account(&old.user);
+            let _ = tokio::task::spawn_blocking(move || keychain::delete(&account)).await;
+        }
         // A new sign-in starts without the previous person's app lock.
         self.set_app_lock(None).await?;
         match tokio::fs::remove_file(self.data_dir.join(SESSION_FILE)).await {
@@ -626,13 +709,26 @@ fn persist(path: &Path, client: &Client, passphrase: &str, store_dir: &str) -> s
         warn!("no OAuth session to persist");
         return Ok(());
     };
-    let stored = StoredSession {
+    let mut stored = StoredSession {
         homeserver: client.homeserver(),
         client_id: oauth.client_id.as_str().to_owned(),
         user: oauth.user,
         store_passphrase: passphrase.to_owned(),
         store_dir: store_dir.to_owned(),
+        in_keychain: false,
     };
+    let secrets = Secrets {
+        tokens: stored.user.tokens.clone(),
+        store_passphrase: passphrase.to_owned(),
+    };
+    if keychain::save(&keychain_account(&stored.user), &secrets) {
+        stored.in_keychain = true;
+        stored.store_passphrase = String::new();
+        stored.user.tokens = matrix_sdk::SessionTokens {
+            access_token: String::new(),
+            refresh_token: None,
+        };
+    }
     write_private(path, &serde_json::to_vec(&stored).expect("serializable")).inspect_err(|e| {
         warn!("couldn't save session: {e}");
     })

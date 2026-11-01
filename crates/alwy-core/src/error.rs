@@ -36,6 +36,8 @@ pub enum Error {
     Poll(String),
     #[error("app lock: {0}")]
     AppLock(String),
+    #[error("system keychain: {0}")]
+    Keychain(String),
     #[error("search: {0}")]
     Search(String),
     #[error("this chat isn't open")]
