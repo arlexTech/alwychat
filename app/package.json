@@ -11,7 +11,9 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
-    "build:web": "scripts/build-web.sh"
+    "build:web": "scripts/build-web.sh",
+    "dev:web": "scripts/dev-web.sh",
+    "build:wasm": "scripts/build-wasm.sh"
   },
   "license": "AGPL-3.0-or-later",
   "dependencies": {

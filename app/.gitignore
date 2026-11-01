@@ -12,3 +12,4 @@ vite.config.ts.timestamp-*
 # WebAssembly core for the web version (pnpm build:web)
 src/lib/backend/wasm/
 build-web/
+.dev-cert/
