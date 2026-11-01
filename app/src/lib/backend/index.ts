@@ -1,11 +1,11 @@
 // The only module allowed to call Tauri's invoke(). Everything else imports from here.
-import { getVersion, onBackButtonPress } from "@tauri-apps/api/app";
-import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { Channel, getVersion, invoke, isTauri, isWeb, listen, onBackButtonPress, openUrl, webLogin } from "./platform";
+import { eventMediaUrl } from "$lib/media";
 
-/** False when the UI is opened in a plain browser (e.g. localhost:1420): there is no Rust core there. */
-export const hasBackend = isTauri();
+/** False when the UI is opened in a plain browser without the WebAssembly core (e.g. `pnpm dev`). */
+export const hasBackend = isTauri || isWeb;
+/** The web version (core in the page as WebAssembly), not the app. */
+export { isWeb };
 
 export const isAndroid = /Android/.test(navigator.userAgent);
 
@@ -39,7 +39,8 @@ export interface Account {
 }
 
 export const restoreSession = () => invoke<Account | null>("restore_session");
-export const login = (server: string) => invoke<Account>("login", { server });
+export const login = (server: string) =>
+  isWeb ? (webLogin(server) as Promise<Account>) : invoke<Account>("login", { server });
 export const cancelLogin = () => invoke<void>("cancel_login");
 export const logout = () => invoke<void>("logout");
 /** Stop using a session the server ended, keeping local data (unlike logout). */
@@ -578,6 +579,7 @@ export async function sendFile(
 ) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const info = { filename: file.name || "file", mime: file.type || null, caption: meta.caption ?? null, gallery: meta.gallery ?? null };
+  if (isWeb) return invoke<void>("send_file", { roomId, file: info, bytes });
   return invoke<void>("send_file", bytes, {
     headers: { "x-room": encodeURIComponent(roomId), "x-file": encodeURIComponent(JSON.stringify(info)) },
   });
@@ -637,9 +639,21 @@ export const setChatMediaHd = (roomId: string, hd: boolean | null) =>
 /** Saves to ~/Pictures/AlwyChat (photos/videos) or Downloads; resolves to the file path. */
 /** Open a file message in another app, save it where the user picks (Android), or to Downloads. */
 export const fileAction = (media: string, action: "open" | "save_as" | "downloads") =>
-  invoke<string | null>("file_action", { media, action });
+  isWeb ? download(media) : invoke<string | null>("file_action", { media, action });
 export const saveMedia = (media: string, toGallery: boolean) =>
-  invoke<string>("save_media", { media, toGallery });
+  isWeb ? download(media) : invoke<string>("save_media", { media, toGallery });
+
+/** Web version: the browser downloads the (decrypted) file; resolves to where it goes. */
+async function download(media: string): Promise<string> {
+  const name = await invoke<string>("media_filename", { media }).catch(() => "file");
+  const response = await fetch(eventMediaUrl(media));
+  if (!response.ok) throw new Error(`download failed (${response.status})`);
+  const url = URL.createObjectURL(await response.blob());
+  const link = Object.assign(document.createElement("a"), { href: url, download: name || "file" });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return `Downloads/${name}`;
+}
 
 // ── Chat list actions ────────────────────────────────────────────────────────
 

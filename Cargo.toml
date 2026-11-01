@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/alwy-core", "app/src-tauri"]
+members = ["crates/alwy-core", "crates/alwy-web", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -49,3 +49,8 @@ debug = "line-tables-only"
 opt-level = 2
 # No debug info for dependencies: it made target/ grow past 30 GB.
 debug = false
+
+# The web version's WebAssembly: downloaded on every visit, so built for size.
+[profile.web]
+inherits = "release"
+opt-level = "z"

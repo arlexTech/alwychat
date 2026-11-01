@@ -38,8 +38,6 @@ pub(crate) struct EventMedia {
     pub source: MediaSource,
     pub thumbnail: Option<MediaSource>,
     pub mimetype: Option<String>,
-    /// For saving to disk (not in a browser, which downloads from the UI).
-    #[cfg_attr(target_family = "wasm", allow(dead_code))]
     pub filename: String,
 }
 
@@ -59,6 +57,11 @@ impl MediaRegistry {
 }
 
 impl crate::Core {
+    /// The file name a message's media was sent with (for downloads in a browser).
+    pub fn media_filename(&self, key: &str) -> Result<String> {
+        Ok(self.media.get(key)?.filename)
+    }
+
     /// Bytes and MIME type of a timeline message's media (decrypted, cached locally).
     /// `thumbnail` prefers the sender's thumbnail, else a server thumbnail for unencrypted media.
     pub async fn event_media(&self, key: &str, thumbnail: bool) -> Result<(Vec<u8>, String)> {

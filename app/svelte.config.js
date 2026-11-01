@@ -4,6 +4,7 @@
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 import adapter from "@sveltejs/adapter-static";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+import process from "node:process";
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -15,6 +16,9 @@ const config = {
   kit: {
     adapter: adapter({
       fallback: "index.html",
+      // The web version (scripts/build-web.sh) goes to its own folder.
+      pages: process.env.ALWY_WEB ? "build-web" : "build",
+      assets: process.env.ALWY_WEB ? "build-web" : "build",
     }),
   },
 };
