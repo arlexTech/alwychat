@@ -903,3 +903,5 @@ export const startLiveLocation = (roomId: string, durationMs: number, geoUri: st
 export const updateLiveLocation = (roomId: string, shareId: string, geoUri: string) =>
   invoke<void>("update_live_location", { roomId, shareId, geoUri });
 export const stopLiveLocation = (roomId: string) => invoke<void>("stop_live_location", { roomId });
+/** Send a message that failed again. */
+export const retrySend = (roomId: string, itemId: string) => invoke<void>("retry_send", { roomId, itemId });

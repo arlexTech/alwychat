@@ -553,6 +553,25 @@ impl crate::Core {
     }
 
     /// Delete (redact) a message for everyone.
+    /// Send a message that failed again (and resume the chat's queue, paused by the failure).
+    pub async fn retry_send(&self, room_id: &str, item_id: &str) -> Result<()> {
+        let timeline = self.timeline(room_id)?;
+        let TimelineEventItemId::TransactionId(txn) = parse_item_id(item_id)? else {
+            return Ok(()); // Already sent.
+        };
+        let handle = timeline
+            .items()
+            .await
+            .iter()
+            .filter_map(|item| item.as_event())
+            .find(|e| e.transaction_id() == Some(&txn))
+            .and_then(|e| e.local_echo_send_handle())
+            .ok_or(Error::UnknownEvent)?;
+        self.room(room_id)?.send_queue().set_enabled(true);
+        handle.unwedge().await.map_err(timeline_err)?;
+        Ok(())
+    }
+
     pub async fn delete_message(&self, room_id: &str, item_id: &str) -> Result<()> {
         let timeline = self.timeline(room_id)?;
         timeline

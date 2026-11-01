@@ -559,6 +559,15 @@ async fn stop_live_location(core: State<'_, AppCore>, room_id: String) -> alwy_c
 }
 
 #[tauri::command]
+async fn retry_send(
+    core: State<'_, AppCore>,
+    room_id: String,
+    item_id: String,
+) -> alwy_core::Result<()> {
+    core.retry_send(&room_id, &item_id).await
+}
+
+#[tauri::command]
 async fn can_add_to_space(core: State<'_, AppCore>, space_id: String) -> alwy_core::Result<bool> {
     core.can_add_to_space(&space_id).await
 }
@@ -1745,6 +1754,7 @@ pub fn run() {
             close_space,
             join_room,
             can_add_to_space,
+            retry_send,
             subscribe_connection,
             resume_sync,
             send_location,

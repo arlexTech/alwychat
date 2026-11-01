@@ -507,6 +507,7 @@ impl Core {
             room_list_service::State as ListState, sync_service::State as SyncState,
         };
         let sync = self.with_active(|a| a.sync.clone())?;
+        let client = self.client()?;
         let mut sync_state = sync.state();
         let mut list_state = sync.room_list_service().state();
         let task = tokio::spawn(async move {
@@ -519,6 +520,11 @@ impl Core {
                     _ => "connecting",
                 };
                 if status != last {
+                    // Back online: a send that failed on the network paused its chat's queue;
+                    // resume them all (failed messages go out by themselves).
+                    if status == "online" && !last.is_empty() {
+                        client.send_queue().set_enabled(true).await;
+                    }
                     sink(status);
                     last = status;
                 }
@@ -539,6 +545,7 @@ impl Core {
     pub async fn resume_sync(&self) -> Result<()> {
         let sync = self.with_active(|a| a.sync.clone())?;
         sync.start().await;
+        self.client()?.send_queue().set_enabled(true).await;
         Ok(())
     }
 

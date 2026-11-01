@@ -11,7 +11,7 @@
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import { fade, scale } from "svelte/transition";
-  import { isAndroid, openExternal, type MessageEntry } from "$lib/backend";
+  import { isAndroid, openExternal, retrySend, type MessageEntry } from "$lib/backend";
   import MapPin from "@lucide/svelte/icons/map-pin";
   import { liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { clockTime } from "$lib/format";
@@ -256,6 +256,13 @@
       : `https://www.openstreetmap.org/?mlat=${at.lat}&mlon=${at.lon}#map=16/${at.lat}/${at.lon}`;
     void openExternal(url);
   }
+
+  let retrying = $state(false);
+  async function retry() {
+    retrying = true;
+    await retrySend(roomId, msg.item_id).catch(() => {});
+    retrying = false;
+  }
 </script>
 
 <div class="row" class:own={msg.is_own} class:first class:last>
@@ -465,7 +472,11 @@
     {/if}
 
     {#if msg.send_state === "failed"}
-      <span class="status error">Not sent</span>
+      <span class="status error">
+        Not sent ·
+        <button class="status-action" disabled={retrying} onclick={retry}>{retrying ? "Retrying…" : "Retry"}</button> ·
+        <button class="status-action" onclick={onDelete}>Delete</button>
+      </span>
     {/if}
 
     {#if seenBy.length}
@@ -803,6 +814,16 @@
   }
   .status.error {
     color: var(--danger);
+  }
+  .status-action {
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
   }
   .bubble.bare {
     padding: 0;
