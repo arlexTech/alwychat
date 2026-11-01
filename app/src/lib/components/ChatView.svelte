@@ -35,6 +35,7 @@
   import Type from "@lucide/svelte/icons/type";
   import X from "@lucide/svelte/icons/x";
   import EmojiPicker from "./EmojiPicker.svelte";
+  import { geoUri, liveLocation } from "$lib/stores/liveLocation.svelte";
   import { tick, untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import {
@@ -862,7 +863,22 @@
   type LocationDraft =
     | { status: "locating" }
     | { status: "error"; error: string }
-    | { status: "ready"; lat: number; lon: number; accuracy: number | null };
+    | { status: "ready"; coords: GeolocationCoordinates };
+  const LIVE_DURATIONS = [
+    { ms: 15 * 60_000, label: "15 min" },
+    { ms: 3600_000, label: "1 hour" },
+    { ms: 8 * 3600_000, label: "8 hours" },
+    // "Until I stop": a day at most, so a forgotten share ends on its own.
+    { ms: 24 * 3600_000, label: "Until I stop" },
+  ];
+  const mySharing = $derived(liveLocation.sharing(target));
+
+  async function shareLive(ms: number) {
+    const d = locationDraft;
+    if (d?.status !== "ready") return;
+    locationDraft = null;
+    await liveLocation.share(target, ms, d.coords).catch((e) => (sendError = String(e)));
+  }
   let locationDraft = $state<LocationDraft | null>(null);
 
   function startLocation() {
@@ -872,13 +888,7 @@
     }
     locationDraft = { status: "locating" };
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        (locationDraft = {
-          status: "ready",
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude,
-          accuracy: pos.coords.accuracy ?? null,
-        }),
+      (pos) => (locationDraft = { status: "ready", coords: pos.coords }),
       (e) =>
         (locationDraft = {
           status: "error",
@@ -892,8 +902,7 @@
     const d = locationDraft;
     if (d?.status !== "ready") return;
     locationDraft = null;
-    const uri = `geo:${d.lat.toFixed(6)},${d.lon.toFixed(6)}${d.accuracy ? `;u=${Math.round(d.accuracy)}` : ""}`;
-    await sendLocation(target, uri).catch((e) => (sendError = String(e)));
+    await sendLocation(target, geoUri(d.coords.latitude, d.coords.longitude, d.coords.accuracy)).catch((e) => (sendError = String(e)));
   }
   let pollOpen = $state(false);
   $effect(() => {
@@ -1230,16 +1239,34 @@
       <button type="button" class="close" onclick={() => (formatting = false)} aria-label="Close formatting"><X size={18} /></button>
     </div>
   {/if}
+  {#if mySharing && !thread}
+    <div class="live-bar" transition:fly={{ y: 6, duration: 140 }}>
+      <span class="live-dot"></span>
+      <span>Sharing your live location · {mySharing.endsAt - Date.now() > 20 * 3600_000 ? "until you stop" : `until ${new Date(mySharing.endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}</span>
+      <button type="button" onclick={() => liveLocation.stop(target)}>Stop</button>
+    </div>
+  {/if}
   {#if locationDraft}
     <div class="location-confirm" transition:fly={{ y: 6, duration: 140 }}>
-      <MapPin size={22} />
-      <span>
-        {#if locationDraft.status === "locating"}Finding your location…
-        {:else if locationDraft.status === "error"}{locationDraft.error}
-        {:else}Send your current location?<small>{locationDraft.lat.toFixed(5)}, {locationDraft.lon.toFixed(5)}{locationDraft.accuracy ? ` · ±${Math.round(locationDraft.accuracy)} m` : ""}</small>{/if}
-      </span>
-      <button type="button" class="plain" onclick={() => (locationDraft = null)}>Cancel</button>
-      {#if locationDraft.status === "ready"}<button type="button" class="go" onclick={sendLocationDraft}>Send</button>{/if}
+      <div class="loc-head">
+        <MapPin size={22} />
+        <span>
+          {#if locationDraft.status === "locating"}Finding your location…
+          {:else if locationDraft.status === "error"}{locationDraft.error}
+          {:else}Your location<small>{locationDraft.coords.latitude.toFixed(5)}, {locationDraft.coords.longitude.toFixed(5)}{locationDraft.coords.accuracy ? ` · ±${Math.round(locationDraft.coords.accuracy)} m` : ""}</small>{/if}
+        </span>
+        <button type="button" class="plain" onclick={() => (locationDraft = null)}>Cancel</button>
+      </div>
+      {#if locationDraft.status === "ready"}
+        <button type="button" class="loc-option" onclick={sendLocationDraft}><MapPin size={18} /> Send my current location</button>
+        <p class="loc-label">Share live location</p>
+        <div class="loc-durations">
+          {#each LIVE_DURATIONS as d (d.ms)}
+            <button type="button" onclick={() => shareLive(d.ms)}>{d.label}</button>
+          {/each}
+        </div>
+        <small class="loc-note">Live: your position updates while AlwyChat is open, until the time is up or you tap Stop.</small>
+      {/if}
     </div>
   {/if}
   <div class="bar">
@@ -1959,25 +1986,89 @@
     margin-left: auto;
     color: var(--muted);
   }
-  .location-confirm {
+  .live-bar {
     display: flex;
     align-items: center;
     gap: 10px;
     margin-bottom: 6px;
-    padding: 10px 12px;
+    padding: 8px 8px 8px 14px;
     border-radius: 14px;
-    background: var(--surface-2);
+    background: color-mix(in srgb, #31d158 14%, var(--surface-2));
+    font-size: 0.9rem;
   }
-  .location-confirm > :global(svg) {
+  .live-bar span:nth-child(2) {
+    flex: 1;
+  }
+  .live-bar button {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 999px;
+    background: var(--danger);
+    color: white;
+    font: inherit;
+    cursor: pointer;
+  }
+  .live-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #31d158;
+    animation: rec-pulse 1s ease-in-out infinite alternate;
+  }
+  .loc-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .loc-head > :global(svg) {
     flex: none;
     color: var(--accent-a);
   }
-  .location-confirm span {
+  .loc-head span {
     display: flex;
     flex: 1;
     flex-direction: column;
     min-width: 0;
   }
+  .location-confirm .loc-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--accent);
+    color: white;
+  }
+  .loc-label {
+    margin: 12px 0 6px;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .loc-durations {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .location-confirm .loc-durations button {
+    background: var(--surface);
+    color: var(--text);
+  }
+  .loc-note {
+    display: block;
+    margin-top: 8px;
+    color: var(--muted);
+  }
+  .location-confirm {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 6px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: var(--surface-2);
+  }
+
   .location-confirm small {
     color: var(--muted);
   }
@@ -1993,10 +2084,7 @@
     background: none;
     color: var(--muted);
   }
-  .location-confirm .go {
-    background: var(--accent);
-    color: white;
-  }
+
   .sheet-backdrop {
     position: fixed;
     inset: 0;

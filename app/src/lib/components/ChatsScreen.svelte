@@ -18,7 +18,7 @@
   import SpacesPane from "./SpacesPane.svelte";
   import { onMount } from "svelte";
   import { flip } from "svelte/animate";
-  import { fade } from "svelte/transition";
+  import { fade, fly } from "svelte/transition";
   import {
     clearNotifications,
     getSettings,
@@ -59,6 +59,10 @@
   import { me } from "$lib/stores/me.svelte";
   import { nav } from "$lib/stores/nav.svelte";
   import { share } from "$lib/stores/share.svelte";
+  import { connection } from "$lib/stores/connection.svelte";
+  import { liveLocation } from "$lib/stores/liveLocation.svelte";
+  import WifiOff from "@lucide/svelte/icons/wifi-off";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { pickedMediaUrl } from "$lib/media";
   import ForwardPage from "./ForwardPage.svelte";
   import FileIcon from "@lucide/svelte/icons/file";
@@ -217,6 +221,8 @@
     chatList.start();
     void me.refresh();
     share.start();
+    connection.start();
+    liveLocation.start();
     nav.attach(
       (id) => ((selectedId = id), (newChatOpen = false), (settingsOpen = false)),
       () => ((tab = "spaces"), (selectedId = null), (newChatOpen = false)),
@@ -265,6 +271,13 @@
       <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label="New chat" title="New chat"><SquarePen size={21} /></button>
     </header>
 
+    {#if connection.shown}
+      <div class="connection" class:offline={connection.shown !== "connecting"} transition:fly={{ y: -8, duration: 160 }}>
+        {#if connection.shown === "connecting"}<LoaderCircle size={15} class="spin" /> Connecting…
+        {:else if connection.shown === "offline"}<WifiOff size={15} /> Waiting for network…
+        {:else}<WifiOff size={15} /> Can't reach the server, retrying…{/if}
+      </div>
+    {/if}
     {#if encryption.locked}
       <button class="unlock-banner" onclick={() => (encryption.sheetOpen = true)} transition:fade>
         <span>🔒</span>
@@ -501,6 +514,29 @@
     background: var(--surface);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
+  }
+  .connection {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0 12px 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .connection.offline {
+    color: #ffb020;
+  }
+  .connection :global(.spin) {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .new-chat {
     display: grid;

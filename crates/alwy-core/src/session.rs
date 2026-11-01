@@ -180,17 +180,23 @@ impl Core {
             return Ok(None);
         }
 
+        let started = std::time::Instant::now();
         let client = self
             .build_client(Server::Url(&stored.homeserver), &stored.store_passphrase)
             .await?;
+        let built = started.elapsed();
         let session = OAuthSession {
             client_id: ClientId::new(stored.client_id),
             user: stored.user,
         };
         client.restore_session(session).await?;
+        let restored = started.elapsed();
         self.activate(client.clone(), stored.store_passphrase)
             .await?;
-        Ok(Some(account(&client).await))
+        let activated = started.elapsed();
+        let account = account(&client).await;
+        info!(?built, ?restored, ?activated, total = ?started.elapsed(), "session restored");
+        Ok(Some(account))
     }
 
     /// Sign in with the server's web login. `open_url` must show the URL in the system browser.
@@ -428,6 +434,8 @@ impl Core {
             .map_err(|e| Error::Sync(e.to_string()))?;
         let sync = Arc::new(
             SyncService::builder(client.clone())
+                // Network loss: wait for the server to answer again instead of stopping.
+                .with_offline_mode()
                 .build()
                 .await
                 .map_err(|e| Error::Sync(e.to_string()))?,
@@ -448,6 +456,52 @@ impl Core {
             spaces_task: None,
             space_task: None,
         });
+        Ok(())
+    }
+
+    /// The connection as the UI shows it, on each change: "connecting" (first sync of this
+    /// start, or catching up), "online", "offline" (no network: retried by the SDK) or "error".
+    /// A sync stopped by an error is restarted after a pause.
+    pub fn subscribe_connection(
+        &self,
+        sink: impl Fn(&'static str) + Send + Sync + 'static,
+    ) -> Result<()> {
+        use matrix_sdk_ui::{
+            room_list_service::State as ListState, sync_service::State as SyncState,
+        };
+        let sync = self.with_active(|a| a.sync.clone())?;
+        let mut sync_state = sync.state();
+        let mut list_state = sync.room_list_service().state();
+        let task = tokio::spawn(async move {
+            let mut last = "";
+            loop {
+                let status = match (sync_state.get(), list_state.get()) {
+                    (SyncState::Offline, _) => "offline",
+                    (SyncState::Error(_), _) => "error",
+                    (SyncState::Running, ListState::Running) => "online",
+                    _ => "connecting",
+                };
+                if status != last {
+                    sink(status);
+                    last = status;
+                }
+                if status == "error" {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    sync.start().await;
+                }
+                tokio::select! {
+                    _ = sync_state.next() => {}
+                    _ = list_state.next() => {}
+                }
+            }
+        });
+        self.with_active(|a| a.tasks.push(task.abort_handle()))
+    }
+
+    /// The app is back in front: make sure the sync runs (no-op when it does).
+    pub async fn resume_sync(&self) -> Result<()> {
+        let sync = self.with_active(|a| a.sync.clone())?;
+        sync.start().await;
         Ok(())
     }
 
@@ -494,8 +548,9 @@ fn client_metadata(redirect_uri: Url) -> Result<Raw<ClientMetadata>> {
     Ok(Raw::new(&metadata)?)
 }
 
+/// From what we already know: no network here, it would hold up the start (the UI fetches the
+/// profile in the background).
 async fn account(client: &Client) -> Account {
-    let display_name = client.account().get_display_name().await.ok().flatten();
     Account {
         user_id: client
             .user_id()
@@ -505,7 +560,7 @@ async fn account(client: &Client) -> Account {
             .device_id()
             .map(ToString::to_string)
             .unwrap_or_default(),
-        display_name,
+        display_name: None,
     }
 }
 

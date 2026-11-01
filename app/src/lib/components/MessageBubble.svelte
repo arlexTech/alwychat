@@ -13,6 +13,7 @@
   import { fade, scale } from "svelte/transition";
   import { isAndroid, openExternal, type MessageEntry } from "$lib/backend";
   import MapPin from "@lucide/svelte/icons/map-pin";
+  import { liveLocation } from "$lib/stores/liveLocation.svelte";
   import { clockTime } from "$lib/format";
   import { eventMediaUrl } from "$lib/media";
   import { onBack } from "$lib/back.svelte";
@@ -111,6 +112,7 @@
       case "media":
         return c.label;
       case "location":
+      case "live_location":
         return "";
       case "audio":
         return "";
@@ -344,6 +346,25 @@
               <small>{at ? `${at.lat.toFixed(5)}, ${at.lon.toFixed(5)} · Open in maps` : c.geo_uri}</small>
             </span>
           </button>
+        {:else if c.kind === "live_location"}
+          {@const at = c.geo_uri ? geoPoint(c.geo_uri) : null}
+          {@const live = c.is_live && c.ends_at > Date.now()}
+          <div class="live-location">
+            <button class="location" disabled={!at} onclick={() => at && afterTap(() => openMap(at))} title="Open in maps">
+              <span class="file-icon" class:live><MapPin size={26} /></span>
+              <span class="file-meta">
+                <strong>{live ? "Live location" : "Live location ended"}</strong>
+                <small>
+                  {#if !at}Waiting for the first position…
+                  {:else if live}Until {new Date(c.ends_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{c.updated ? ` · updated ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps
+                  {:else}Last position{c.updated ? ` at ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps{/if}
+                </small>
+              </span>
+            </button>
+            {#if live && msg.is_own}
+              <button class="stop-live" onclick={() => liveLocation.stop(roomId)}>Stop sharing</button>
+            {/if}
+          </div>
         {:else if c.kind === "poll"}
           <PollView {roomId} pollId={msg.item_id} poll={c} />
         {:else if c.kind === "audio"}
@@ -865,6 +886,25 @@
   .text.caption {
     display: block;
     padding: 6px 8px 4px;
+  }
+  .live-location {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .file-icon.live {
+    color: #31d158;
+  }
+  .stop-live {
+    align-self: flex-start;
+    padding: 5px 12px;
+    border: none;
+    border-radius: 999px;
+    background: var(--danger);
+    color: white;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
   }
   .file,
   .location {

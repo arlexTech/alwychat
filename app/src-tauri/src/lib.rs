@@ -146,6 +146,23 @@ async fn subscribe_spaces(
     .await
 }
 
+/// Connection status for the chat list's banner ("connecting", "online", "offline", "error").
+/// Async: the core spawns its watcher on the Tokio runtime.
+#[tauri::command]
+async fn subscribe_connection(
+    core: State<'_, AppCore>,
+    on_status: Channel<String>,
+) -> alwy_core::Result<()> {
+    core.subscribe_connection(move |status| {
+        let _ = on_status.send(status.to_owned());
+    })
+}
+
+#[tauri::command]
+async fn resume_sync(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.resume_sync().await
+}
+
 /// A space's children (joined or not), streamed whole on each change.
 #[tauri::command]
 async fn open_space(
@@ -512,6 +529,31 @@ async fn send_location(
     description: String,
 ) -> alwy_core::Result<()> {
     core.send_location(&room_id, &geo_uri, &description).await
+}
+
+#[tauri::command]
+async fn start_live_location(
+    core: State<'_, AppCore>,
+    room_id: String,
+    duration_ms: u64,
+    geo_uri: String,
+) -> alwy_core::Result<()> {
+    core.start_live_location(&room_id, duration_ms, &geo_uri)
+        .await
+}
+
+#[tauri::command]
+async fn update_live_location(
+    core: State<'_, AppCore>,
+    room_id: String,
+    geo_uri: String,
+) -> alwy_core::Result<()> {
+    core.update_live_location(&room_id, &geo_uri).await
+}
+
+#[tauri::command]
+async fn stop_live_location(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<()> {
+    core.stop_live_location(&room_id).await
 }
 
 #[tauri::command]
@@ -1688,7 +1730,12 @@ pub fn run() {
             close_space,
             join_room,
             can_add_to_space,
+            subscribe_connection,
+            resume_sync,
             send_location,
+            start_live_location,
+            update_live_location,
+            stop_live_location,
             invite_info,
             accept_invite,
             leave_room,

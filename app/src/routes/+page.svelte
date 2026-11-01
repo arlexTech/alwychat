@@ -7,6 +7,9 @@
   type View = "loading" | "signed-out" | "waiting" | "signed-in";
 
   let view = $state<View>("loading");
+  /** The local restore is quick: only say something if it isn't. */
+  let slow = $state(false);
+  setTimeout(() => (slow = true), 1200);
   let server = $state("example.org");
   let account = $state<Account | null>(null);
   let error = $state<string | null>(null);
@@ -61,7 +64,7 @@
 {#if view === "signed-in" && account}
   <ChatsScreen {account} onSignOut={signOut} />
 {:else}
-<main>
+<main class:hidden={view === "loading" && !slow}>
   <h1>AlwyChat</h1>
 
   {#if !hasBackend}
@@ -74,7 +77,7 @@
   {#key view}
     <section in:fly={{ y: 12, duration: 250 }}>
       {#if view === "loading"}
-        <p class="muted">Loading…</p>
+        {#if slow}<p class="muted" in:fade>Opening your chats…</p>{/if}
       {:else if view === "signed-out"}
         <form onsubmit={signIn}>
           <label for="server">Your server</label>
@@ -173,5 +176,8 @@
   }
   .error {
     color: #ff6b6b;
+  }
+  main.hidden {
+    visibility: hidden;
   }
 </style>

@@ -192,6 +192,14 @@ export type MessageContent =
   | { kind: "media"; label: string }
   | { kind: "location"; geo_uri: string; description: string }
   | {
+      kind: "live_location";
+      geo_uri: string | null;
+      description: string | null;
+      is_live: boolean;
+      updated: number | null;
+      ends_at: number;
+    }
+  | {
       kind: "poll";
       question: string;
       answers: PollAnswer[];
@@ -875,3 +883,17 @@ export interface IncomingShare {
 export const takeShare = () => invoke<IncomingShare>("take_share");
 export const sendLocation = (roomId: string, geoUri: string, description = "") =>
   invoke<void>("send_location", { roomId, geoUri, description });
+
+export type ConnectionStatus = "connecting" | "online" | "offline" | "error";
+export function subscribeConnection(onStatus: (status: ConnectionStatus) => void) {
+  const channel = new Channel<ConnectionStatus>();
+  channel.onmessage = onStatus;
+  return invoke<void>("subscribe_connection", { onStatus: channel });
+}
+/** Back in front: make sure the sync runs. */
+export const resumeSync = () => invoke<void>("resume_sync");
+export const startLiveLocation = (roomId: string, durationMs: number, geoUri: string) =>
+  invoke<void>("start_live_location", { roomId, durationMs, geoUri });
+export const updateLiveLocation = (roomId: string, geoUri: string) =>
+  invoke<void>("update_live_location", { roomId, geoUri });
+export const stopLiveLocation = (roomId: string) => invoke<void>("stop_live_location", { roomId });

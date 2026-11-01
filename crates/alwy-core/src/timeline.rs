@@ -176,6 +176,16 @@ pub enum MessageContent {
         geo_uri: String,
         description: String,
     },
+    /// A live location share (MSC3489 beacons, as Element sends them): the latest point.
+    LiveLocation {
+        /// None until the first position arrives.
+        geo_uri: Option<String>,
+        description: Option<String>,
+        is_live: bool,
+        /// When the latest position was sent, and when sharing ends (ms since epoch).
+        updated: Option<u64>,
+        ends_at: u64,
+    },
     /// MSC3381 poll (Element-compatible). Counts are hidden until the end for
     /// undisclosed polls, except our own choice.
     Poll {
@@ -398,6 +408,38 @@ impl crate::Core {
             }
         }
         .map_err(timeline_err)?;
+        Ok(())
+    }
+
+    /// Start sharing our live location in a chat for `duration_ms`, with a first position.
+    pub async fn start_live_location(
+        &self,
+        room_id: &str,
+        duration_ms: u64,
+        geo_uri: &str,
+    ) -> Result<()> {
+        let room = self.room(room_id)?;
+        room.start_live_location_share(duration_ms, None).await?;
+        room.send_location_beacon(geo_uri.to_owned())
+            .await
+            .map_err(|e| Error::Timeline(e.to_string()))?;
+        Ok(())
+    }
+
+    /// A new position for our live share.
+    pub async fn update_live_location(&self, room_id: &str, geo_uri: &str) -> Result<()> {
+        self.room(room_id)?
+            .send_location_beacon(geo_uri.to_owned())
+            .await
+            .map_err(|e| Error::Timeline(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn stop_live_location(&self, room_id: &str) -> Result<()> {
+        self.room(room_id)?
+            .stop_live_location_share()
+            .await
+            .map_err(|e| Error::Timeline(e.to_string()))?;
         Ok(())
     }
 
@@ -687,9 +729,18 @@ impl Mapper {
                     }
                     MsgLikeKind::Redacted => MessageContent::Redacted,
                     MsgLikeKind::UnableToDecrypt(_) => MessageContent::UnableToDecrypt,
-                    MsgLikeKind::Other(_) | MsgLikeKind::LiveLocation(_) => {
-                        MessageContent::Unsupported
+                    MsgLikeKind::LiveLocation(live) => {
+                        let latest = live.latest_location();
+                        let start: u64 = live.ts().get().into();
+                        MessageContent::LiveLocation {
+                            geo_uri: latest.map(|l| l.geo_uri().to_owned()),
+                            description: live.description().map(ToOwned::to_owned),
+                            is_live: live.is_live(),
+                            updated: latest.map(|l| l.ts().get().into()),
+                            ends_at: start + live.timeout().as_millis() as u64,
+                        }
                     }
+                    MsgLikeKind::Other(_) => MessageContent::Unsupported,
                 };
                 let own_id = self.timeline.room().own_user_id().to_owned();
                 let reactions = msg
