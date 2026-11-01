@@ -68,7 +68,7 @@ impl crate::Core {
 
         let (bytes, mime, filename) = if is_processable_image(&mime) {
             let filename = file.filename.clone();
-            let processed = tokio::task::spawn_blocking(move || prepare_image(bytes, &mime, hd))
+            let processed = crate::rt::blocking(move || prepare_image(bytes, &mime, hd))
                 .await
                 .map_err(|e| Error::Upload(e.to_string()))??;
             config.info = Some(AttachmentInfo::Image(BaseImageInfo {

@@ -398,13 +398,13 @@ impl crate::Core {
         sink: impl FnMut(Vec<ListDiff<RoomSummary>>) + Send + 'static,
     ) -> Result<()> {
         let service = self.with_active(|a| a.sync.room_list_service())?;
-        let task = tokio::spawn(async move {
+        let task = crate::rt::spawn(async move {
             if let Err(e) = stream_chat_list(&service, sink).await {
                 warn!("chat list stream ended: {e}");
             }
         });
         self.with_active(|a| {
-            a.tasks.retain(|t| !t.is_finished());
+            a.tasks.retain(|t| !crate::rt::finished(t));
             // One chat list at a time: the newest subscriber wins.
             a.tasks.drain(..).for_each(|t| t.abort());
             a.tasks.push(task.abort_handle());

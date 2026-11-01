@@ -410,7 +410,8 @@ impl SearchIndex {
         self.db
             .lock()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM msg", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM msg", [], |r| r.get::<_, i64>(0))
+            .map(|n| n as u64)
             .map_err(sql)
     }
 
@@ -419,8 +420,9 @@ impl SearchIndex {
             .lock()
             .unwrap()
             .query_row("SELECT COUNT(*) FROM backfill WHERE done = 1", [], |r| {
-                r.get(0)
+                r.get::<_, i64>(0)
             })
+            .map(|n| n as u64)
             .map_err(sql)
     }
 
@@ -763,7 +765,7 @@ impl crate::Core {
             sender.map(str::to_owned),
         );
         let search = index.clone();
-        let rows = tokio::task::spawn_blocking(move || {
+        let rows = crate::rt::blocking(move || {
             search.search(
                 &query,
                 room_id.as_deref(),
@@ -822,7 +824,7 @@ impl crate::Core {
             .map(ToString::to_string)
             .unwrap_or_default();
         let room_id = room_id.to_owned();
-        let (days, complete) = tokio::task::spawn_blocking(move || index.activity(&room_id, &me))
+        let (days, complete) = crate::rt::blocking(move || index.activity(&room_id, &me))
             .await
             .map_err(|e| Error::Search(e.to_string()))??;
         Ok(Activity { days, complete })
@@ -832,7 +834,7 @@ impl crate::Core {
     pub async fn message_at(&self, room_id: &str, ts: i64) -> Result<Option<String>> {
         let index = self.search_index()?;
         let room_id = room_id.to_owned();
-        tokio::task::spawn_blocking(move || index.first_at(&room_id, ts))
+        crate::rt::blocking(move || index.first_at(&room_id, ts))
             .await
             .map_err(|e| Error::Search(e.to_string()))?
     }
@@ -848,7 +850,7 @@ impl crate::Core {
         let room = self.room(room_id)?;
         let rows = {
             let (index, room_id) = (index.clone(), room_id.to_owned());
-            tokio::task::spawn_blocking(move || index.listing(&room_id, kind, before, 60))
+            crate::rt::blocking(move || index.listing(&room_id, kind, before, 60))
                 .await
                 .map_err(|e| Error::Search(e.to_string()))??
         };
@@ -917,7 +919,7 @@ impl crate::Core {
             return Ok(());
         }
         let client = self.client()?;
-        let task = tokio::spawn(async move {
+        let task = crate::rt::spawn(async move {
             if let Err(e) = backfill(&client, &index).await {
                 warn!("search backfill stopped: {e}");
             }
@@ -943,7 +945,7 @@ pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchInd
         let index = live.clone();
         async move {
             let room_id = room.room_id().to_string();
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = crate::rt::blocking(move || {
                 if let Err(e) = index.apply(&room_id, &[&event]) {
                     warn!("couldn't index a message: {e}");
                 }
@@ -978,11 +980,10 @@ async fn page(
     let count = raws.len();
     let room_id = room.room_id().to_string();
     let index = index.clone();
-    let known = tokio::task::spawn_blocking(move || {
-        index.apply(&room_id, &raws.iter().collect::<Vec<_>>())
-    })
-    .await
-    .map_err(|e| Error::Search(e.to_string()))??;
+    let known =
+        crate::rt::blocking(move || index.apply(&room_id, &raws.iter().collect::<Vec<_>>()))
+            .await
+            .map_err(|e| Error::Search(e.to_string()))??;
     let next = messages.end.filter(|_| count > 0);
     Ok(Some((next, count, known)))
 }
@@ -1006,7 +1007,7 @@ async fn backfill(client: &Client, index: &Arc<SearchIndex>) -> Result<()> {
             let Some((next, count, known)) = page(room, index, from.as_deref()).await? else {
                 break;
             };
-            tokio::time::sleep(PAUSE).await;
+            crate::rt::sleep(PAUSE).await;
             if known > 0 || count == 0 || next.is_none() {
                 break;
             }
@@ -1054,7 +1055,7 @@ async fn backfill(client: &Client, index: &Arc<SearchIndex>) -> Result<()> {
                     }
                 };
                 index.save_state(room_id, token.as_deref(), done, events)?;
-                tokio::time::sleep(PAUSE).await;
+                crate::rt::sleep(PAUSE).await;
                 if done {
                     break;
                 }

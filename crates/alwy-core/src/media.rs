@@ -1,10 +1,8 @@
 //! Media for the UI: avatars, and images/videos/files of timeline messages (decrypted).
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+#[cfg(not(target_family = "wasm"))]
+use std::path::{Path, PathBuf};
+use std::{collections::HashMap, sync::Mutex};
 
 use matrix_sdk::{
     media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings},
@@ -40,6 +38,8 @@ pub(crate) struct EventMedia {
     pub source: MediaSource,
     pub thumbnail: Option<MediaSource>,
     pub mimetype: Option<String>,
+    /// For saving to disk (not in a browser, which downloads from the UI).
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
     pub filename: String,
 }
 
@@ -96,7 +96,8 @@ impl crate::Core {
     }
 
     /// Save a message's media into `dir` (created if needed) and return the file path.
-    /// Never overwrites: `photo.jpg` becomes `photo (1).jpg` if taken.
+    /// Never overwrites: `photo.jpg` becomes `photo (1).jpg` if taken. (A browser downloads.)
+    #[cfg(not(target_family = "wasm"))]
     pub async fn save_event_media(&self, key: &str, dir: &Path) -> Result<PathBuf> {
         let media = self.media.get(key)?;
         let (bytes, _) = self.event_media(key, false).await?;

@@ -1,5 +1,7 @@
 //! AlwyChat core: all Matrix state and logic lives here. UI shells (Tauri) stay thin.
 #![recursion_limit = "256"]
+// In a browser everything runs on one thread, so shared state needn't be Send/Sync there.
+#![cfg_attr(target_family = "wasm", allow(clippy::arc_with_non_send_sync))]
 
 pub mod applock;
 pub mod custom;
@@ -8,6 +10,7 @@ pub mod drafts;
 mod effects;
 pub mod encryption;
 pub mod error;
+mod files;
 mod html;
 pub mod links;
 pub mod manage;
@@ -20,6 +23,7 @@ pub mod presence;
 pub mod profile;
 pub mod push;
 pub mod rooms;
+mod rt;
 pub mod rtc;
 pub mod saved;
 pub mod search;

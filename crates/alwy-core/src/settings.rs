@@ -77,8 +77,8 @@ impl crate::Core {
 
     pub async fn set_settings(&self, settings: Settings) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(&settings)?;
-        tokio::fs::create_dir_all(&self.data_dir).await?;
-        tokio::fs::write(self.data_dir.join(SETTINGS_FILE), bytes).await?;
+        crate::files::create_dir_all(&self.data_dir).await?;
+        crate::files::write(self.data_dir.join(SETTINGS_FILE), bytes).await?;
         *self.settings.lock().unwrap() = settings;
         Ok(())
     }

@@ -13,12 +13,12 @@ alwy-core = { path = "crates/alwy-core" }
 ammonia = "4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 mime = "0.3"
-matrix-sdk = { version = "0.19", features = ["bundled-sqlite", "local-server", "markdown"] }
+matrix-sdk = { version = "0.19", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "markdown"] }
 matrix-sdk-ui = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "fs", "sync"] }
+tokio = { version = "1", features = ["macros", "time", "sync"] }
 rand = "0.9"
 eyeball-im = "0.9"
 futures-util = "0.3"

@@ -243,8 +243,8 @@ pub enum SendState {
 pub(crate) struct OpenChat {
     room_id: OwnedRoomId,
     timeline: Arc<Timeline>,
-    task: tokio::task::AbortHandle,
-    typing_task: tokio::task::AbortHandle,
+    task: crate::rt::AbortHandle,
+    typing_task: crate::rt::AbortHandle,
     /// Keeps the theme/quick reaction/nicknames watch alive while the chat is open.
     _style: matrix_sdk::event_handler::EventHandlerDropGuard,
     _pins: matrix_sdk::event_handler::EventHandlerDropGuard,
@@ -255,7 +255,7 @@ pub(crate) struct OpenChat {
 pub(crate) struct OpenThread {
     root: OwnedEventId,
     timeline: Arc<Timeline>,
-    task: tokio::task::AbortHandle,
+    task: crate::rt::AbortHandle,
 }
 
 impl Drop for OpenThread {
@@ -302,9 +302,9 @@ impl crate::Core {
         };
         let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
 
-        let task = tokio::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
+        let task = crate::rt::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
             .abort_handle();
-        let typing_task = tokio::spawn(stream_typing(room.clone(), on_typing)).abort_handle();
+        let typing_task = crate::rt::spawn(stream_typing(room.clone(), on_typing)).abort_handle();
         let style = self.watch_chat_style(&room, on_style).await;
         let pins = self.watch_pins(&room, on_pins).await;
         self.with_active(|a| {
@@ -344,7 +344,7 @@ impl crate::Core {
                 .await
                 .map_err(timeline_err)?,
         );
-        let task = tokio::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
+        let task = crate::rt::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
             .abort_handle();
         self.with_active(|a| match a.chat.as_mut() {
             Some(chat) if chat.room_id == room_id => {
@@ -1069,7 +1069,7 @@ impl Mapper {
     /// Load the message quoted by `event_id` (the reply itself, not the quoted one).
     fn fetch_reply(&self, event_id: OwnedEventId) {
         let timeline = self.timeline.clone();
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             if let Err(e) = timeline.fetch_details_for_event(&event_id).await {
                 warn!(%event_id, "couldn't load replied-to event: {e}");
             }

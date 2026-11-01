@@ -14,6 +14,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(target_family = "wasm"))]
+use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 use matrix_sdk::{
     Client, SessionChange,
     authentication::oauth::{
@@ -22,10 +24,7 @@ use matrix_sdk::{
     },
     encryption::{BackupDownloadStrategy, EncryptionSettings},
     ruma::serde::Raw,
-    utils::{
-        UrlOrQuery,
-        local_server::{LocalServerBuilder, LocalServerResponse},
-    },
+    utils::UrlOrQuery,
 };
 use matrix_sdk_ui::sync_service::SyncService;
 use rand::distr::{Alphanumeric, SampleString};
@@ -50,8 +49,10 @@ const STORE_DIR: &str = "store";
 /// store lost its account).
 const STORE_PREFIX: &str = "store-";
 /// Created by matrix-sdk-sqlite inside the store folder; holds this device's keys.
+#[cfg(not(target_family = "wasm"))]
 const CRYPTO_DB: &str = "matrix-sdk-crypto.sqlite3";
 
+#[cfg(not(target_family = "wasm"))]
 const REDIRECT_PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>AlwyChat</title>
 <body style="font-family:system-ui;background:#0f1115;color:#e8eaf0;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center"><h1>You're signed in ✨</h1><p>You can close this tab and go back to AlwyChat.</p></div>
@@ -165,12 +166,15 @@ pub struct Core {
 }
 
 /// Where the browser sends the user back after signing in.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum LoginRedirect {
     /// One-shot HTTP server on 127.0.0.1 (desktop).
     Loopback,
     /// `com.alwy.chat:/callback`, delivered through [`Core::handle_login_redirect`] (mobile).
     AppScheme,
+    /// A page of the web app (opened in a popup), whose URL comes back through
+    /// [`Core::handle_login_redirect`] (browser).
+    Web(Url),
 }
 
 type SessionEndedHandler = Box<dyn Fn() + Send + Sync>;
@@ -180,21 +184,21 @@ pub(crate) struct Active {
     pub client: Client,
     pub sync: Arc<SyncService>,
     /// Background tasks feeding the UI; aborted on sign-out or re-subscribe.
-    pub tasks: Vec<tokio::task::AbortHandle>,
+    pub tasks: Vec<crate::rt::AbortHandle>,
     pub chat: Option<crate::timeline::OpenChat>,
     pub verifications: Arc<crate::encryption::Verifications>,
-    pub encryption_task: Option<tokio::task::AbortHandle>,
+    pub encryption_task: Option<crate::rt::AbortHandle>,
     /// Cleared when this session is torn down, so late token refreshes can't rewrite
     /// `session.json` after it was deleted (that would restore onto an empty store).
     pub may_persist: Arc<AtomicBool>,
     /// Local message index (None if it couldn't be opened).
     pub search: Option<Arc<crate::search::SearchIndex>>,
-    pub search_task: Option<tokio::task::AbortHandle>,
+    pub search_task: Option<crate::rt::AbortHandle>,
     /// Created on first use of the Spaces tab.
     pub spaces: Option<Arc<matrix_sdk_ui::spaces::SpaceService>>,
-    pub spaces_task: Option<tokio::task::AbortHandle>,
+    pub spaces_task: Option<crate::rt::AbortHandle>,
     /// The open space's children feed.
-    pub space_task: Option<tokio::task::AbortHandle>,
+    pub space_task: Option<crate::rt::AbortHandle>,
 }
 
 impl Core {
@@ -241,7 +245,7 @@ impl Core {
             return Ok(Some(account(&client).await));
         }
         let path = self.data_dir.join(SESSION_FILE);
-        let mut stored: StoredSession = match tokio::fs::read(&path).await {
+        let mut stored: StoredSession = match crate::files::read(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
@@ -249,7 +253,7 @@ impl Core {
         if stored.in_keychain {
             let account = keychain_account(&stored.user);
             // Never treat this as signed out: the store and session are fine, only locked.
-            let secrets = tokio::task::spawn_blocking(move || keychain::load(&account))
+            let secrets = crate::rt::blocking(move || keychain::load(&account))
                 .await
                 .map_err(|e| Error::Keychain(e.to_string()))?
                 .map_err(|e| {
@@ -266,16 +270,18 @@ impl Core {
         let store_dir = stored.store_dir.clone();
         if store_dir.contains(['/', '\\']) || store_dir.contains("..") {
             warn!("unexpected store folder in session file, discarding it");
-            tokio::fs::remove_file(&path).await?;
+            crate::files::remove_file(&path).await?;
             return Ok(None);
         }
+        // (In a browser the store is IndexedDB, which can't be looked at synchronously.)
+        #[cfg(not(target_family = "wasm"))]
         if !self.data_dir.join(&store_dir).join(CRYPTO_DB).exists() {
             warn!("session file without encryption store, discarding it");
-            tokio::fs::remove_file(&path).await?;
+            crate::files::remove_file(&path).await?;
             return Ok(None);
         }
 
-        let started = std::time::Instant::now();
+        let started = matrix_sdk::ruma::time::Instant::now();
         let client = self
             .build_client(
                 Server::Url(&stored.homeserver),
@@ -334,7 +340,14 @@ impl Core {
         // A newer sign-in replaces (and so cancels) an older one.
         *self.pending_login.lock().unwrap() = Some(finish);
 
+        let web = matches!(redirect, LoginRedirect::Web(_));
+        let kind = format!("{redirect:?}");
         let (redirect_uri, loopback) = match redirect {
+            #[cfg(target_family = "wasm")]
+            LoginRedirect::Loopback => {
+                return Err(Error::OAuth("no loopback sign-in in a browser".into()));
+            }
+            #[cfg(not(target_family = "wasm"))]
             LoginRedirect::Loopback => {
                 let (uri, server) = LocalServerBuilder::new()
                     .response(LocalServerResponse::Html(REDIRECT_PAGE.to_owned()))
@@ -346,14 +359,18 @@ impl Core {
                 Url::parse(&format!("{REDIRECT_SCHEME}:/callback")).expect("valid constant URL"),
                 None,
             ),
+            LoginRedirect::Web(url) => (url, None::<()>.map(|_| unreachable!())),
         };
         info!(%redirect_uri, "registering");
         let callback = async move {
             match loopback {
+                #[cfg(not(target_family = "wasm"))]
                 Some(server) => tokio::select! {
                     query = server => query.map(|q| UrlOrQuery::Query(q.0)),
                     _ = finished => None,
                 },
+                #[cfg(target_family = "wasm")]
+                Some(()) => None,
                 None => finished.await.ok().flatten().map(UrlOrQuery::Url),
             }
         };
@@ -362,19 +379,19 @@ impl Core {
             .login(
                 redirect_uri.clone(),
                 None,
-                Some(client_metadata(redirect_uri)?.into()),
+                Some(client_metadata(redirect_uri, web)?.into()),
                 None,
             )
             .build()
             .await
             .map_err(|e| Error::OAuth(e.to_string()))?;
 
-        info!(?redirect, "opening the sign-in page");
+        info!(redirect = kind, "opening the sign-in page");
         open_url(&auth.url).map_err(Error::Browser)?;
         info!("waiting for the sign-in redirect");
 
         // No need to clear `pending_login` afterwards: a stale sender just fails to send.
-        let callback = match tokio::time::timeout(LOGIN_TIMEOUT, callback).await {
+        let callback = match matrix_sdk::timeout::timeout(callback, LOGIN_TIMEOUT).await {
             Ok(Some(callback)) => callback,
             Ok(None) => {
                 oauth.abort_login(&auth.state).await;
@@ -463,8 +480,12 @@ impl Core {
             // Already resolved at login: skip discovery.
             Server::Url(url) => Client::builder().homeserver_url(url.as_str()),
         };
+        #[cfg(not(target_family = "wasm"))]
+        let builder = builder.sqlite_store(self.data_dir.join(store_dir), Some(passphrase));
+        // In a browser: IndexedDB databases named after the store "folder".
+        #[cfg(target_family = "wasm")]
+        let builder = builder.indexeddb_store(store_dir, Some(passphrase));
         Ok(builder
-            .sqlite_store(self.data_dir.join(store_dir), Some(passphrase))
             .handle_refresh_tokens()
             // Same as Element X: fetch missing room keys from the key backup when a message
             // can't be decrypted, and keep backing up our own keys.
@@ -507,7 +528,7 @@ impl Core {
         let mut changes = client.subscribe_to_session_changes();
         let ended = self.on_session_ended.clone();
         let checked = client.clone();
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             while let Ok(change) = changes.recv().await {
                 let SessionChange::UnknownToken(info) = change else {
                     continue;
@@ -518,7 +539,7 @@ impl Core {
                     soft_logout = info.soft_logout,
                     "server may have ended the session, checking"
                 );
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                crate::rt::sleep(Duration::from_secs(2)).await;
                 match checked.whoami().await {
                     Ok(_) => warn!("session is fine, ignoring the signal"),
                     Err(e) if is_unknown_token(&e) => {
@@ -586,7 +607,7 @@ impl Core {
         let client = self.client()?;
         let mut sync_state = sync.state();
         let mut list_state = sync.room_list_service().state();
-        let task = tokio::spawn(async move {
+        let task = crate::rt::spawn(async move {
             let mut last = "";
             loop {
                 let status = match (sync_state.get(), list_state.get()) {
@@ -605,7 +626,7 @@ impl Core {
                     last = status;
                 }
                 if status == "error" {
-                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    crate::rt::sleep(Duration::from_secs(3)).await;
                     sync.start().await;
                 }
                 tokio::select! {
@@ -625,8 +646,8 @@ impl Core {
         Ok(())
     }
 
-    async fn wipe_local_data(&self) -> Result<()> {
-        // The old single folder and every per-sign-in one.
+    #[cfg(not(target_family = "wasm"))]
+    async fn remove_store_dirs(&self) -> Result<()> {
         let mut dirs = vec![self.data_dir.join(STORE_DIR)];
         if let Ok(mut entries) = tokio::fs::read_dir(&self.data_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -645,16 +666,24 @@ impl Core {
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    async fn wipe_local_data(&self) -> Result<()> {
+        // The old single folder and every per-sign-in one. (In a browser, the web app deletes
+        // old IndexedDB stores: Rust can't list them.)
+        #[cfg(not(target_family = "wasm"))]
+        self.remove_store_dirs().await?;
         // The previous session's keychain entry.
-        if let Ok(bytes) = tokio::fs::read(self.data_dir.join(SESSION_FILE)).await
+        if let Ok(bytes) = crate::files::read(self.data_dir.join(SESSION_FILE)).await
             && let Ok(old) = serde_json::from_slice::<StoredSession>(&bytes)
         {
             let account = keychain_account(&old.user);
-            let _ = tokio::task::spawn_blocking(move || keychain::delete(&account)).await;
+            let _ = crate::rt::blocking(move || keychain::delete(&account)).await;
         }
         // A new sign-in starts without the previous person's app lock.
         self.set_app_lock(None).await?;
-        match tokio::fs::remove_file(self.data_dir.join(SESSION_FILE)).await {
+        match crate::files::remove_file(self.data_dir.join(SESSION_FILE)).await {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
         }
@@ -673,12 +702,25 @@ enum Server<'a> {
     Url(&'a Url),
 }
 
-fn client_metadata(redirect_uri: Url) -> Result<Raw<ClientMetadata>> {
-    let client_uri = Url::parse(CLIENT_URI).expect("valid constant URL");
+/// `web`: the web app, which the server knows by its own address (its redirect must be there).
+fn client_metadata(redirect_uri: Url, web: bool) -> Result<Raw<ClientMetadata>> {
+    let client_uri = if web {
+        let mut origin = redirect_uri.clone();
+        origin.set_path("/");
+        origin.set_query(None);
+        origin.set_fragment(None);
+        origin
+    } else {
+        Url::parse(CLIENT_URI).expect("valid constant URL")
+    };
     let metadata = ClientMetadata {
         client_name: Some(Localized::new("AlwyChat".to_owned(), [])),
         ..ClientMetadata::new(
-            ApplicationType::Native,
+            if web {
+                ApplicationType::Web
+            } else {
+                ApplicationType::Native
+            },
             vec![OAuthGrantType::AuthorizationCode {
                 redirect_uris: vec![redirect_uri],
             }],

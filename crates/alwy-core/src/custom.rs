@@ -74,7 +74,7 @@ impl crate::Core {
         let on_style = std::sync::Arc::new(on_style);
         let first = room.clone();
         let send = on_style.clone();
-        tokio::spawn(async move { send(chat_style(&first).await) });
+        crate::rt::spawn(async move { send(chat_style(&first).await) });
 
         let client = room.client();
         let handle = room.add_event_handler(move |event: Raw<AnySyncStateEvent>, room: Room| {

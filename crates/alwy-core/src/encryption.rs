@@ -83,7 +83,7 @@ pub(crate) struct Verifications {
 struct Flow {
     request: VerificationRequest,
     sas: Arc<Mutex<Option<SasVerification>>>,
-    task: tokio::task::AbortHandle,
+    task: crate::rt::AbortHandle,
 }
 
 impl Drop for Flow {
@@ -136,7 +136,7 @@ impl Verifications {
     /// Track `request` (replacing any other) and drive it to completion.
     fn start(self: &Arc<Self>, request: VerificationRequest, incoming_from: Option<String>) {
         let sas = Arc::new(Mutex::new(None));
-        let task = tokio::spawn(drive(Arc::downgrade(self), request.clone(), sas.clone()));
+        let task = crate::rt::spawn(drive(Arc::downgrade(self), request.clone(), sas.clone()));
         let old = self.current.lock().unwrap().replace(Flow {
             request,
             sas,
@@ -144,7 +144,7 @@ impl Verifications {
         });
         if let Some(old) = old {
             let request = old.request.clone();
-            tokio::spawn(async move { request.cancel().await });
+            crate::rt::spawn(async move { request.cancel().await });
         }
         self.emit(match incoming_from {
             Some(from) => VerificationUpdate::Incoming { from },
@@ -274,7 +274,7 @@ impl crate::Core {
         let (client, hub) = self.with_active(|a| (a.client.clone(), a.verifications.clone()))?;
         *hub.sink.lock().unwrap() = Some(Arc::new(on_verification));
 
-        let task = tokio::spawn(async move {
+        let task = crate::rt::spawn(async move {
             let encryption = client.encryption();
             let verified = encryption.verification_state().map(|_| ());
             let recovery = encryption.recovery().state_stream().map(|_| ());

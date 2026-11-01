@@ -3,10 +3,7 @@
 //! encrypted with the PIN. `app_lock.json` holds a salted PBKDF2 hash, never the PIN; it's
 //! removed on sign-out.
 
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::{sync::Mutex, time::Duration};
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -28,6 +25,8 @@ struct Stored {
 }
 
 /// Wrong attempts since the last success (process-wide; the core is a singleton).
+use matrix_sdk::ruma::time::Instant;
+
 static ATTEMPTS: Mutex<(u32, Option<Instant>)> = Mutex::new((0, None));
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +62,7 @@ impl crate::Core {
     pub async fn set_app_lock(&self, pin: Option<&str>) -> Result<()> {
         let path = self.data_dir.join(LOCK_FILE);
         let Some(pin) = pin else {
-            return match tokio::fs::remove_file(&path).await {
+            return match crate::files::remove_file(&path).await {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
                 _ => Ok(()),
             };
@@ -74,17 +73,17 @@ impl crate::Core {
         let mut salt = vec![0u8; 16];
         rand::rng().fill_bytes(&mut salt);
         let pin = pin.to_owned();
-        let stored = tokio::task::spawn_blocking(move || Stored {
+        let stored = crate::rt::blocking(move || Stored {
             hash: hash(&pin, &salt, ROUNDS),
             salt,
             rounds: ROUNDS,
         })
         .await
         .map_err(|e| Error::AppLock(e.to_string()))?;
-        tokio::fs::create_dir_all(&self.data_dir).await?;
+        crate::files::create_dir_all(&self.data_dir).await?;
         let tmp = path.with_extension("tmp");
-        tokio::fs::write(&tmp, serde_json::to_vec(&stored)?).await?;
-        tokio::fs::rename(&tmp, &path).await?;
+        crate::files::write(&tmp, serde_json::to_vec(&stored)?).await?;
+        crate::files::rename(&tmp, &path).await?;
         Ok(())
     }
 
@@ -100,14 +99,14 @@ impl crate::Core {
                 });
             }
         }
-        let bytes = match tokio::fs::read(self.data_dir.join(LOCK_FILE)).await {
+        let bytes = match crate::files::read(self.data_dir.join(LOCK_FILE)).await {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Unlock::Ok),
             Err(e) => return Err(e.into()),
         };
         let stored: Stored = serde_json::from_slice(&bytes)?;
         let pin = pin.to_owned();
-        let ok = tokio::task::spawn_blocking(move || {
+        let ok = crate::rt::blocking(move || {
             same(&hash(&pin, &stored.salt, stored.rounds), &stored.hash)
         })
         .await

@@ -20,7 +20,7 @@ rand.workspace = true
 # App lock PIN hash.
 pbkdf2 = "0.13"
 sha2 = "0.11"
-# Message search (SQLite FTS5). Same version as matrix-sdk-sqlite, so it shares its bundled SQLite.
+# Message search (SQLite FTS5); in a browser through sqlite-wasm-rs.
 rusqlite = "0.40"
 serde.workspace = true
 serde_json.workspace = true
@@ -33,6 +33,17 @@ url.workspace = true
 # Linux). Android keeps them in the app's private storage (no backups, not debuggable in release).
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "windows-native", "apple-native"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+matrix-sdk = { workspace = true, features = ["bundled-sqlite", "local-server"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "fs"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+matrix-sdk = { workspace = true, features = ["indexeddb", "js"] }
+matrix-sdk-ui = { workspace = true, features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
 
 [lints]
 workspace = true

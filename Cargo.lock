@@ -83,6 +83,7 @@ dependencies = [
  "ammonia",
  "eyeball-im",
  "futures-util",
+ "getrandom 0.3.4",
  "image",
  "keyring",
  "matrix-sdk",
@@ -100,6 +101,8 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -2118,9 +2121,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3641,6 +3646,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gloo-utils",
+ "growable-bloom-filter",
  "hkdf 0.13.0",
  "js-sys",
  "matrix-sdk-base",

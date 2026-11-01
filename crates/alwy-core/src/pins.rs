@@ -54,7 +54,7 @@ impl crate::Core {
         let on_pins = Arc::new(on_pins);
         let first = room.clone();
         let send = on_pins.clone();
-        tokio::spawn(async move { send(pins(&first).await) });
+        crate::rt::spawn(async move { send(pins(&first).await) });
 
         let handle = room.add_event_handler(move |event: Raw<AnySyncStateEvent>, room: Room| {
             let on_pins = on_pins.clone();

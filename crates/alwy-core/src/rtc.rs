@@ -82,7 +82,7 @@ pub(crate) struct ActiveCall {
     room: Room,
     state_key: String,
     delay_id: Option<String>,
-    heartbeat: tokio::task::AbortHandle,
+    heartbeat: crate::rt::AbortHandle,
 }
 
 impl Drop for ActiveCall {
@@ -180,7 +180,7 @@ impl crate::Core {
             ring(&room, &member_event, video).await;
         }
 
-        let heartbeat = tokio::spawn(heartbeat(room.clone(), delay_id.clone())).abort_handle();
+        let heartbeat = crate::rt::spawn(heartbeat(room.clone(), delay_id.clone())).abort_handle();
         *self.call.lock().await = Some(ActiveCall {
             room,
             state_key,
@@ -454,7 +454,7 @@ async fn schedule_leave(room: &Room, state_key: &str) -> Option<String> {
 async fn heartbeat(room: Room, delay_id: Option<String>) {
     let Some(id) = delay_id else { return };
     loop {
-        tokio::time::sleep(HEARTBEAT).await;
+        crate::rt::sleep(HEARTBEAT).await;
         let request = update_delayed::Request::new(id.clone(), UpdateAction::Restart);
         if let Err(e) = room.client().send(request).await {
             warn!("call heartbeat failed: {e}");

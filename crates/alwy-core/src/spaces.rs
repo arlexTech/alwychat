@@ -129,7 +129,7 @@ impl crate::Core {
         // Filters only exist for spaces with chats: a new, empty space shows up here.
         let (_, top_level) = service.subscribe_to_top_level_joined_spaces().await;
         sink(spaces_overview(&client, &service).await);
-        let task = tokio::spawn(async move {
+        let task = crate::rt::spawn(async move {
             // Spaces joined or left, or their children changed.
             let mut updates =
                 futures_util::stream::select(filters.map(|_| ()), top_level.map(|_| ()));
@@ -171,7 +171,7 @@ impl crate::Core {
         let guard = client.event_handler_drop_guard(handle);
         let feed = list.clone();
         let reloading = AtomicBool::new(false);
-        let task = tokio::spawn(async move {
+        let task = crate::rt::spawn(async move {
             let _guard = guard;
             let paginate = async {
                 loop {
@@ -191,7 +191,7 @@ impl crate::Core {
                     }
                     changed.notified().await;
                     // Let a burst of changes settle, then start over.
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    crate::rt::sleep(std::time::Duration::from_millis(500)).await;
                     reloading.store(true, Ordering::Relaxed);
                     feed.reset().await;
                 }
