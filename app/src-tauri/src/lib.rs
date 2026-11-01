@@ -2118,9 +2118,14 @@ fn enable_webrtc(app: &tauri::App) -> tauri::Result<()> {
             PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, WebViewExt,
         };
         let view = webview.inner();
-        if let Some(settings) = WebViewExt::settings(&view) {
+        if let Some(settings) = WebViewExt::settings(&view)
+            && !(settings.enables_webrtc() && settings.enables_media_stream())
+        {
             settings.set_enable_webrtc(true);
             settings.set_enable_media_stream(true);
+            // The page has already started loading, and these APIs only appear in pages
+            // loaded after the change: load it again (once, before anything happened).
+            view.reload();
         }
         view.connect_permission_request(|_, request| {
             if request
