@@ -111,7 +111,6 @@
     selectedId = roomId;
   }
   let selectedId = $state<string | null>(null);
-  let menuOpen = $state(false);
   let settingsOpen = $state(false);
   let newChatOpen = $state(false);
   $effect(() => {
@@ -136,9 +135,6 @@
   });
   $effect(() => {
     if (encryption.sheetOpen) return onBack(() => (encryption.sheetOpen = false));
-  });
-  $effect(() => {
-    if (menuOpen) return onBack(() => (menuOpen = false));
   });
   $effect(() => {
     if (rowMenu) return onBack(() => (rowMenu = null));
@@ -262,24 +258,11 @@
 <div class="shell" class:has-selection={selected}>
   <aside class="list-pane">
     <header>
-      <button class="me" onclick={() => (menuOpen = !menuOpen)} aria-label="Account">
+      <button class="me" onclick={() => (settingsOpen = true)} aria-label="Settings" title="Settings">
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
       <h1>{tab === "chats" ? "Chats" : "Spaces"}</h1>
       <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label="New chat" title="New chat"><SquarePen size={21} /></button>
-      {#if menuOpen}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="outside" onclick={() => (menuOpen = false)}></div>
-        
-        <div class="menu" transition:fade={{ duration: 120 }}>
-          <div class="menu-who">
-            <strong>{myName}</strong>
-            <span>{account.user_id}</span>
-          </div>
-          <button class="plain" onclick={() => ((settingsOpen = true), (menuOpen = false))}><Settings size={16} /> Settings</button>
-          <button onclick={onSignOut}>Sign out</button>
-        </div>
-      {/if}
     </header>
 
     {#if encryption.locked}
@@ -540,40 +523,6 @@
     cursor: pointer;
     border-radius: 50%;
   }
-  .menu {
-    position: absolute;
-    top: 60px;
-    left: 16px;
-    z-index: 10;
-    min-width: 240px;
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-2);
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
-  }
-  .menu-who {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 10px 10px;
-  }
-  .menu-who span {
-    font-size: 0.82rem;
-    color: var(--muted);
-  }
-  .menu button {
-    width: 100%;
-    padding: 10px;
-    border: none;
-    border-radius: 10px;
-    background: none;
-    text-align: left;
-    color: var(--danger);
-    cursor: pointer;
-  }
-  .menu button:hover {
-    background: var(--surface-hover);
-  }
   .results-title {
     margin: 14px 12px 4px;
     color: var(--muted);
@@ -768,12 +717,6 @@
       display: flex;
     }
   }
-  .menu button.plain {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: inherit;
-  }
   .state.small {
     padding: 4px 16px;
     font-size: 0.85rem;
@@ -810,9 +753,4 @@
     background: var(--surface-hover);
   }
   /* Tap anywhere else to close the open menu. */
-  .outside {
-    position: fixed;
-    inset: 0;
-    z-index: 5;
-  }
 </style>

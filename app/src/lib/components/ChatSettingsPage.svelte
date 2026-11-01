@@ -12,6 +12,7 @@
   import RoomManage from "./RoomManage.svelte";
   import UserPage from "./UserPage.svelte";
   import UserRound from "@lucide/svelte/icons/user-round";
+  import Search from "@lucide/svelte/icons/search";
   import { nav } from "$lib/stores/nav.svelte";
   import { onBack } from "$lib/back.svelte";
   import { chat } from "$lib/stores/chat.svelte";
@@ -28,6 +29,7 @@
     hd,
     onChooseHd,
     onSharedMedia,
+    onSearch,
     onClose,
     onLeft,
   }: {
@@ -36,6 +38,7 @@
     hd: boolean | null;
     onChooseHd: (hd: boolean | null) => void;
     onSharedMedia: () => void;
+    onSearch: () => void;
     onClose: () => void;
     /** We left the chat: close it. */
     onLeft: () => void;
@@ -131,6 +134,11 @@
       <ChevronRight size={18} />
     </button>
   {/if}
+  <button class="link-row" onclick={onSearch}>
+    <Search size={20} />
+    <span><strong>Search in chat</strong><small>Messages, including encrypted ones</small></span>
+    <ChevronRight size={18} />
+  </button>
   <button class="link-row" onclick={onSharedMedia}>
     <Images size={20} />
     <span><strong>Shared media</strong><small>Photos, videos, files and links</small></span>

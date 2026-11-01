@@ -1,5 +1,6 @@
 package com.alwy.chat
 
+import android.Manifest
 import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
@@ -15,6 +16,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
+import app.tauri.PermissionState
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSArray
@@ -50,9 +54,76 @@ class PickArgs {
  * Saving copies a file into shared storage through MediaStore, so it shows up in the Gallery
  * (Pictures/AlwyChat, Movies/AlwyChat) or in Download/AlwyChat. No permission needed (API 29+).
  */
-@TauriPlugin
+@InvokeArg
+class CaptureArgs {
+  /** "photo" or "video". */
+  var kind: String = "photo"
+  /** Where the camera app writes the file (the Rust side sends it from there, then deletes it). */
+  lateinit var dir: String
+}
+
+@TauriPlugin(
+  // The manifest declares CAMERA (video calls), so Android requires it for camera intents too.
+  permissions = [Permission(strings = [Manifest.permission.CAMERA], alias = "camera")],
+)
 class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
   private var pickDir: File? = null
+
+  private var captureFile: File? = null
+  private var captureMime = "image/jpeg"
+
+  /** Take a photo or record a video with the phone's camera app; resolves like `pick`. */
+  @Command
+  fun capture(invoke: Invoke) {
+    if (getPermissionState("camera") != PermissionState.GRANTED) {
+      requestPermissionForAlias("camera", invoke, "cameraAnswered")
+      return
+    }
+    startCapture(invoke)
+  }
+
+  @PermissionCallback
+  private fun cameraAnswered(invoke: Invoke) {
+    if (getPermissionState("camera") == PermissionState.GRANTED) startCapture(invoke)
+    else invoke.reject("AlwyChat isn't allowed to use the camera")
+  }
+
+  private fun startCapture(invoke: Invoke) {
+    val args = invoke.parseArgs(CaptureArgs::class.java)
+    val video = args.kind == "video"
+    val dir = File(args.dir).apply { mkdirs() }
+    val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+    val file = File(dir, if (video) "VID_$stamp.mp4" else "IMG_$stamp.jpg")
+    captureFile = file
+    captureMime = if (video) "video/mp4" else "image/jpeg"
+    val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+    val intent = Intent(if (video) MediaStore.ACTION_VIDEO_CAPTURE else MediaStore.ACTION_IMAGE_CAPTURE)
+      .putExtra(MediaStore.EXTRA_OUTPUT, uri)
+      .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    try {
+      startActivityForResult(invoke, intent, "captured")
+    } catch (e: Exception) {
+      file.delete()
+      invoke.reject("no camera app found")
+    }
+  }
+
+  @ActivityCallback
+  fun captured(invoke: Invoke, result: ActivityResult) {
+    val file = captureFile
+    captureFile = null
+    if (result.resultCode != Activity.RESULT_OK || file == null || !file.exists() || file.length() == 0L) {
+      file?.delete()
+      invoke.resolve(JSObject().put("files", JSArray()))
+      return
+    }
+    val picked = JSObject()
+      .put("path", file.absolutePath)
+      .put("name", file.name)
+      .put("mime", captureMime)
+      .put("size", file.length())
+    invoke.resolve(JSObject().put("files", JSArray().put(picked)))
+  }
 
   /** Opens the system picker (several items at once); no storage permission needed. */
   @Command

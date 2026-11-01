@@ -190,6 +190,7 @@ export type MessageContent =
       size: number | null;
     }
   | { kind: "media"; label: string }
+  | { kind: "location"; geo_uri: string; description: string }
   | {
       kind: "poll";
       question: string;
@@ -280,8 +281,6 @@ export interface SystemStatus {
   notifications: boolean;
   batteryUnrestricted: boolean;
   backgroundData: boolean;
-  /** Maker with its own background limits ("oneplus", …), which apps can't read. */
-  oemPowerManager: string | null;
 }
 
 /** Read the status, or with `fix`, ask Android / open its settings page for that item. */
@@ -601,6 +600,8 @@ export async function sendVoice(
 
 /** Android: open the photo picker ("media") or the document picker ("files"). */
 export const pickFiles = (kind: "media" | "files") => invoke<Picked[]>("pick_files", { kind });
+/** Android: the phone's camera app; empty when cancelled. */
+export const capture = (kind: "photo" | "video") => invoke<Picked[]>("capture", { kind });
 
 /** Android: send a picked file (the webview can't hand raw bytes to Rust there). */
 export function sendPicked(
@@ -872,3 +873,5 @@ export interface IncomingShare {
   files: Picked[];
 }
 export const takeShare = () => invoke<IncomingShare>("take_share");
+export const sendLocation = (roomId: string, geoUri: string, description = "") =>
+  invoke<void>("send_location", { roomId, geoUri, description });

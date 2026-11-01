@@ -505,6 +505,16 @@ async fn set_own_avatar(
 }
 
 #[tauri::command]
+async fn send_location(
+    core: State<'_, AppCore>,
+    room_id: String,
+    geo_uri: String,
+    description: String,
+) -> alwy_core::Result<()> {
+    core.send_location(&room_id, &geo_uri, &description).await
+}
+
+#[tauri::command]
 async fn can_add_to_space(core: State<'_, AppCore>, space_id: String) -> alwy_core::Result<bool> {
     core.can_add_to_space(&space_id).await
 }
@@ -669,8 +679,6 @@ struct SystemStatus {
     notifications: bool,
     battery_unrestricted: bool,
     background_data: bool,
-    /// Maker with its own background limits ("oneplus", "xiaomi", …), which apps can't read.
-    oem_power_manager: Option<String>,
 }
 
 /// `fix`: None just reads the status; "notifications" / "battery" / "backgroundData" asks the
@@ -700,7 +708,6 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
             notifications: true,
             battery_unrestricted: true,
             background_data: true,
-            oem_power_manager: None,
         })
     }
 }
@@ -1105,6 +1112,32 @@ async fn take_share(app: tauri::AppHandle) -> Result<Share, String> {
     {
         let _ = app;
         Ok(Share::default())
+    }
+}
+
+/// Take a photo (`kind` = "photo") or record a video ("video") with the phone's camera app.
+/// Empty when cancelled. Android only.
+#[tauri::command]
+async fn capture(app: tauri::AppHandle, kind: String) -> Result<Vec<Picked>, String> {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Deserialize)]
+        struct CaptureResult {
+            files: Vec<Picked>,
+        }
+        let dir = picked_dir(&app)?.display().to_string();
+        let result: CaptureResult = app
+            .state::<android::Gallery>()
+            .0
+            .run_mobile_plugin_async("capture", serde_json::json!({ "kind": kind, "dir": dir }))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(result.files)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, kind);
+        Err("the camera app is only used on Android".into())
     }
 }
 
@@ -1655,6 +1688,7 @@ pub fn run() {
             close_space,
             join_room,
             can_add_to_space,
+            send_location,
             invite_info,
             accept_invite,
             leave_room,
@@ -1724,6 +1758,7 @@ pub fn run() {
             send_file,
             pick_files,
             take_share,
+            capture,
             send_picked,
             send_voice,
             discard_picked,

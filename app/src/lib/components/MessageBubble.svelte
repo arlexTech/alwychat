@@ -11,7 +11,8 @@
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import { fade, scale } from "svelte/transition";
-  import { openExternal, type MessageEntry } from "$lib/backend";
+  import { isAndroid, openExternal, type MessageEntry } from "$lib/backend";
+  import MapPin from "@lucide/svelte/icons/map-pin";
   import { clockTime } from "$lib/format";
   import { eventMediaUrl } from "$lib/media";
   import { onBack } from "$lib/back.svelte";
@@ -109,6 +110,8 @@
         return c.caption ?? "";
       case "media":
         return c.label;
+      case "location":
+        return "";
       case "audio":
         return "";
       case "sticker":
@@ -238,6 +241,19 @@
     action();
   }
 
+
+  /** `geo:50.85,4.35;u=20` → the point. */
+  function geoPoint(uri: string): { lat: number; lon: number } | null {
+    const m = /^geo:(-?[\d.]+),(-?[\d.]+)/.exec(uri);
+    return m ? { lat: Number(m[1]), lon: Number(m[2]) } : null;
+  }
+  function openMap(at: { lat: number; lon: number }) {
+    // Android hands geo: links to the maps app; elsewhere OpenStreetMap in the browser.
+    const url = isAndroid
+      ? `geo:${at.lat},${at.lon}?q=${at.lat},${at.lon}`
+      : `https://www.openstreetmap.org/?mlat=${at.lat}&mlon=${at.lon}#map=16/${at.lat}/${at.lon}`;
+    void openExternal(url);
+  }
 </script>
 
 <div class="row" class:own={msg.is_own} class:first class:last>
@@ -318,6 +334,15 @@
               <span class="play">▶</span>
               {#if c.duration_ms}<span class="duration">{formatDuration(c.duration_ms)}</span>{/if}
             {/if}
+          </button>
+        {:else if c.kind === "location"}
+          {@const at = geoPoint(c.geo_uri)}
+          <button class="location" onclick={() => at && afterTap(() => openMap(at))} title="Open in maps">
+            <span class="file-icon"><MapPin size={26} /></span>
+            <span class="file-meta">
+              <strong>{c.description && !c.description.startsWith("Location: geo:") && !c.description.startsWith("geo:") ? c.description : "Location"}</strong>
+              <small>{at ? `${at.lat.toFixed(5)}, ${at.lon.toFixed(5)} · Open in maps` : c.geo_uri}</small>
+            </span>
           </button>
         {:else if c.kind === "poll"}
           <PollView {roomId} pollId={msg.item_id} poll={c} />
@@ -841,7 +866,8 @@
     display: block;
     padding: 6px 8px 4px;
   }
-  .file {
+  .file,
+  .location {
     display: flex;
     align-items: center;
     gap: 10px;

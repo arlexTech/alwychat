@@ -167,9 +167,14 @@ pub enum MessageContent {
         filename: String,
         size: Option<u64>,
     },
-    /// Locations: a label until they get their own rendering.
+    /// Something shown as a label only.
     Media {
         label: String,
+    },
+    /// A shared location (`m.location`): `geo:lat,lon` and the sender's description.
+    Location {
+        geo_uri: String,
+        description: String,
     },
     /// MSC3381 poll (Element-compatible). Counts are hidden until the end for
     /// undisclosed polls, except our own choice.
@@ -393,6 +398,32 @@ impl crate::Core {
             }
         }
         .map_err(timeline_err)?;
+        Ok(())
+    }
+
+    /// Share a location (`geo:lat,lon;u=accuracy`), as Element does (`m.location`).
+    pub async fn send_location(
+        &self,
+        room_id: &str,
+        geo_uri: &str,
+        description: &str,
+    ) -> Result<()> {
+        use matrix_sdk::ruma::events::room::message::LocationMessageEventContent;
+        if !geo_uri.starts_with("geo:") {
+            return Err(Error::Timeline("not a geo: URI".into()));
+        }
+        let body = if description.trim().is_empty() {
+            format!("Location: {geo_uri}")
+        } else {
+            description.trim().to_owned()
+        };
+        let content = RoomMessageEventContent::new(MessageType::Location(
+            LocationMessageEventContent::new(body, geo_uri.to_owned()),
+        ));
+        self.timeline(room_id)?
+            .send(content.into())
+            .await
+            .map_err(timeline_err)?;
         Ok(())
     }
 
@@ -952,7 +983,10 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
         MessageType::Audio(a) if a.voice.is_some() => media("🎤 Voice message"),
         MessageType::Audio(_) => media("🎵 Audio"),
         MessageType::File(f) => media(&format!("📎 {}", f.filename())),
-        MessageType::Location(_) => media("📍 Location"),
+        MessageType::Location(l) => MessageContent::Location {
+            geo_uri: l.geo_uri.clone(),
+            description: l.body.clone(),
+        },
         other => MessageContent::Text {
             body: other.body().to_owned(),
             html: None,
@@ -1048,6 +1082,7 @@ fn plain_text(content: &TimelineItemContent) -> String {
             | MessageContent::Emote { body, .. }
             | MessageContent::Notice { body, .. } => body,
             MessageContent::Media { label } => label,
+            MessageContent::Location { .. } => "📍 Location".to_owned(),
             _ => String::new(),
         },
         MsgLikeKind::Sticker(_) => "Sticker".to_owned(),

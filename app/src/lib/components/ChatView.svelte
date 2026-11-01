@@ -2,7 +2,6 @@
   import FileSheet from "./FileSheet.svelte";
   import MessageActions, { type Actions } from "./MessageActions.svelte";
   import ForwardPage from "./ForwardPage.svelte";
-  import Plus from "@lucide/svelte/icons/plus";
   import ChartBar from "@lucide/svelte/icons/chart-bar";
   import PollCreator from "./PollCreator.svelte";
   import Pin from "@lucide/svelte/icons/pin";
@@ -13,7 +12,6 @@
   import Lock from "@lucide/svelte/icons/lock";
   import Phone from "@lucide/svelte/icons/phone";
   import Video from "@lucide/svelte/icons/video";
-  import SearchIcon from "@lucide/svelte/icons/search";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SendHorizontal from "@lucide/svelte/icons/send-horizontal";
@@ -21,6 +19,22 @@
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import Check from "@lucide/svelte/icons/check";
   import Mic from "@lucide/svelte/icons/mic";
+  import Bold from "@lucide/svelte/icons/bold";
+  import Camera from "@lucide/svelte/icons/camera";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import CirclePlus from "@lucide/svelte/icons/circle-plus";
+  import Code from "@lucide/svelte/icons/code";
+  import Italic from "@lucide/svelte/icons/italic";
+  import LinkIcon from "@lucide/svelte/icons/link";
+  import ListOrdered from "@lucide/svelte/icons/list-ordered";
+  import MapPin from "@lucide/svelte/icons/map-pin";
+  import SmilePlus from "@lucide/svelte/icons/smile-plus";
+  import SquareCode from "@lucide/svelte/icons/square-code";
+  import Strikethrough from "@lucide/svelte/icons/strikethrough";
+  import TextQuote from "@lucide/svelte/icons/text-quote";
+  import Type from "@lucide/svelte/icons/type";
+  import X from "@lucide/svelte/icons/x";
+  import EmojiPicker from "./EmojiPicker.svelte";
   import { tick, untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import {
@@ -32,6 +46,8 @@
     editMessage,
     markRead,
     pickFiles,
+    capture,
+    sendLocation,
     saveMedia,
     sendFile,
     pinMessage,
@@ -768,6 +784,117 @@
   const shownPin = $derived(chat.pins.messages[pinIndex % Math.max(1, chat.pins.messages.length)] ?? null);
   let pinsOpen = $state(false);
   let attachOpen = $state(false);
+  let emojiOpen = $state(false);
+  let formatting = $state(false);
+  /** Messenger: while typing, the buttons left of the field fold into a chevron. */
+  const typingMode = $derived(!!draft.trim());
+  let toolsShown = $state(false);
+  $effect(() => {
+    if (emojiOpen) return closeOnBack(() => (emojiOpen = false));
+  });
+
+  function sheet(action: () => unknown) {
+    attachOpen = false;
+    void action();
+  }
+
+  function openFileInput(accept: string) {
+    fileInput.accept = accept;
+    fileInput.click();
+  }
+
+  /** Android: the camera app; the photo or video lands in the composer like a picked one. */
+  async function takePhoto(kind: "photo" | "video") {
+    try {
+      for (const picked of await capture(kind)) {
+        const url = picked.mime.startsWith("image/") ? pickedMediaUrl(picked.path) : null;
+        pending.push({ name: picked.name, mime: picked.mime, url, picked });
+      }
+    } catch (e) {
+      sendError = String(e);
+    }
+  }
+
+  function toggleEmoji() {
+    emojiOpen = !emojiOpen;
+    // The phone's keyboard makes room for the panel.
+    if (emojiOpen) input.blur();
+    else input.focus();
+  }
+
+  function insertEmoji(emoji: string) {
+    // After the selection, not over it (the formatting buttons leave text selected).
+    const at = input.selectionEnd ?? draft.length;
+    draft = draft.slice(0, at) + emoji + draft.slice(at);
+    tick().then(() => {
+      input.selectionStart = input.selectionEnd = at + emoji.length;
+      autosize();
+    });
+  }
+
+  /** Markdown around the selection (or at the cursor). */
+  function wrap(before: string, after: string) {
+    const start = input.selectionStart ?? draft.length;
+    const end = input.selectionEnd ?? start;
+    draft = draft.slice(0, start) + before + draft.slice(start, end) + after + draft.slice(end);
+    tick().then(() => {
+      input.focus();
+      input.selectionStart = start + before.length;
+      input.selectionEnd = end + before.length;
+      autosize();
+    });
+  }
+
+  /** Markdown at the start of each selected line (quote, lists). */
+  function linePrefix(prefix: string) {
+    const start = draft.lastIndexOf("\n", (input.selectionStart ?? draft.length) - 1) + 1;
+    const end = input.selectionEnd ?? draft.length;
+    const lines = draft.slice(start, end).split("\n");
+    const block = lines.map((l, i) => (prefix === "1. " ? `${i + 1}. ` : prefix) + l).join("\n");
+    draft = draft.slice(0, start) + block + draft.slice(end);
+    tick().then(() => {
+      input.focus();
+      input.selectionStart = input.selectionEnd = start + block.length;
+      autosize();
+    });
+  }
+
+  type LocationDraft =
+    | { status: "locating" }
+    | { status: "error"; error: string }
+    | { status: "ready"; lat: number; lon: number; accuracy: number | null };
+  let locationDraft = $state<LocationDraft | null>(null);
+
+  function startLocation() {
+    if (!navigator.geolocation) {
+      locationDraft = { status: "error", error: "Location isn't available on this device" };
+      return;
+    }
+    locationDraft = { status: "locating" };
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        (locationDraft = {
+          status: "ready",
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracy: pos.coords.accuracy ?? null,
+        }),
+      (e) =>
+        (locationDraft = {
+          status: "error",
+          error: e.code === e.PERMISSION_DENIED ? "AlwyChat isn't allowed to use your location" : `Couldn't find your location (${e.message})`,
+        }),
+      { enableHighAccuracy: true, timeout: 20_000 },
+    );
+  }
+
+  async function sendLocationDraft() {
+    const d = locationDraft;
+    if (d?.status !== "ready") return;
+    locationDraft = null;
+    const uri = `geo:${d.lat.toFixed(6)},${d.lon.toFixed(6)}${d.accuracy ? `;u=${Math.round(d.accuracy)}` : ""}`;
+    await sendLocation(target, uri).catch((e) => (sendError = String(e)));
+  }
   let pollOpen = $state(false);
   $effect(() => {
     if (attachOpen) return closeOnBack(() => (attachOpen = false));
@@ -896,7 +1023,6 @@
       {/if}
     </span>
   </button>
-  <button class="chat-menu-button" onclick={() => (searchOpen = true)} aria-label="Search in chat"><SearchIcon size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call"><Phone size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
   {/if}
@@ -965,6 +1091,7 @@
     hd={chatHd}
     onChooseHd={chooseHd}
     onSharedMedia={() => ((chatMenuOpen = false), (mediaOpen = true))}
+    onSearch={() => ((chatMenuOpen = false), (searchOpen = true))}
     onClose={() => (chatMenuOpen = false)}
     onLeft={() => ((chatMenuOpen = false), onBack?.())}
   />
@@ -1089,33 +1216,45 @@
       <button type="button" class="send" onclick={finishVoice} aria-label="Send voice message"><SendHorizontal size={20} /></button>
     </div>
   {:else}
-  <div class="bar">
-    {#if isAndroid}
-      <button type="button" class="attach" onclick={() => pick("media")} aria-label="Photos and videos"><Image size={24} /></button>
-    {/if}
-    <div class="attach-wrap">
-      <button
-        type="button"
-        class="attach plus"
-        class:open={attachOpen}
-        onclick={() => (attachOpen = !attachOpen)}
-        aria-label="More: files, poll"
-        aria-expanded={attachOpen}
-      >
-        <Plus size={26} />
-      </button>
-      {#if attachOpen}
-        <!-- Any tap outside closes the menu. -->
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="attach-catcher" onclick={() => (attachOpen = false)}></div>
-        <div class="attach-menu" transition:fade={{ duration: 100 }}>
-          <button type="button" onclick={() => ((attachOpen = false), isAndroid ? pick("files") : fileInput.click())}>
-            <Paperclip size={18} />{isAndroid ? "File" : "Photos or files"}
-          </button>
-          <button type="button" onclick={() => ((attachOpen = false), (pollOpen = true))}><ChartBar size={18} />Poll</button>
-        </div>
-      {/if}
+  {#if formatting}
+    <div class="format-bar" transition:fly={{ y: 6, duration: 140 }}>
+      <button type="button" onclick={() => wrap("**", "**")} aria-label="Bold"><Bold size={18} /></button>
+      <button type="button" onclick={() => wrap("*", "*")} aria-label="Italic"><Italic size={18} /></button>
+      <button type="button" onclick={() => wrap("~~", "~~")} aria-label="Strikethrough"><Strikethrough size={18} /></button>
+      <button type="button" onclick={() => wrap("`", "`")} aria-label="Code"><Code size={18} /></button>
+      <button type="button" onclick={() => wrap("```\n", "\n```")} aria-label="Code block"><SquareCode size={18} /></button>
+      <button type="button" onclick={() => linePrefix("> ")} aria-label="Quote"><TextQuote size={18} /></button>
+      <button type="button" onclick={() => linePrefix("- ")} aria-label="Bulleted list"><List size={18} /></button>
+      <button type="button" onclick={() => linePrefix("1. ")} aria-label="Numbered list"><ListOrdered size={18} /></button>
+      <button type="button" onclick={() => wrap("[", "](https://)")} aria-label="Link"><LinkIcon size={18} /></button>
+      <button type="button" class="close" onclick={() => (formatting = false)} aria-label="Close formatting"><X size={18} /></button>
     </div>
+  {/if}
+  {#if locationDraft}
+    <div class="location-confirm" transition:fly={{ y: 6, duration: 140 }}>
+      <MapPin size={22} />
+      <span>
+        {#if locationDraft.status === "locating"}Finding your location…
+        {:else if locationDraft.status === "error"}{locationDraft.error}
+        {:else}Send your current location?<small>{locationDraft.lat.toFixed(5)}, {locationDraft.lon.toFixed(5)}{locationDraft.accuracy ? ` · ±${Math.round(locationDraft.accuracy)} m` : ""}</small>{/if}
+      </span>
+      <button type="button" class="plain" onclick={() => (locationDraft = null)}>Cancel</button>
+      {#if locationDraft.status === "ready"}<button type="button" class="go" onclick={sendLocationDraft}>Send</button>{/if}
+    </div>
+  {/if}
+  <div class="bar">
+    {#if typingMode && !toolsShown}
+      <button type="button" class="attach" onclick={() => (toolsShown = true)} aria-label="Show more"><ChevronRight size={26} /></button>
+    {:else}
+      <button type="button" class="attach plus" class:open={attachOpen} onclick={() => (attachOpen = !attachOpen)} aria-label="More" aria-expanded={attachOpen}>
+        <CirclePlus size={26} />
+      </button>
+      {#if isAndroid}
+        <button type="button" class="attach" onclick={() => takePhoto("photo")} aria-label="Take a photo"><Camera size={24} /></button>
+      {/if}
+      <button type="button" class="attach" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label="Photos and videos"><Image size={24} /></button>
+      <button type="button" class="attach mic" onclick={startVoice} aria-label="Record a voice message"><Mic size={24} /></button>
+    {/if}
     <input
       bind:this={fileInput}
       type="file"
@@ -1126,23 +1265,26 @@
         e.currentTarget.value = "";
       }}
     />
-    <textarea
-      bind:this={input}
-      bind:value={draft}
-      oninput={onInput}
-      onblur={() => (stopTyping(room.id), (mention.query = null))}
-      onclick={() => mention.update(input.value, input.selectionStart ?? input.value.length)}
-      onpaste={onPaste}
-      onkeydown={onKeydown}
-      rows="1"
-      placeholder={pending.length ? "Add a caption" : "Message"}
-    ></textarea>
+    <div class="field">
+      <textarea
+        bind:this={input}
+        bind:value={draft}
+        oninput={() => ((toolsShown = false), onInput())}
+        onfocus={() => (emojiOpen = false)}
+        onblur={() => (stopTyping(room.id), (mention.query = null))}
+        onclick={() => mention.update(input.value, input.selectionStart ?? input.value.length)}
+        onpaste={onPaste}
+        onkeydown={onKeydown}
+        rows="1"
+        placeholder={pending.length ? "Add a caption" : "Message"}
+      ></textarea>
+      <button type="button" class="emoji-toggle" class:on={emojiOpen} onclick={toggleEmoji} aria-label="Emoji"><SmilePlus size={22} /></button>
+    </div>
     {#if draft.trim() || editing || pending.length}
       <button class="send" aria-label={editing ? "Save edit" : "Send"} transition:fly={{ x: 8, duration: 140 }}
         >{#if editing}<Check size={20} />{:else}<SendHorizontal size={20} />{/if}</button
       >
     {:else}
-      <button type="button" class="attach mic" onclick={startVoice} aria-label="Record a voice message"><Mic size={24} /></button>
       <button
         type="button"
         class="quick"
@@ -1151,8 +1293,28 @@
       >{QUICK_REACTION}</button>
     {/if}
   </div>
+  {#if emojiOpen}
+    <div transition:fly={{ y: 20, duration: 160 }}><EmojiPicker onPick={insertEmoji} /></div>
+  {/if}
   {/if}
 </form>
+
+{#if attachOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="sheet-backdrop" transition:fade={{ duration: 120 }} onclick={() => (attachOpen = false)}></div>
+  <div class="attach-sheet" role="menu" transition:fly={{ y: 40, duration: 200 }}>
+    <span class="grabber"></span>
+    {#if isAndroid}
+      <button type="button" onclick={() => sheet(() => takePhoto("photo"))}><Camera size={22} />Take photo</button>
+      <button type="button" onclick={() => sheet(() => takePhoto("video"))}><Video size={22} />Record video</button>
+    {/if}
+    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />Photo & video library</button>
+    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("files") : openFileInput("")))}><Paperclip size={22} />File</button>
+    <button type="button" onclick={() => sheet(startLocation)}><MapPin size={22} />Share location</button>
+    <button type="button" onclick={() => sheet(() => (pollOpen = true))}><ChartBar size={22} />Poll</button>
+    <button type="button" onclick={() => sheet(() => (formatting = !formatting))}><Type size={22} />{formatting ? "Hide text formatting" : "Text formatting"}</button>
+  </div>
+{/if}
 
 {#if toast}<div class="toast" transition:fly={{ y: 12, duration: 180 }}>{toast}</div>{/if}
 
@@ -1742,51 +1904,153 @@
     color: var(--accent-a);
     cursor: pointer;
   }
-  .attach-wrap {
+  .field {
     position: relative;
+    display: flex;
+    flex: 1;
+    min-width: 0;
   }
-  .attach-catcher {
+  .field textarea {
+    padding-right: 44px;
+  }
+  .emoji-toggle {
+    position: absolute;
+    right: 4px;
+    bottom: 2px;
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--accent-a);
+    cursor: pointer;
+  }
+  .emoji-toggle.on {
+    color: var(--text);
+  }
+  .format-bar {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 6px;
+    padding: 4px;
+    overflow-x: auto;
+    border-radius: 14px;
+    background: var(--surface-2);
+    scrollbar-width: none;
+  }
+  .format-bar button {
+    display: grid;
+    flex: none;
+    width: 38px;
+    height: 34px;
+    place-items: center;
+    border: none;
+    border-radius: 9px;
+    background: none;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .format-bar button:hover {
+    background: var(--surface-hover);
+  }
+  .format-bar .close {
+    margin-left: auto;
+    color: var(--muted);
+  }
+  .location-confirm {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: var(--surface-2);
+  }
+  .location-confirm > :global(svg) {
+    flex: none;
+    color: var(--accent-a);
+  }
+  .location-confirm span {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .location-confirm small {
+    color: var(--muted);
+  }
+  .location-confirm button {
+    flex: none;
+    padding: 7px 14px;
+    border: none;
+    border-radius: 999px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .location-confirm .plain {
+    background: none;
+    color: var(--muted);
+  }
+  .location-confirm .go {
+    background: var(--accent);
+    color: white;
+  }
+  .sheet-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 5;
+    z-index: 40;
+    background: rgb(0 0 0 / 0.45);
+  }
+  .attach-sheet {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 8px 12px calc(14px + env(safe-area-inset-bottom));
+    border-radius: 22px 22px 0 0;
+    background: var(--surface);
+    box-shadow: 0 -12px 40px rgb(0 0 0 / 0.35);
+  }
+  .grabber {
+    align-self: center;
+    width: 40px;
+    height: 4px;
+    margin: 4px 0 10px;
+    border-radius: 2px;
+    background: var(--border);
+  }
+  .attach-sheet button {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 14px 12px;
+    border: none;
+    border-radius: 12px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 1.02rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .attach-sheet button:hover {
+    background: var(--surface-hover);
+  }
+  .attach-sheet :global(svg) {
+    color: var(--muted);
   }
   .plus :global(svg) {
     transition: transform 0.2s var(--ease);
   }
   .plus.open :global(svg) {
     transform: rotate(45deg);
-  }
-  .attach-menu {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    z-index: 6;
-    display: flex;
-    flex-direction: column;
-    min-width: 180px;
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--surface-2);
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
-  }
-  .attach-menu button {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border: none;
-    border-radius: 10px;
-    background: none;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .attach-menu button:hover {
-    background: var(--surface-hover);
-  }
-  .attach-menu :global(svg) {
-    color: var(--accent-a);
   }
   .attach:hover {
     background: var(--surface-2);

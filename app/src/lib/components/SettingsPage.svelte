@@ -22,6 +22,12 @@
   import LogOut from "@lucide/svelte/icons/log-out";
   import UserX from "@lucide/svelte/icons/user-x";
   import X from "@lucide/svelte/icons/x";
+  import Bell from "@lucide/svelte/icons/bell";
+  import Info from "@lucide/svelte/icons/info";
+  import Lock from "@lucide/svelte/icons/lock";
+  import MessagesSquare from "@lucide/svelte/icons/messages-square";
+  import Palette from "@lucide/svelte/icons/palette";
+  import Smile from "@lucide/svelte/icons/smile";
   import {
     accountUrl,
     appVersion,
@@ -65,6 +71,11 @@
 
   // ── Account pages ──
   let sub = $state<"devices" | "security" | "blocked" | null>(null);
+  /** The settings page open on top of the main list. */
+  let section = $state<"status" | "notifications" | "privacy" | "appearance" | "chats" | "about" | null>(null);
+  $effect(() => {
+    if (section) return onBack(() => (section = null));
+  });
   $effect(() => {
     if (sub) return onBack(() => (sub = null));
   });
@@ -268,18 +279,6 @@
   /** On only when both AlwyChat and the system allow it, so the switch matches the phone's settings. */
   const notificationsOn = $derived(!!settings?.notifications && !!system?.notifications);
 
-  const oemName = (oem: string) =>
-    ({ oneplus: "OnePlus", oppo: "OPPO", realme: "realme", xiaomi: "Xiaomi", redmi: "Xiaomi", poco: "Xiaomi", huawei: "Huawei", honor: "Honor", vivo: "vivo", samsung: "Samsung" })[oem] ?? oem;
-
-  /** Where the maker hides its own background setting, from the app's system page. */
-  function oemHint(oem: string) {
-    if (["oneplus", "oppo", "realme"].includes(oem))
-      return "Your phone has its own limit on top of Android's: open Battery usage and choose “Allow background activity”.";
-    if (["xiaomi", "redmi", "poco"].includes(oem))
-      return "Your phone has its own limit: turn on Autostart, and set Battery saver to “No restrictions”.";
-    if (oem === "samsung") return "Your phone has its own limit: under Battery, choose “Unrestricted”.";
-    return "Your phone has its own limit on top of Android's: in Battery, allow AlwyChat to run in the background.";
-  }
 
   async function refreshSystem() {
     try {
@@ -319,7 +318,7 @@
     if (isAndroid) setupPush(on).catch((e) => (error = `Push: ${e}`));
   }
 
-  async function fix(what: "notifications" | "battery" | "backgroundData" | "appSettings") {
+  async function fix(what: "notifications" | "battery" | "backgroundData") {
     error = null;
     try {
       system = await systemStatus(what);
@@ -355,7 +354,39 @@
       <small>{userId}</small>
     </div>
 
-    <h3>Status</h3>
+    <button class="m-row" onclick={() => (section = "status")}>
+      <span class="m-icon"><Smile size={20} /></span><span class="m-text"><strong>Status</strong><small>{profiles.statusLabel(userId) ?? "Set a status"}</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (section = "notifications")}>
+      <span class="m-icon"><Bell size={20} /></span><span class="m-text"><strong>Notifications</strong><small>{notificationsOn ? "On" : "Off"} · mentions, keywords</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (section = "privacy")}>
+      <span class="m-icon"><Lock size={20} /></span><span class="m-text"><strong>Privacy & security</strong><small>Read receipts, app lock, sessions, blocked people</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (section = "appearance")}>
+      <span class="m-icon"><Palette size={20} /></span><span class="m-text"><strong>Appearance</strong><small>Theme, text size, effects</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (section = "chats")}>
+      <span class="m-icon"><MessagesSquare size={20} /></span><span class="m-text"><strong>Chats & media</strong><small>Spaces in Chats, folders, photo quality</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (section = "about")}>
+      <span class="m-icon"><Info size={20} /></span><span class="m-text"><strong>About</strong><small>{version ? `AlwyChat ${version}` : "AlwyChat"}</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => openAccount("profile")}>
+      <span class="m-icon"><ExternalLink size={20} /></span><span class="m-text"><strong>Manage account</strong><small>Email, password, deactivation (your server's account page)</small></span>
+    </button>
+    <button class="m-row danger" onclick={onSignOut}>
+      <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>Sign out</strong></span>
+    </button>
+  {:else if !error}
+    <p class="muted">Loading…</p>
+  {/if}
+  {#if error}<p class="error">{error}</p>{/if}
+</Page>
+
+{#if section === "status"}
+  <Page title="Status" onClose={() => (section = null)}>
+    {#if settings}
     <div class="status-emoji" role="radiogroup" aria-label="Status emoji">
       {#each STATUS_EMOJI as e (e)}
         <button
@@ -388,10 +419,86 @@
       </span>
       <input type="checkbox" role="switch" checked={shareZone} onchange={(e) => toggleZone(e.currentTarget.checked)} />
     </label>
+    {/if}
+    {#if error}<p class="error">{error}</p>{/if}
+  </Page>
+{/if}
+{#if section === "notifications"}
+  <Page title="Notifications" onClose={() => (section = null)}>
+    {#if settings}
+    <h3 class="section">Notifications</h3>
+    <label class="toggle">
+      <span>
+        <strong>New messages</strong>
+        <small>
+          {isAndroid ? "While AlwyChat isn't on screen." : "While AlwyChat isn't in front."}
+          Follows your mute and mention settings.
+          {#if settings.notifications && system && !system.notifications}
+            <em>Turned off in {isAndroid ? "Android" : "system"} settings.</em>
+          {/if}
+        </small>
+      </span>
+      <input type="checkbox" role="switch" checked={notificationsOn} onchange={toggleNotifications} />
+    </label>
+    {#if isAndroid && notificationsOn && system}
+      <div class="check">
+        <span class="mark" class:ok={system.batteryUnrestricted}>{system.batteryUnrestricted ? "✓" : "!"}</span>
+        <span>
+          <strong>Battery</strong>
+          <small>
+            {system.batteryUnrestricted
+              ? "AlwyChat can keep running in the background."
+              : "Battery optimisation pauses AlwyChat in the background: notifications come late or not at all."}
+          </small>
+        </span>
+        {#if !system.batteryUnrestricted}<button onclick={() => fix("battery")}>Allow</button>{/if}
+      </div>
+      <div class="check">
+        <span class="mark" class:ok={system.backgroundData}>{system.backgroundData ? "✓" : "!"}</span>
+        <span>
+          <strong>Background data</strong>
+          <small>
+            {system.backgroundData
+              ? "AlwyChat can receive messages in the background."
+              : "Data saver blocks AlwyChat in the background, so new messages can't arrive."}
+          </small>
+        </span>
+        {#if !system.backgroundData}<button onclick={() => fix("backgroundData")}>Allow</button>{/if}
+      </div>
+    {/if}
 
+    {#if rules}
+      <label class="toggle">
+        <span><strong>@room mentions</strong><small>Notify when someone alerts a whole group.</small></span>
+        <input type="checkbox" role="switch" checked={rules.room_mentions} onchange={(e) => changeRule("room_mentions", e.currentTarget.checked)} />
+      </label>
+      <label class="toggle">
+        <span><strong>Invites</strong><small>Notify when you're invited to a chat or space.</small></span>
+        <input type="checkbox" role="switch" checked={rules.invites} onchange={(e) => changeRule("invites", e.currentTarget.checked)} />
+      </label>
+      <div class="keywords">
+        <strong>Keywords</strong>
+        <small>Messages containing these notify you, even in chats set to mentions only. Synced with your other apps.</small>
+        <div class="m-chips">
+          {#each rules.keywords as k (k)}
+            <button class="m-chip kw" onclick={() => changeKeyword(k, false)} aria-label="Remove {k}">{k}<X size={14} /></button>
+          {/each}
+        </div>
+        <form class="name-row" onsubmit={(e) => (e.preventDefault(), changeKeyword(keyword, true))}>
+          <input class="m-input" bind:value={keyword} placeholder="Add a keyword" maxlength="40" />
+          <button class="m-btn plain" disabled={!keyword.trim()}>Add</button>
+        </form>
+      </div>
+    {/if}
+    {/if}
+    {#if error}<p class="error">{error}</p>{/if}
+  </Page>
+{/if}
+{#if section === "privacy"}
+  <Page title="Privacy &amp; security" onClose={() => (section = null)}>
+    {#if settings}
     <h3 class="section">Privacy</h3>
     {#each privacy as t (t.key)}{@render row(t)}{/each}
-
     <h3 class="section">App lock</h3>
     <label class="toggle">
       <span>
@@ -435,7 +542,23 @@
         <input type="checkbox" role="switch" checked={settings.hide_in_switcher} onchange={() => toggle("hide_in_switcher")} />
       </label>
     {/if}
-
+    <h3 class="section">Account security</h3>
+    <button class="m-row" onclick={() => (sub = "devices")}>
+      <span class="m-icon"><Laptop size={20} /></span><span class="m-text"><strong>Sessions</strong><small>Where you're signed in</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (sub = "security")}>
+      <span class="m-icon"><KeyRound size={20} /></span><span class="m-text"><strong>Security & recovery</strong><small>Verification, key backup, recovery key</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" onclick={() => (sub = "blocked")}>
+      <span class="m-icon"><UserX size={20} /></span><span class="m-text"><strong>Blocked people</strong></span><ChevronRight size={18} />
+    </button>
+    {/if}
+    {#if error}<p class="error">{error}</p>{/if}
+  </Page>
+{/if}
+{#if section === "appearance"}
+  <Page title="Appearance" onClose={() => (section = null)}>
+    {#if settings}
     <h3 class="section">Appearance</h3>
     <div class="themes" role="radiogroup" aria-label="Theme">
       {#each THEMES as t (t.id)}
@@ -445,7 +568,19 @@
       {/each}
     </div>
     {#each appearance as t (t.key)}{@render row(t)}{/each}
-
+    <h3 class="section">Text size</h3>
+    <div class="m-seg">
+      {#each TEXT_SIZES as t (t.value)}
+        <button class:on={settings.text_scale === t.value} onclick={() => save({ text_scale: t.value })}>{t.label}</button>
+      {/each}
+    </div>
+    {/if}
+    {#if error}<p class="error">{error}</p>{/if}
+  </Page>
+{/if}
+{#if section === "chats"}
+  <Page title="Chats &amp; media" onClose={() => (section = null)}>
+    {#if settings}
     <h3 class="section">Chats</h3>
     <label class="toggle">
       <span>
@@ -471,126 +606,30 @@
       {/each}
       <li><button class="folder-name new" onclick={() => (folderEdit = "new")}><Plus size={18} />New folder</button></li>
     </ul>
-
-    <h3 class="section">Notifications</h3>
-    <label class="toggle">
-      <span>
-        <strong>New messages</strong>
-        <small>
-          {isAndroid ? "While AlwyChat isn't on screen." : "While AlwyChat isn't in front."}
-          Follows your mute and mention settings.
-          {#if settings.notifications && system && !system.notifications}
-            <em>Turned off in {isAndroid ? "Android" : "system"} settings.</em>
-          {/if}
-        </small>
-      </span>
-      <input type="checkbox" role="switch" checked={notificationsOn} onchange={toggleNotifications} />
-    </label>
-    {#if isAndroid && notificationsOn && system}
-      <div class="check">
-        <span class="mark" class:ok={system.batteryUnrestricted}>{system.batteryUnrestricted ? "✓" : "!"}</span>
-        <span>
-          <strong>Battery</strong>
-          <small>
-            {system.batteryUnrestricted
-              ? "AlwyChat can keep running in the background."
-              : "Battery optimisation pauses AlwyChat in the background: notifications come late or not at all."}
-          </small>
-        </span>
-        {#if !system.batteryUnrestricted}<button onclick={() => fix("battery")}>Allow</button>{/if}
-      </div>
-      <div class="check">
-        <span class="mark" class:ok={system.backgroundData}>{system.backgroundData ? "✓" : "!"}</span>
-        <span>
-          <strong>Background data</strong>
-          <small>
-            {system.backgroundData
-              ? "AlwyChat can receive messages in the background."
-              : "Data saver blocks AlwyChat in the background, so new messages can't arrive."}
-          </small>
-        </span>
-        {#if !system.backgroundData}<button onclick={() => fix("backgroundData")}>Allow</button>{/if}
-      </div>
-      {#if system.oemPowerManager}
-        <div class="check">
-          <span class="mark">?</span>
-          <span>
-            <strong>{oemName(system.oemPowerManager)} battery manager</strong>
-            <small>{oemHint(system.oemPowerManager)} AlwyChat can't check this one itself.</small>
-          </span>
-          <button onclick={() => fix("appSettings")}>Open</button>
-        </div>
-      {/if}
-    {/if}
-
-    {#if rules}
-      <label class="toggle">
-        <span><strong>@room mentions</strong><small>Notify when someone alerts a whole group.</small></span>
-        <input type="checkbox" role="switch" checked={rules.room_mentions} onchange={(e) => changeRule("room_mentions", e.currentTarget.checked)} />
-      </label>
-      <label class="toggle">
-        <span><strong>Invites</strong><small>Notify when you're invited to a chat or space.</small></span>
-        <input type="checkbox" role="switch" checked={rules.invites} onchange={(e) => changeRule("invites", e.currentTarget.checked)} />
-      </label>
-      <div class="keywords">
-        <strong>Keywords</strong>
-        <small>Messages containing these notify you, even in chats set to mentions only. Synced with your other apps.</small>
-        <div class="m-chips">
-          {#each rules.keywords as k (k)}
-            <button class="m-chip kw" onclick={() => changeKeyword(k, false)} aria-label="Remove {k}">{k}<X size={14} /></button>
-          {/each}
-        </div>
-        <form class="name-row" onsubmit={(e) => (e.preventDefault(), changeKeyword(keyword, true))}>
-          <input class="m-input" bind:value={keyword} placeholder="Add a keyword" maxlength="40" />
-          <button class="m-btn plain" disabled={!keyword.trim()}>Add</button>
-        </form>
-      </div>
-    {/if}
-
     <h3 class="section">Media</h3>
     {#each media as t (t.key)}{@render row(t)}{/each}
-
-    <h3 class="section">Text & typing</h3>
-    <div class="m-seg">
-      {#each TEXT_SIZES as t (t.value)}
-        <button class:on={settings.text_scale === t.value} onclick={() => save({ text_scale: t.value })}>{t.label}</button>
-      {/each}
-    </div>
     {#if !isAndroid}
       <label class="toggle">
         <span><strong>Enter sends</strong><small>{settings.enter_sends ? "Shift+Enter adds a new line." : "Enter adds a new line, Ctrl+Enter sends."}</small></span>
         <input type="checkbox" role="switch" checked={settings.enter_sends} onchange={() => toggle("enter_sends")} />
       </label>
     {/if}
-
-    <h3 class="section">Account</h3>
-    <button class="m-row" onclick={() => (sub = "devices")}>
-      <span class="m-icon"><Laptop size={20} /></span><span class="m-text"><strong>Sessions</strong><small>Where you're signed in</small></span><ChevronRight size={18} />
-    </button>
-    <button class="m-row" onclick={() => (sub = "security")}>
-      <span class="m-icon"><KeyRound size={20} /></span><span class="m-text"><strong>Security & recovery</strong><small>Verification, key backup, recovery key</small></span><ChevronRight size={18} />
-    </button>
-    <button class="m-row" onclick={() => (sub = "blocked")}>
-      <span class="m-icon"><UserX size={20} /></span><span class="m-text"><strong>Blocked people</strong></span><ChevronRight size={18} />
-    </button>
-    <button class="m-row" onclick={() => openAccount("profile")}>
-      <span class="m-icon"><ExternalLink size={20} /></span><span class="m-text"><strong>Manage account</strong><small>Email, password, deactivation (your server's account page)</small></span>
-    </button>
-    <button class="m-row danger" onclick={onSignOut}>
-      <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>Sign out</strong></span>
-    </button>
-
-    <h3 class="section">About</h3>
+    {/if}
+    {#if error}<p class="error">{error}</p>{/if}
+  </Page>
+{/if}
+{#if section === "about"}
+  <Page title="About" onClose={() => (section = null)}>
+    {#if settings}
     <div class="about">
       <p><strong>AlwyChat</strong> {version}</p>
       <p>Server: {server}</p>
       <p>Free software (AGPL-3.0-or-later). <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>Source code</button></p>
     </div>
-  {:else if !error}
-    <p class="muted">Loading…</p>
-  {/if}
-  {#if error}<p class="error">{error}</p>{/if}
-</Page>
+    {/if}
+    {#if error}<p class="error">{error}</p>{/if}
+  </Page>
+{/if}
 {#if pinFlow}
   <Page title={pinFlow.mode === "disable" ? "Turn off app lock" : pinFlow.mode === "change" ? "Change PIN" : "App lock"} onClose={() => (pinFlow = null)}>
     <div class="pin-page">
