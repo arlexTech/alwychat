@@ -6,13 +6,12 @@
 
   /**
    * The chat's history as a waveform under its header: one rounded bar per day, centred on
-   * the middle line, newest on the right. Scroll freely sideways; the day under the centre is
+   * the middle line, newest on the left (scrolling right goes back in time). Scroll freely sideways; the day under the centre is
    * shown top left, and the chat follows it (loading that day's messages) as soon as the
    * scrolling pauses. Stays open until closed.
    */
   let { roomId, onJump, onClose }: { roomId: string; onJump: (eventId: string) => void; onClose: () => void } = $props();
 
-  const DAY = 86_400_000;
   const SLOT = 7;
   const BAR = 4;
   const HALF = 26;
@@ -59,7 +58,7 @@
         d.others += c.others;
       }
     }
-    return out;
+    return out.reverse();
   });
   // Scale on a high percentile, so one exceptional day doesn't flatten the rest.
   const scale = $derived.by(() => {
@@ -68,25 +67,13 @@
   });
   const height = (n: number) => (n ? Math.max(BAR, Math.min(2 * HALF, (n / scale) * 2 * HALF)) : 0);
 
-  // Older days get added on the left as they're read: keep the view on the same day.
-  let shown = 0;
-  let firstDay: number | null = null;
+  // Open on today (left end). Older days are appended on the right as they're read, which
+  // doesn't move the view.
+  let placed = false;
   $effect(() => {
-    const count = days.length;
-    if (!count || !strip) return;
-    const first = days[0].start;
-    if (!shown) {
-      shown = count;
-      firstDay = first;
-      tick().then(() => strip && ((strip.scrollLeft = strip.scrollWidth), onScroll()));
-      return;
-    }
-    if (firstDay !== null && first < firstDay) {
-      const added = Math.round((firstDay - first) / DAY);
-      firstDay = first;
-      shown = count;
-      tick().then(() => strip && (strip.scrollLeft += added * SLOT));
-    }
+    if (!days.length || !strip || placed) return;
+    placed = true;
+    tick().then(() => strip && ((strip.scrollLeft = 0), onScroll()));
   });
 
   let settle: ReturnType<typeof setTimeout> | undefined;
@@ -97,7 +84,7 @@
     if (!strip || !days.length) return;
     centre = Math.max(0, Math.min(days.length - 1, Math.round(strip.scrollLeft / SLOT)));
     // Near the oldest loaded day while more is coming: ask again sooner.
-    if (centre < 20 && activity && !activity.complete) void load();
+    if (centre > days.length - 20 && activity && !activity.complete) void load();
     if (!touched) return;
     clearTimeout(settle);
     settle = setTimeout(follow, 280);
@@ -122,15 +109,17 @@
   }
 
   const current = $derived(days[centre] ?? null);
-  const dateLabel = (t: number) =>
-    new Date(t).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
-  /** Month names under the first day of each month (years in January). */
+  const pad = (n: number) => String(n).padStart(2, "0");
+  /** Year-month-day, then the weekday: "2026-03-13 · Fri". */
+  const dateLabel = (t: number) => {
+    const d = new Date(t);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} · ${d.toLocaleDateString([], { weekday: "short" })}`;
+  };
+  /** "2026-03" under the first day of each month (and under today). */
   const monthMark = (d: Day, i: number) => {
     const date = new Date(d.start);
     if (date.getDate() !== 1 && i !== 0) return "";
-    return date.getMonth() === 0 || i === 0
-      ? `${date.toLocaleDateString([], { month: "short" })} ${date.getFullYear()}`
-      : date.toLocaleDateString([], { month: "short" });
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
   };
 </script>
 
@@ -174,6 +163,7 @@
         if (!strip) return;
         touched = true;
         const step = e.shiftKey ? 7 : 1;
+        // Left = newer, right = older, as on screen.
         if (e.key === "ArrowLeft") strip.scrollLeft -= step * SLOT;
         else if (e.key === "ArrowRight") strip.scrollLeft += step * SLOT;
         else return;
