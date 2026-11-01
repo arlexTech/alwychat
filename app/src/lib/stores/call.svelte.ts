@@ -5,6 +5,7 @@ import {
   RoomEvent,
   Track,
   type Participant,
+  type RemoteParticipant,
   type RemoteTrack,
 } from "livekit-client";
 import {
@@ -38,6 +39,23 @@ export interface Tile {
 
 type Status = "connecting" | "connected" | "reconnecting";
 
+/** Call preferences of this device (not synced). */
+interface CallPrefs {
+  noiseSuppression: boolean;
+  pushToTalk: boolean;
+  /** Per-person volume, 0–1, by user ID (1 when absent). */
+  volumes: Record<string, number>;
+}
+const PREFS_KEY = "alwychat.callPrefs";
+function loadPrefs(): CallPrefs {
+  const defaults: CallPrefs = { noiseSuppression: true, pushToTalk: false, volumes: {} };
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
+  } catch {
+    return defaults;
+  }
+}
+
 /** "@alex:example.org:DEVICE" → "@alex:example.org" (user IDs contain a colon themselves). */
 const userOf = (identity: string) => {
   const cut = identity.lastIndexOf(":");
@@ -52,6 +70,13 @@ class CallStore {
   micOn = $state(true);
   camOn = $state(false);
   screenOn = $state(false);
+  /** Nobody heard (and our mic off), Discord style. */
+  deafened = $state(false);
+  /** Mic state to restore when undeafening. */
+  #micBeforeDeafen = true;
+  prefs = $state<CallPrefs>(loadPrefs());
+  /** Push-to-talk: the talk button / key is held. */
+  talking = $state(false);
   /** Shrunk to a pill so the chats stay usable during the call. */
   minimized = $state(false);
   tiles = $state<Tile[]>([]);
@@ -134,7 +159,9 @@ class CallStore {
     this.status = "connecting";
     this.error = null;
     this.minimized = false;
-    this.micOn = true;
+    this.micOn = !this.prefs.pushToTalk;
+    this.deafened = false;
+    this.talking = false;
     this.camOn = video;
     this.screenOn = false;
     roomMembers(room.id)
@@ -146,11 +173,23 @@ class CallStore {
 
     try {
       const { url, jwt } = await joinCall(room.id, video);
-      const lk = new Room({ adaptiveStream: true, dynacast: true });
+      const lk = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+        audioCaptureDefaults: {
+          noiseSuppression: this.prefs.noiseSuppression,
+          echoCancellation: true,
+          autoGainControl: true,
+        },
+      });
       this.#lk = lk;
       lk.on(RoomEvent.ParticipantConnected, () => this.#sync())
         .on(RoomEvent.ParticipantDisconnected, () => this.#sync())
-        .on(RoomEvent.TrackSubscribed, (track) => (this.#attachAudio(track), this.#sync()))
+        .on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
+          this.#attachAudio(track);
+          this.#applyVolume(participant);
+          this.#sync();
+        })
         .on(RoomEvent.TrackUnsubscribed, (track) => (this.#detachAudio(track), this.#sync()))
         .on(RoomEvent.TrackMuted, () => this.#sync())
         .on(RoomEvent.TrackUnmuted, () => this.#sync())
@@ -167,7 +206,10 @@ class CallStore {
         });
       await lk.connect(url, jwt);
       this.status = "connected";
-      await lk.localParticipant.setMicrophoneEnabled(true).catch((e) => this.#fail("microphone", e));
+      // Push-to-talk starts silent (the mic is opened while talking).
+      if (!this.prefs.pushToTalk) {
+        await lk.localParticipant.setMicrophoneEnabled(true).catch((e) => this.#fail("microphone", e));
+      }
       if (video) await lk.localParticipant.setCameraEnabled(true).catch((e) => this.#fail("camera", e));
       await lk.startAudio().catch(() => {});
       this.#sync();
@@ -189,6 +231,8 @@ class CallStore {
     this.roomId = null;
     this.status = null;
     this.tiles = [];
+    this.deafened = false;
+    this.talking = false;
     for (const el of this.#audio.values()) el.remove();
     this.#audio.clear();
     await lk?.disconnect().catch(() => {});
@@ -197,9 +241,80 @@ class CallStore {
 
   async toggleMic() {
     if (!this.#lk) return;
+    // Unmuting while deafened undeafens too (as Discord does).
+    if (this.deafened && !this.micOn) this.#setDeafened(false);
     this.micOn = !this.micOn;
     await this.#lk.localParticipant.setMicrophoneEnabled(this.micOn).catch((e) => this.#fail("microphone", e));
     this.#sync();
+  }
+
+  async toggleDeafen() {
+    if (!this.#lk) return;
+    const deaf = !this.deafened;
+    this.#setDeafened(deaf);
+    if (deaf) {
+      this.#micBeforeDeafen = this.micOn;
+      if (this.micOn) await this.#setMic(false);
+    } else if (this.#micBeforeDeafen && !this.prefs.pushToTalk) {
+      await this.#setMic(true);
+    }
+  }
+
+  #setDeafened(deaf: boolean) {
+    this.deafened = deaf;
+    for (const el of this.#audio.values()) el.muted = deaf;
+  }
+
+  async #setMic(on: boolean) {
+    if (!this.#lk) return;
+    this.micOn = on;
+    await this.#lk.localParticipant.setMicrophoneEnabled(on).catch((e) => this.#fail("microphone", e));
+    this.#sync();
+  }
+
+  /** Push-to-talk: hold to speak. */
+  async talk(on: boolean) {
+    if (!this.#lk || !this.prefs.pushToTalk || this.deafened || this.talking === on) return;
+    this.talking = on;
+    await this.#setMic(on);
+  }
+
+  #savePrefs() {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs));
+  }
+
+  async setPushToTalk(on: boolean) {
+    this.prefs = { ...this.prefs, pushToTalk: on };
+    this.#savePrefs();
+    this.talking = false;
+    if (this.#lk && !this.deafened) await this.#setMic(!on);
+  }
+
+  async setNoiseSuppression(on: boolean) {
+    this.prefs = { ...this.prefs, noiseSuppression: on };
+    this.#savePrefs();
+    // Applied to the live microphone too (browsers that can't change it keep the old one).
+    const mic = this.#lk?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    await mic?.mediaStreamTrack.applyConstraints({ noiseSuppression: on }).catch(() => {});
+  }
+
+  volumeOf(userId: string) {
+    return this.prefs.volumes[userId] ?? 1;
+  }
+
+  setVolume(userId: string, volume: number) {
+    const volumes = { ...this.prefs.volumes };
+    if (volume >= 0.999) delete volumes[userId];
+    else volumes[userId] = volume;
+    this.prefs = { ...this.prefs, volumes };
+    this.#savePrefs();
+    for (const p of this.#lk?.remoteParticipants.values() ?? []) {
+      if (userOf(p.identity) === userId) this.#applyVolume(p);
+    }
+  }
+
+  #applyVolume(participant: RemoteParticipant) {
+    participant.setVolume(this.volumeOf(userOf(participant.identity)));
   }
 
   async toggleCamera() {
@@ -231,6 +346,7 @@ class CallStore {
     if (track.kind !== Track.Kind.Audio || !track.sid) return;
     const el = track.attach();
     el.style.display = "none";
+    el.muted = this.deafened;
     document.body.append(el);
     this.#audio.set(track.sid, el);
   }
