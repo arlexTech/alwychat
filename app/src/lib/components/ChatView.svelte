@@ -180,7 +180,7 @@
 
   // A 1:1 chat is titled with the nickname given to the other person, if any.
   const title = $derived((room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);
-  // The chat's own quick reaction (shared by its members), ❤️ until someone picks one.
+  // The chat's own quick reaction (shared by its members), 🔥 until someone picks one.
   const QUICK_REACTION = $derived(chat.style?.quick_reaction ?? DEFAULT_QUICK_REACTION);
 
   /** Our typing notice is refreshed this often while typing, and dropped after this much idle. */

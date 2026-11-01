@@ -43,4 +43,4 @@ export const themeById = (id: string | null | undefined) => THEMES.find((t) => t
 /** Offered first in the quick reaction picker (any emoji can be typed too). */
 export const QUICK_REACTIONS = ["❤️", "👍", "😂", "🔥", "😍", "🥰", "😘", "🙏", "🎉", "💜", "🌸", "🐱", "🐳", "🚀"];
 
-export const DEFAULT_QUICK_REACTION = "❤️";
+export const DEFAULT_QUICK_REACTION = "🔥";
