@@ -865,3 +865,10 @@ export const setNotificationRule = (rule: "room_mentions" | "invites", enabled: 
   invoke<void>("set_notification_rule", { rule, enabled });
 export const setKeyword = (keyword: string, add: boolean) => invoke<void>("set_keyword", { keyword, add });
 export const appVersion = () => getVersion();
+
+/** What another app shared with us (Android "Share" → AlwyChat), taken once. */
+export interface IncomingShare {
+  text?: string | null;
+  files: Picked[];
+}
+export const takeShare = () => invoke<IncomingShare>("take_share");

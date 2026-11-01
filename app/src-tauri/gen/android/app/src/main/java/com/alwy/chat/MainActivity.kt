@@ -1,5 +1,6 @@
 package com.alwy.chat
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -12,6 +13,18 @@ class MainActivity : TauriActivity() {
   companion object {
     /** On screen: pushes don't notify then (the app shows the message itself). */
     @Volatile var visible = false
+
+    /** The last "Share" sent to us from another app, until the UI takes it (GalleryPlugin.takeShare). */
+    @Volatile var share: Intent? = null
+  }
+
+  private fun keepShare(intent: Intent?) {
+    if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) share = intent
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    keepShare(intent)
   }
 
   override fun onResume() {
@@ -31,6 +44,7 @@ class MainActivity : TauriActivity() {
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
     )
     super.onCreate(savedInstanceState)
+    keepShare(intent)
     // Same colour as the app background (--bg in app.css), seen behind the system bars.
     window.decorView.setBackgroundColor(Color.parseColor("#0e1014"))
 

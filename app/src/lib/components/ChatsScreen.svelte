@@ -58,6 +58,10 @@
   import NewChatPage from "./NewChatPage.svelte";
   import { me } from "$lib/stores/me.svelte";
   import { nav } from "$lib/stores/nav.svelte";
+  import { share } from "$lib/stores/share.svelte";
+  import { pickedMediaUrl } from "$lib/media";
+  import ForwardPage from "./ForwardPage.svelte";
+  import FileIcon from "@lucide/svelte/icons/file";
 
   let { account, onSignOut }: { account: Account; onSignOut: () => void } = $props();
 
@@ -216,6 +220,7 @@
   onMount(() => {
     chatList.start();
     void me.refresh();
+    share.start();
     nav.attach(
       (id) => ((selectedId = id), (newChatOpen = false), (settingsOpen = false)),
       () => ((tab = "spaces"), (selectedId = null), (newChatOpen = false)),
@@ -385,6 +390,26 @@
   <EncryptionSheet />
 {/if}
 
+{#if share.incoming}
+  {@const s = share.incoming}
+  <ForwardPage
+    title="Share to…"
+    onClose={() => share.cancel()}
+    onPick={(r) => {
+      share.deliver(r.id);
+      nav.openChat(r.id);
+    }}
+  >
+    <div class="share-preview">
+      {#each s.files.slice(0, 4) as f (f.path)}
+        {#if f.mime.startsWith("image/")}<img src={pickedMediaUrl(f.path)} alt="" />{:else}<span class="share-file"><FileIcon size={16} />{f.name}</span>{/if}
+      {/each}
+      {#if s.files.length > 4}<span class="share-file">+{s.files.length - 4}</span>{/if}
+      {#if s.text}<p>{s.text}</p>{/if}
+    </div>
+  </ForwardPage>
+{/if}
+
 {#if newChatOpen}
   <NewChatPage
     onClose={() => (newChatOpen = false)}
@@ -463,6 +488,36 @@
     margin: 0;
     font-size: 1.6rem;
     font-weight: 700;
+  }
+  .share-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .share-preview img {
+    width: 64px;
+    height: 64px;
+    border-radius: 10px;
+    object-fit: cover;
+  }
+  .share-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: var(--surface);
+    font-size: 0.9rem;
+  }
+  .share-preview p {
+    width: 100%;
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--surface);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
   .new-chat {
     display: grid;

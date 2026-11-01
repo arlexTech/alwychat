@@ -1,19 +1,32 @@
 <script lang="ts">
   import Send from "@lucide/svelte/icons/send-horizontal";
   import type { RoomSummary } from "$lib/backend";
+  import type { Snippet } from "svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import Avatar from "./Avatar.svelte";
   import Page from "./Page.svelte";
 
-  let { onPick, onClose }: { onPick: (room: RoomSummary) => void; onClose: () => void } = $props();
+  let {
+    title = "Forward to…",
+    onPick,
+    onClose,
+    children,
+  }: {
+    title?: string;
+    onPick: (room: RoomSummary) => void;
+    onClose: () => void;
+    /** Shown above the search (what's being sent). */
+    children?: Snippet;
+  } = $props();
 
   let query = $state("");
   const rooms = $derived(
-    chatList.rooms.filter((r) => !query.trim() || r.name.toLowerCase().includes(query.trim().toLowerCase())),
+    chatList.rooms.filter((r) => !r.is_invite && !r.is_space).filter((r) => !query.trim() || r.name.toLowerCase().includes(query.trim().toLowerCase())),
   );
 </script>
 
-<Page title="Forward to…" {onClose}>
+<Page {title} {onClose}>
+  {@render children?.()}
   <input class="search" bind:value={query} placeholder="Search chats" />
   <ul>
     {#each rooms as r (r.id)}

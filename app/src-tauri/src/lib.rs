@@ -1080,6 +1080,34 @@ struct Picked {
     size: u64,
 }
 
+/// What another app shared with us ("Share" → AlwyChat), taken once; files are copied like
+/// picked ones. Android only (empty elsewhere).
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Share {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    files: Vec<Picked>,
+}
+
+#[tauri::command]
+async fn take_share(app: tauri::AppHandle) -> Result<Share, String> {
+    #[cfg(target_os = "android")]
+    {
+        let dir = picked_dir(&app)?.display().to_string();
+        app.state::<android::Gallery>()
+            .0
+            .run_mobile_plugin_async("takeShare", serde_json::json!({ "path": dir }))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(Share::default())
+    }
+}
+
 /// Open the system photo picker (`kind` = "media") or document picker ("files").
 #[tauri::command]
 async fn pick_files(app: tauri::AppHandle, kind: String) -> Result<Vec<Picked>, String> {
@@ -1695,6 +1723,7 @@ pub fn run() {
             save_media,
             send_file,
             pick_files,
+            take_share,
             send_picked,
             send_voice,
             discard_picked,

@@ -119,6 +119,47 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
       .put("size", target.length())
   }
 
+  /**
+   * What another app shared with us (text and/or files), once: the files are copied to `dir`
+   * like picked ones, so the UI previews and sends them the same way. Empty when nothing waits.
+   */
+  @Command
+  fun takeShare(invoke: Invoke) {
+    val args = invoke.parseArgs(FileArgs::class.java)
+    val intent = MainActivity.share
+    MainActivity.share = null
+    if (intent == null) {
+      invoke.resolve(JSObject().put("files", JSArray()))
+      return
+    }
+    val uris = mutableListOf<Uri>()
+    if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+      @Suppress("DEPRECATION")
+      intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris.addAll(it) }
+    } else {
+      @Suppress("DEPRECATION")
+      (intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))?.let { uris.add(it) }
+    }
+    val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+    val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+    Thread {
+      try {
+        val dir = File(args.path).apply { mkdirs() }
+        val files = JSArray()
+        uris.forEachIndexed { i, uri -> files.put(copyPicked(uri, dir, i)) }
+        val result = JSObject().put("files", files)
+        // Some apps put the page title in the subject and only the link in the text.
+        val body = listOfNotNull(subject?.takeIf { s -> text?.contains(s) != true }, text)
+          .filter { it.isNotBlank() }
+          .joinToString("\n")
+        if (body.isNotEmpty()) result.put("text", body)
+        invoke.resolve(result)
+      } catch (e: Exception) {
+        invoke.reject(e.message ?: e.toString())
+      }
+    }.start()
+  }
+
   @Command
   fun save(invoke: Invoke) {
     val args = invoke.parseArgs(SaveArgs::class.java)

@@ -52,6 +52,7 @@
   import { chat } from "$lib/stores/chat.svelte";
   import { drafts } from "$lib/stores/drafts.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
+  import { share } from "$lib/stores/share.svelte";
   import { playEffect } from "$lib/effects";
   import ChatSearchPage from "./ChatSearchPage.svelte";
   import SharedMediaPage from "./SharedMediaPage.svelte";
@@ -430,6 +431,18 @@
     }
     input?.focus();
   }
+
+  // Shared from another app into this chat: it waits in the composer for a caption and Send.
+  $effect(() => {
+    if (thread || share.ready?.roomId !== room.id) return;
+    const shared = untrack(() => share.take(room.id));
+    if (!shared) return;
+    for (const picked of shared.files) {
+      const url = picked.mime.startsWith("image/") ? pickedMediaUrl(picked.path) : null;
+      pending.push({ name: picked.name, mime: picked.mime, url, picked });
+    }
+    if (shared.text) draft = draft.trim() ? `${draft}\n${shared.text}` : shared.text;
+  });
 
   /** Android: the system photo picker or document picker, several items at once. */
   async function pick(kind: "media" | "files") {
