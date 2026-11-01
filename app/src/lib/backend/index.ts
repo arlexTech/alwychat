@@ -916,3 +916,18 @@ export interface PushTestResult {
 }
 /** Android: check push end to end; a test notification should appear. */
 export const testPush = () => invoke<PushTestResult>("test_push");
+
+export interface DayCount {
+  /** Start of the (UTC) day, ms. */
+  day: number;
+  mine: number;
+  others: number;
+}
+export interface Activity {
+  days: DayCount[];
+  /** False while older messages are still being indexed. */
+  complete: boolean;
+}
+export const messageActivity = (roomId: string) => invoke<Activity>("message_activity", { roomId });
+/** The first message on or after `ts` (ms). */
+export const messageAt = (roomId: string, ts: number) => invoke<string | null>("message_at", { roomId, ts });

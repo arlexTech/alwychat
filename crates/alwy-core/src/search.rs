@@ -528,6 +528,70 @@ impl SearchIndex {
     }
 }
 
+impl SearchIndex {
+    /// Messages per UTC day in a chat: (day start in ms, ours, others').
+    fn activity(&self, room_id: &str, me: &str) -> Result<(Vec<DayCount>, bool)> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db
+            .prepare(
+                "SELECT ts / 86400000, SUM(sender = ?2), SUM(sender <> ?2) FROM msg
+                 WHERE room_id = ?1 GROUP BY ts / 86400000 ORDER BY 1",
+            )
+            .map_err(sql)?;
+        let days = stmt
+            .query_map(params![room_id, me], |r| {
+                Ok(DayCount {
+                    day: r.get::<_, i64>(0)? * 86_400_000,
+                    mine: r.get(1)?,
+                    others: r.get(2)?,
+                })
+            })
+            .map_err(sql)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sql)?;
+        let complete = db
+            .query_row(
+                "SELECT done FROM backfill WHERE room_id = ?1",
+                params![room_id],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap_or(false);
+        Ok((days, complete))
+    }
+
+    /// The first indexed message at or after `ts`.
+    fn first_at(&self, room_id: &str, ts: i64) -> Result<Option<String>> {
+        let db = self.db.lock().unwrap();
+        db.query_row(
+            "SELECT event_id FROM msg WHERE room_id = ?1 AND ts >= ?2 ORDER BY ts LIMIT 1",
+            params![room_id, ts],
+            |r| r.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(sql(e)),
+        })
+    }
+}
+
+/// Messages sent on one (UTC) day.
+#[derive(Debug, Clone, Serialize)]
+pub struct DayCount {
+    /// Start of the day, ms since epoch.
+    pub day: i64,
+    pub mine: u32,
+    pub others: u32,
+}
+
+/// A chat's message history over time, for its "History" graph.
+#[derive(Debug, Clone, Serialize)]
+pub struct Activity {
+    pub days: Vec<DayCount>,
+    /// The whole history is indexed (else older messages are still being fetched).
+    pub complete: bool,
+}
+
 fn sql(e: rusqlite::Error) -> Error {
     Error::Search(e.to_string())
 }
@@ -747,6 +811,32 @@ impl crate::Core {
     }
 
     /// A chat's photos and videos, files or links, newest first (`before` pages on).
+    /// How many messages per day in a chat (from the local index: whole history once the
+    /// background backfill has reached it; it's prioritised while this is asked).
+    pub async fn message_activity(&self, room_id: &str) -> Result<Activity> {
+        let index = self.search_index()?;
+        *index.priority.lock().unwrap() = OwnedRoomId::try_from(room_id).ok();
+        let me = self
+            .client()?
+            .user_id()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let room_id = room_id.to_owned();
+        let (days, complete) = tokio::task::spawn_blocking(move || index.activity(&room_id, &me))
+            .await
+            .map_err(|e| Error::Search(e.to_string()))??;
+        Ok(Activity { days, complete })
+    }
+
+    /// The first message on or after `ts` (ms), to jump there.
+    pub async fn message_at(&self, room_id: &str, ts: i64) -> Result<Option<String>> {
+        let index = self.search_index()?;
+        let room_id = room_id.to_owned();
+        tokio::task::spawn_blocking(move || index.first_at(&room_id, ts))
+            .await
+            .map_err(|e| Error::Search(e.to_string()))?
+    }
+
     pub async fn shared_media(
         &self,
         room_id: &str,

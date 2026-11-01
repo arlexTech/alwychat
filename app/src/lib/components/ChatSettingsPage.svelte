@@ -15,6 +15,7 @@
   import Users from "@lucide/svelte/icons/users";
   import CaseSensitive from "@lucide/svelte/icons/case-sensitive";
   import Palette from "@lucide/svelte/icons/palette";
+  import ChartColumn from "@lucide/svelte/icons/chart-column";
   import ImageUp from "@lucide/svelte/icons/image-up";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
@@ -38,6 +39,7 @@
     onChooseHd,
     onSharedMedia,
     onSearch,
+    onHistory,
     onClose,
     onLeft,
   }: {
@@ -47,6 +49,7 @@
     onChooseHd: (hd: boolean | null) => void;
     onSharedMedia: () => void;
     onSearch: () => void;
+    onHistory: () => void;
     onClose: () => void;
     /** We left the chat: close it. */
     onLeft: () => void;
@@ -137,6 +140,10 @@
   <h3 class="m-section">Chat info</h3>
   <button class="m-row" onclick={onSharedMedia}>
     <span class="m-icon"><Images size={20} /></span><span class="m-text"><strong>Media, files & links</strong></span><ChevronRight size={18} />
+  </button>
+  <button class="m-row" onclick={onHistory}>
+    <span class="m-icon"><ChartColumn size={20} /></span>
+    <span class="m-text"><strong>History</strong><small>Messages over time; tap a moment to go there</small></span><ChevronRight size={18} />
   </button>
   <button class="m-row" onclick={() => (sub = "customize")}>
     <span class="m-icon"><Palette size={20} /></span>

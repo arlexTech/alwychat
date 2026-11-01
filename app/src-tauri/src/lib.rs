@@ -568,6 +568,23 @@ async fn retry_send(
 }
 
 #[tauri::command]
+async fn message_activity(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<alwy_core::search::Activity> {
+    core.message_activity(&room_id).await
+}
+
+#[tauri::command]
+async fn message_at(
+    core: State<'_, AppCore>,
+    room_id: String,
+    ts: i64,
+) -> alwy_core::Result<Option<String>> {
+    core.message_at(&room_id, ts).await
+}
+
+#[tauri::command]
 async fn can_add_to_space(core: State<'_, AppCore>, space_id: String) -> alwy_core::Result<bool> {
     core.can_add_to_space(&space_id).await
 }
@@ -1817,6 +1834,8 @@ pub fn run() {
             close_space,
             join_room,
             can_add_to_space,
+            message_activity,
+            message_at,
             retry_send,
             subscribe_connection,
             resume_sync,

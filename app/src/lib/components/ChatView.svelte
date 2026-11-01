@@ -86,6 +86,7 @@
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatSettingsPage from "./ChatSettingsPage.svelte";
   import CustomizePage from "./CustomizePage.svelte";
+  import HistoryPage from "./HistoryPage.svelte";
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
@@ -205,6 +206,10 @@
   let fileInput = $state<HTMLInputElement>() as HTMLInputElement;
   let chatMenuOpen = $state(false);
   let customizeOpen = $state(false);
+  let historyOpen = $state(false);
+  $effect(() => {
+    if (historyOpen) return closeOnBack(() => (historyOpen = false));
+  });
   $effect(() => {
     if (customizeOpen) return closeOnBack(() => (customizeOpen = false));
   });
@@ -397,7 +402,24 @@
 
   // The list is laid out bottom-up (column-reverse): scrollTop 0 is the newest message,
   // and the browser keeps that anchor while older messages are prepended.
+  /** Scrolled up far enough to offer the way back down; the newest entry seen then. */
+  let scrolledUp = $state(false);
+  let lastAtBottom = $state<string | null>(null);
+  const lastKey = $derived(tl.entries.at(-1)?.key ?? null);
+  const newBelow = $derived(scrolledUp && lastAtBottom !== null && lastKey !== lastAtBottom);
+  function toBottom() {
+    scroller.scrollTo({ top: 0, behavior: "smooth" });
+    // Some webviews skip smooth scrolling in a reversed list: land there anyway.
+    setTimeout(() => {
+      if (Math.abs(scroller.scrollTop) > 50) scroller.scrollTop = 0;
+      onScroll();
+    }, 700);
+  }
+
   function onScroll() {
+    const up = Math.abs(scroller.scrollTop) > 600;
+    if (up && !scrolledUp) lastAtBottom = lastKey;
+    scrolledUp = up;
     const fromTop = scroller.scrollHeight + scroller.scrollTop - scroller.clientHeight;
     if (fromTop < 400) tl.older();
     // Opened on an older message: newer ones load near the bottom.
@@ -1107,6 +1129,9 @@
     <strong>Join</strong>
   </button>
 {/if}
+{#if historyOpen}
+  <HistoryPage roomId={room.id} onClose={() => (historyOpen = false)} onJump={(id) => ((historyOpen = false), void showMessage(id))} />
+{/if}
 {#if customizeOpen}
   <CustomizePage roomId={room.id} onClose={() => (customizeOpen = false)} />
 {/if}
@@ -1117,6 +1142,7 @@
     onChooseHd={chooseHd}
     onSharedMedia={() => ((chatMenuOpen = false), (mediaOpen = true))}
     onSearch={() => ((chatMenuOpen = false), (searchOpen = true))}
+    onHistory={() => ((chatMenuOpen = false), (historyOpen = true))}
     onClose={() => (chatMenuOpen = false)}
     onLeft={() => ((chatMenuOpen = false), onBack?.())}
   />
@@ -1372,6 +1398,12 @@
       <ChatView {room} thread={threadRoot} onBack={() => (threadRoot = null)} />
     </div>
   {/key}
+{/if}
+{#if scrolledUp && !tl.focused && !thread}
+  <button class="to-bottom" class:fresh={newBelow} onclick={toBottom} aria-label={newBelow ? "New messages below" : "Back to the newest messages"} transition:fade={{ duration: 150 }}>
+    <ArrowDown size={20} />
+    {#if newBelow}<span class="fresh-dot"></span>{/if}
+  </button>
 {/if}
 {#if tl.focused}
   <button class="latest" onclick={() => tl.latest()} transition:fade={{ duration: 150 }}>
@@ -1792,6 +1824,37 @@
       transform: translateY(-4px);
       opacity: 1;
     }
+  }
+  .to-bottom {
+    position: fixed;
+    right: 16px;
+    bottom: 84px;
+    z-index: 5;
+    display: grid;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface-2);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .to-bottom.fresh {
+    border-color: transparent;
+    background: var(--accent);
+    color: white;
+  }
+  .fresh-dot {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    background: var(--danger);
   }
   .latest {
     position: fixed;
