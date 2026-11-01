@@ -3,6 +3,8 @@
   import Phone from "@lucide/svelte/icons/phone";
   import Pin from "@lucide/svelte/icons/pin";
   import Volume2 from "@lucide/svelte/icons/volume-2";
+  import MapPin from "@lucide/svelte/icons/map-pin";
+  import { liveLocation } from "$lib/stores/liveLocation.svelte";
   import type { RoomSummary } from "$lib/backend";
   import { shortTime } from "$lib/format";
   import { drafts } from "$lib/stores/drafts.svelte";
@@ -46,6 +48,7 @@
         <span class="status-emoji" title={profiles.statusLabel(room.dm_user)}>{profiles.get(room.dm_user)?.status?.emoji}</span>
       {/if}
       {#if room.in_call.length}<span class="icon in-call" title="{room.in_call.length} in the call"><Phone size={12} /> {room.in_call.length}</span>{/if}
+      {#if liveLocation.sharing(room.id)}<span class="icon live" title="You're sharing your live location here"><MapPin size={13} /></span>{/if}
       {#if room.is_muted}<span class="icon" title="Muted"><BellOff size={13} /></span>{/if}
       {#if room.is_favourite}<span class="icon" title="Pinned"><Pin size={13} /></span>{/if}
       <span class="time">{shortTime(room.latest?.timestamp)}</span>
@@ -190,6 +193,9 @@
     border: 3px solid var(--surface);
     border-radius: 50%;
     background: #31d158;
+  }
+  .icon.live {
+    color: #31d158;
   }
   .in-call {
     display: inline-flex;

@@ -580,6 +580,7 @@
   .chat-pane.scenic > :global(.scroller),
   .chat-pane.scenic > :global(form),
   .chat-pane.scenic > :global(.pin-banner),
+  .chat-pane.scenic > :global(.live-bar),
   .chat-pane.scenic > :global(.call-banner),
   .chat-pane.scenic > :global(.typing) {
     position: relative;

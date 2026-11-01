@@ -13,7 +13,7 @@
   import { fade, scale } from "svelte/transition";
   import { isAndroid, openExternal, type MessageEntry } from "$lib/backend";
   import MapPin from "@lucide/svelte/icons/map-pin";
-  import { liveLocation } from "$lib/stores/liveLocation.svelte";
+  import { liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { clockTime } from "$lib/format";
   import { eventMediaUrl } from "$lib/media";
   import { onBack } from "$lib/back.svelte";
@@ -356,7 +356,7 @@
                 <strong>{live ? "Live location" : "Live location ended"}</strong>
                 <small>
                   {#if !at}Waiting for the first position…
-                  {:else if live}Until {new Date(c.ends_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{c.updated ? ` · updated ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps
+                  {:else if live}{c.ends_at - Date.now() > 20 * 3600_000 ? "Until stopped" : `Until ${untilTime(c.ends_at)}`}{c.updated ? ` · updated ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps
                   {:else}Last position{c.updated ? ` at ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps{/if}
                 </small>
               </span>

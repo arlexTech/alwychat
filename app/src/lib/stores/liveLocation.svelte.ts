@@ -7,6 +7,14 @@ const MIN_INTERVAL_MS = 15_000;
 const MIN_MOVE_M = 25;
 const KEY = "alwychat.liveLocation";
 
+/** "14:30", "tomorrow 14:30" or a date: when a share ends. */
+export function untilTime(at: number) {
+  const time = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((day(new Date(at)) - day(new Date())) / 86_400_000);
+  return days === 0 ? time : days === 1 ? `tomorrow ${time}` : `${new Date(at).toLocaleDateString()} ${time}`;
+}
+
 type Share = { roomId: string; shareId: string; endsAt: number };
 
 export const geoUri = (lat: number, lon: number, accuracy?: number | null) =>

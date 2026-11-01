@@ -35,7 +35,7 @@
   import Type from "@lucide/svelte/icons/type";
   import X from "@lucide/svelte/icons/x";
   import EmojiPicker from "./EmojiPicker.svelte";
-  import { geoUri, liveLocation } from "$lib/stores/liveLocation.svelte";
+  import { geoUri, liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { tick, untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import {
@@ -877,6 +877,7 @@
     { ms: 24 * 3600_000, label: "Until I stop" },
   ];
   const mySharing = $derived(liveLocation.sharing(target));
+  const untilLabel = (endsAt: number, open: boolean) => (open ? "until you stop" : `until ${untilTime(endsAt)}`);
 
   async function shareLive(ms: number) {
     const d = locationDraft;
@@ -1041,6 +1042,13 @@
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
   {/if}
 </header>
+{#if mySharing && !thread}
+  <div class="live-bar" transition:fly={{ y: -6, duration: 140 }}>
+    <span class="live-dot"></span>
+    <span>Sharing your live location · {untilLabel(mySharing.endsAt, mySharing.endsAt - Date.now() > 20 * 3600_000)}</span>
+    <button type="button" onclick={() => liveLocation.stop(target)}>Stop</button>
+  </div>
+{/if}
 {#if shownPin && !thread}
   <div class="pin-banner" transition:fade={{ duration: 150 }}>
     <button class="pin-main" onclick={onPinBanner}>
@@ -1248,13 +1256,6 @@
       <button type="button" onclick={() => linePrefix("1. ")} aria-label="Numbered list"><ListOrdered size={18} /></button>
       <button type="button" onclick={() => wrap("[", "](https://)")} aria-label="Link"><LinkIcon size={18} /></button>
       <button type="button" class="close" onclick={() => (formatting = false)} aria-label="Close formatting"><X size={18} /></button>
-    </div>
-  {/if}
-  {#if mySharing && !thread}
-    <div class="live-bar" transition:fly={{ y: 6, duration: 140 }}>
-      <span class="live-dot"></span>
-      <span>Sharing your live location · {mySharing.endsAt - Date.now() > 20 * 3600_000 ? "until you stop" : `until ${new Date(mySharing.endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}</span>
-      <button type="button" onclick={() => liveLocation.stop(target)}>Stop</button>
     </div>
   {/if}
   {#if locationDraft}
@@ -2010,7 +2011,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 6px;
+    margin: 8px 12px 0;
     padding: 8px 8px 8px 14px;
     border-radius: 14px;
     background: color-mix(in srgb, #31d158 14%, var(--surface-2));
