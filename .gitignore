@@ -6,3 +6,6 @@ app/src-tauri/gen/schemas/
 .env
 *.log
 .DS_Store
+
+# Local notes for Claude (server details, kept off GitHub)
+CLAUDE.md

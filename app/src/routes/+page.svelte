@@ -10,7 +10,7 @@
   /** The local restore is quick: only say something if it isn't. */
   let slow = $state(false);
   setTimeout(() => (slow = true), 1200);
-  let server = $state("example.org");
+  let server = $state("matrix.org");
   let account = $state<Account | null>(null);
   let error = $state<string | null>(null);
 
