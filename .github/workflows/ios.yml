@@ -1,0 +1,75 @@
+# Unsigned iPhone build (no paid Apple account yet): an .ipa to install with SideStore or
+# AltStore, which re-sign it with a free Apple ID. The Xcode project (gen/apple) is generated
+# here because `tauri ios init` only runs on macOS.
+
+name: iOS
+
+on:
+  push:
+    branches: [main, ios-ci]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS (unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate the Xcode project
+        working-directory: app
+        run: |
+          pnpm tauri ios init --ci
+          # No signing: SideStore/AltStore sign the app on the phone's side.
+          find src-tauri/gen/apple -name project.pbxproj -exec sed -i '' \
+            -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = "";/' {} +
+          plutil -p src-tauri/gen/apple/*_iOS/Info.plist || true
+
+      - name: Build
+        working-directory: app
+        # The archive is what we need; exporting a signed .ipa afterwards is expected to fail.
+        run: pnpm tauri ios build --target aarch64 || echo "build step ended with an error (export needs signing)"
+
+      - name: Package the .ipa
+        run: |
+          app=$(find app/src-tauri/gen/apple -path '*.xcarchive/Products/Applications/*.app' -maxdepth 6 -type d | head -1)
+          [ -z "$app" ] && app=$(find app/src-tauri/gen/apple/build -name '*.app' -type d | grep -i iphoneos | head -1)
+          if [ -z "$app" ]; then echo "no .app found"; find app/src-tauri/gen/apple/build -maxdepth 4; exit 1; fi
+          echo "app: $app"
+          mkdir -p ipa/Payload out
+          cp -R "$app" ipa/Payload/
+          (cd ipa && zip -qr ../out/AlwyChat-ios-unsigned.ipa Payload)
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alwychat-iOS
+          path: out/*
+      - name: Keep the generated Xcode project
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gen-apple
+          path: |
+            app/src-tauri/gen/apple
+            !app/src-tauri/gen/apple/build

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged by Tauri into the generated iOS Info.plist: why AlwyChat asks for each permission. -->
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AlwyChat uses the microphone for voice messages and calls.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>AlwyChat uses the camera to take photos and videos for your chats, and for video calls.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>AlwyChat lets you pick photos and videos to send.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>AlwyChat saves photos and videos from your chats to your library when you ask.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>AlwyChat sends your location to a chat only when you choose to share it.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>AlwyChat can use Face ID to unlock the app if you turn on the app lock.</string>
+</dict>
+</plist>
