@@ -721,9 +721,32 @@
   }
 
   function autosize() {
+    // Empty: back to one row. Measuring here could catch the field while it's briefly
+    // narrow (send button leaving, left buttons coming back) with the placeholder wrapped
+    // over two lines, and that height would stick (Android).
+    if (!input.value) {
+      input.style.height = "";
+      return;
+    }
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
   }
+
+  // The field's width changes when the buttons around it fold or unfold (typing, attachments,
+  // editing) and with the window: measure again then, and once more after the buttons'
+  // 140 ms slide.
+  $effect(() => {
+    void [typingMode, toolsShown, pending.length, editing, emojiOpen];
+    if (!input) return;
+    tick().then(autosize);
+    const later = setTimeout(autosize, 220);
+    return () => clearTimeout(later);
+  });
+  $effect(() => {
+    const onResize = () => input && autosize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  });
 
   function react(msg: MessageEntry, key: string) {
     toggleReaction(target, msg.item_id, key).catch((e) => (sendError = String(e)));
