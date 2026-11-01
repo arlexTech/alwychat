@@ -175,6 +175,8 @@ class CallStore {
       const message = String(e);
       await this.leave();
       this.error = message;
+      // The call view is gone by now: say why.
+      this.#tell(`Couldn't join the call: ${message.replace(/^Error: /, "")}`);
     }
   }
 

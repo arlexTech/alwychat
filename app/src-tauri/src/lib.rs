@@ -1699,6 +1699,8 @@ pub fn run() {
     let builder = builder.setup(|app| {
         #[cfg(target_os = "android")]
         init_android_tls()?;
+        #[cfg(target_os = "linux")]
+        enable_webrtc(app)?;
         let data_dir = app.path().app_data_dir()?;
         let core = shared_core(data_dir);
         let handle = app.handle().clone();
@@ -2101,6 +2103,38 @@ async fn serve_media(
 }
 
 /// `media://localhost/_picked/<file name>`: preview of a file waiting to be sent.
+/// WebKitGTK has WebRTC and media capture off by default: calls failed at once ("joined",
+/// then "left" 0.1 s later). Turn them on, and grant the microphone, camera and screen to the
+/// app's own pages (the CSP keeps anything else out); other permission requests keep the
+/// default answer.
+#[cfg(target_os = "linux")]
+fn enable_webrtc(app: &tauri::App) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    window.with_webview(|webview| {
+        use webkit2gtk::glib::prelude::Cast;
+        use webkit2gtk::{
+            PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, WebViewExt,
+        };
+        let view = webview.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_webrtc(true);
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|_, request| {
+            if request
+                .downcast_ref::<UserMediaPermissionRequest>()
+                .is_some()
+            {
+                request.allow();
+                return true;
+            }
+            false
+        });
+    })
+}
+
 /// Media bytes come from other people, with the type they declared: never let the webview
 /// guess another type, and never let a response act as a page (no scripts, no forms).
 fn harden(mut response: http::Response<Vec<u8>>) -> http::Response<Vec<u8>> {

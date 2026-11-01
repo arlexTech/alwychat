@@ -123,6 +123,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tracing",
  "tracing-subscriber",
+ "webkit2gtk",
  "zbus 5.19.0",
 ]
 
