@@ -27,6 +27,7 @@
     startSearchBackfill,
     onOpenRoom,
     setupPush,
+    systemStatus,
     setArchived,
     setMarkedUnread,
     setMuted,
@@ -239,10 +240,19 @@
     // Tapped notifications open their chat (cold start, or while running).
     launchRoom().then((id) => id && (selectedId = id), () => {});
     const stopOpenRoom = onOpenRoom((id) => (selectedId = id));
-    // Re-register push each start: the token may have changed since.
+    // Re-register push each start: the token may have changed since. A new install asks
+    // once for permission to show notifications (Android 13+), right after signing in;
+    // after that, only the switch in Settings asks again.
     if (isAndroid)
       getSettings()
-        .then((s) => setupPush(s.notifications))
+        .then(async (s) => {
+          if (s.notifications && !localStorage.getItem("alwychat.askedNotifications")) {
+            localStorage.setItem("alwychat.askedNotifications", "1");
+            const status = await systemStatus().catch(() => null);
+            if (status && !status.notifications) await systemStatus("notifications").catch(() => {});
+          }
+          await setupPush(s.notifications);
+        })
         .catch((e) => console.warn("push setup failed", e));
     return () => {
       void stopOpenRoom.then((stop) => stop());
