@@ -42,8 +42,14 @@ const CLIENT_URI: &str = "https://arlextech.github.io/alwychat";
 /// Mobile redirect target, declared to the OS by the deep-link plugin (tauri.conf.json).
 pub const REDIRECT_SCHEME: &str = "com.alwy.chat";
 const SESSION_FILE: &str = "session.json";
+/// The store of sessions saved before stores got their own folder per sign-in.
 const STORE_DIR: &str = "store";
-/// Created by matrix-sdk-sqlite inside `STORE_DIR`; holds this device's keys.
+/// Each sign-in gets a fresh `store-<random>` folder (recorded in `session.json`): a client
+/// left over from a failed sign-in can still be running, and its database connections would
+/// otherwise open the new session's files at the same path and corrupt them (seen: the crypto
+/// store lost its account).
+const STORE_PREFIX: &str = "store-";
+/// Created by matrix-sdk-sqlite inside the store folder; holds this device's keys.
 const CRYPTO_DB: &str = "matrix-sdk-crypto.sqlite3";
 
 const REDIRECT_PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>AlwyChat</title>
@@ -67,6 +73,13 @@ struct StoredSession {
     client_id: String,
     user: UserSession,
     store_passphrase: String,
+    /// Folder name inside the data dir.
+    #[serde(default = "legacy_store_dir")]
+    store_dir: String,
+}
+
+fn legacy_store_dir() -> String {
+    STORE_DIR.to_owned()
 }
 
 /// App-wide handle to the Matrix account. One per process.
@@ -174,7 +187,13 @@ impl Core {
 
         // Restoring a session onto a missing store would recreate this device with new keys
         // under its old device ID, breaking encryption for it. Treat it as signed out instead.
-        if !self.data_dir.join(STORE_DIR).join(CRYPTO_DB).exists() {
+        let store_dir = stored.store_dir.clone();
+        if store_dir.contains(['/', '\\']) || store_dir.contains("..") {
+            warn!("unexpected store folder in session file, discarding it");
+            tokio::fs::remove_file(&path).await?;
+            return Ok(None);
+        }
+        if !self.data_dir.join(&store_dir).join(CRYPTO_DB).exists() {
             warn!("session file without encryption store, discarding it");
             tokio::fs::remove_file(&path).await?;
             return Ok(None);
@@ -182,7 +201,11 @@ impl Core {
 
         let started = std::time::Instant::now();
         let client = self
-            .build_client(Server::Url(&stored.homeserver), &stored.store_passphrase)
+            .build_client(
+                Server::Url(&stored.homeserver),
+                &stored.store_passphrase,
+                &store_dir,
+            )
             .await?;
         let built = started.elapsed();
         let session = OAuthSession {
@@ -191,7 +214,7 @@ impl Core {
         };
         client.restore_session(session).await?;
         let restored = started.elapsed();
-        self.activate(client.clone(), stored.store_passphrase)
+        self.activate(client.clone(), stored.store_passphrase, store_dir)
             .await?;
         let activated = started.elapsed();
         let account = account(&client).await;
@@ -212,7 +235,15 @@ impl Core {
         // A fresh login always starts from an empty store: keys from another account must not leak in.
         self.wipe_local_data().await?;
         let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 48);
-        let client = self.build_client(Server::Name(server), &passphrase).await?;
+        let store_dir = format!(
+            "{STORE_PREFIX}{}",
+            Alphanumeric
+                .sample_string(&mut rand::rng(), 10)
+                .to_lowercase()
+        );
+        let client = self
+            .build_client(Server::Name(server), &passphrase, &store_dir)
+            .await?;
         info!("client built");
         let oauth = client.oauth();
 
@@ -280,7 +311,7 @@ impl Core {
         };
         oauth.finish_login(callback).await?;
 
-        self.activate(client.clone(), passphrase).await?;
+        self.activate(client.clone(), passphrase, store_dir).await?;
         info!(user = ?client.user_id(), "signed in");
         Ok(account(&client).await)
     }
@@ -344,7 +375,12 @@ impl Core {
         self.wipe_local_data().await
     }
 
-    async fn build_client(&self, server: Server<'_>, passphrase: &str) -> Result<Client> {
+    async fn build_client(
+        &self,
+        server: Server<'_>,
+        passphrase: &str,
+        store_dir: &str,
+    ) -> Result<Client> {
         let builder = match server {
             // User input: resolve via .well-known.
             Server::Name(name) => Client::builder().server_name_or_homeserver_url(name),
@@ -352,7 +388,7 @@ impl Core {
             Server::Url(url) => Client::builder().homeserver_url(url.as_str()),
         };
         Ok(builder
-            .sqlite_store(self.data_dir.join(STORE_DIR), Some(passphrase))
+            .sqlite_store(self.data_dir.join(store_dir), Some(passphrase))
             .handle_refresh_tokens()
             // Same as Element X: fetch missing room keys from the key backup when a message
             // can't be decrypted, and keep backing up our own keys.
@@ -366,9 +402,10 @@ impl Core {
     }
 
     /// Start syncing, store the client and keep the session file up to date when tokens rotate.
-    async fn activate(&self, client: Client, passphrase: String) -> Result<()> {
+    async fn activate(&self, client: Client, passphrase: String, store_dir: String) -> Result<()> {
         let path = self.data_dir.join(SESSION_FILE);
-        persist(&path, &client, &passphrase)?;
+        persist(&path, &client, &passphrase, &store_dir)?;
+        let saved_dir = store_dir.clone();
         let may_persist = Arc::new(AtomicBool::new(true));
         let allowed = may_persist.clone();
 
@@ -387,7 +424,7 @@ impl Core {
                     return Ok(());
                 }
                 info!("tokens refreshed, saving session");
-                Ok(persist(&path, &client, &passphrase)?)
+                Ok(persist(&path, &client, &passphrase, &saved_dir)?)
             }),
         )?;
 
@@ -425,7 +462,7 @@ impl Core {
             .await;
         crate::rtc::install(&client, self.on_call_signal.clone());
         crate::drafts::install(&client, self.on_draft.clone());
-        let search = crate::search::install(&client, &self.data_dir.join(STORE_DIR));
+        let search = crate::search::install(&client, &self.data_dir.join(&store_dir));
 
         // The event cache feeds timelines and chat-list previews; it must run before sync starts.
         client
@@ -506,8 +543,21 @@ impl Core {
     }
 
     async fn wipe_local_data(&self) -> Result<()> {
-        for dir in [STORE_DIR] {
-            match tokio::fs::remove_dir_all(self.data_dir.join(dir)).await {
+        // The old single folder and every per-sign-in one.
+        let mut dirs = vec![self.data_dir.join(STORE_DIR)];
+        if let Ok(mut entries) = tokio::fs::read_dir(&self.data_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(STORE_PREFIX)
+                {
+                    dirs.push(entry.path());
+                }
+            }
+        }
+        for dir in dirs {
+            match tokio::fs::remove_dir_all(&dir).await {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
                 _ => {}
             }
@@ -564,7 +614,7 @@ async fn account(client: &Client) -> Account {
     }
 }
 
-fn persist(path: &Path, client: &Client, passphrase: &str) -> std::io::Result<()> {
+fn persist(path: &Path, client: &Client, passphrase: &str, store_dir: &str) -> std::io::Result<()> {
     let Some(oauth) = client.oauth().full_session() else {
         warn!("no OAuth session to persist");
         return Ok(());
@@ -574,6 +624,7 @@ fn persist(path: &Path, client: &Client, passphrase: &str) -> std::io::Result<()
         client_id: oauth.client_id.as_str().to_owned(),
         user: oauth.user,
         store_passphrase: passphrase.to_owned(),
+        store_dir: store_dir.to_owned(),
     };
     write_private(path, &serde_json::to_vec(&stored).expect("serializable")).inspect_err(|e| {
         warn!("couldn't save session: {e}");
