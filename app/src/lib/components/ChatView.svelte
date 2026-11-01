@@ -86,7 +86,7 @@
   import { DEFAULT_QUICK_REACTION } from "$lib/themes";
   import ChatSettingsPage from "./ChatSettingsPage.svelte";
   import CustomizePage from "./CustomizePage.svelte";
-  import HistoryPage from "./HistoryPage.svelte";
+  import TimelineStrip from "./TimelineStrip.svelte";
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
@@ -1064,6 +1064,9 @@
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
   {/if}
 </header>
+{#if historyOpen && !thread}
+  {#key room.id}<TimelineStrip roomId={room.id} onClose={() => (historyOpen = false)} onJump={(id) => void showMessage(id)} />{/key}
+{/if}
 {#if mySharing && !thread}
   <div class="live-bar" transition:fly={{ y: -6, duration: 140 }}>
     <span class="live-dot"></span>
@@ -1128,9 +1131,6 @@
     <span>{room.in_call.length} in the call</span>
     <strong>Join</strong>
   </button>
-{/if}
-{#if historyOpen}
-  <HistoryPage roomId={room.id} onClose={() => (historyOpen = false)} onJump={(id) => ((historyOpen = false), void showMessage(id))} />
 {/if}
 {#if customizeOpen}
   <CustomizePage roomId={room.id} onClose={() => (customizeOpen = false)} />

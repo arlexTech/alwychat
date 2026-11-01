@@ -143,7 +143,7 @@
   </button>
   <button class="m-row" onclick={onHistory}>
     <span class="m-icon"><ChartColumn size={20} /></span>
-    <span class="m-text"><strong>History</strong><small>Messages over time; tap a moment to go there</small></span><ChevronRight size={18} />
+    <span class="m-text"><strong>Timeline</strong><small>Swipe through the chat's history and jump to any moment</small></span><ChevronRight size={18} />
   </button>
   <button class="m-row" onclick={() => (sub = "customize")}>
     <span class="m-icon"><Palette size={20} /></span>
