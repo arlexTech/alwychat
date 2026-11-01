@@ -158,10 +158,49 @@ jobs:
           name: alwychat-Android
           path: out/*
 
+  web:
+    name: Web
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-bindgen (same version as the crate)
+        run: |
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
+            cargo install wasm-bindgen-cli --locked --version "$version"
+          fi
+      - name: Install
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: app
+        run: pnpm build:web
+      - name: Collect
+        run: |
+          mkdir out
+          (cd app/build-web && zip -qr ../../out/AlwyChat-web.zip .)
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alwychat-Web
+          path: out/*
+
   release:
     name: Draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [desktop, android]
+    needs: [desktop, android, web]
     runs-on: ubuntu-latest
     permissions:
       contents: write

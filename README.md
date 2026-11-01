@@ -16,7 +16,7 @@ Find your device in the table and click the file next to it.
 | 🐧 **Linux**, Fedora / openSUSE | [AlwyChat-linux-x86_64.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) |
 | 🍎 **iPhone / iPad** | Not available yet |
 | 🪟 **Windows** · 🍏 **macOS** | Not available yet |
-| 🌐 **Web browser** | Not available yet ([why](#web-version)) |
+| 🌐 **Web browser**, on your own server | [AlwyChat-web.zip](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-web.zip) ([how to host it](#web-version)) |
 
 Not sure which Linux file to pick? Take the **AppImage**, it works on every distribution.
 
@@ -85,10 +85,28 @@ Your server needs the newer sign-in system, where you log in through your browse
 | Android notifications | Nothing. They go through AlwyChat's push gateway, which only sees a chat ID and a message ID. The phone downloads and decrypts the message itself. |
 
 <a id="web-version"></a>
-### Web version
+### Web version (host it yourself)
 
-There's no web version to host yet. The core of AlwyChat is written in Rust and has to be compiled to WebAssembly before it can run in a browser. That's planned. In the meantime, [Element Web](https://github.com/element-hq/element-web) or [Cinny](https://github.com/cinnyapp/cinny) can run on your server next to AlwyChat, with the same accounts and chats.
+The web version is the same app running in the browser. It's a folder of static files: no database, no server program. Messages are encrypted and decrypted in the browser, like in the apps.
 
+1. Download [AlwyChat-web.zip](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-web.zip) and unzip it into a folder on your server, for example `/srv/alwychat`.
+2. Serve that folder over **https** on its own address, for example `chat.example.org`. Sign-in only works over https. With [Caddy](https://caddyserver.com):
+
+   ```
+   chat.example.org {
+       root * /srv/alwychat
+       file_server
+       try_files {path} /index.html
+       header /_app/immutable/* Cache-Control "public, max-age=31536000, immutable"
+   }
+   ```
+
+   Any web server works (nginx, Apache…), as long as it sends `.wasm` files as `application/wasm`.
+3. Open the address and sign in. The sign-in page opens in a popup, so allow popups for that site if your browser asks.
+
+To serve it under a sub-path (like `example.org/chat/`), build it yourself with `ALWY_WEB_BASE=/chat pnpm build:web`.
+
+What's different from the apps: there are no notifications while the tab is closed, and photos are downloaded instead of saved to a gallery.
 ---
 
 ## Build it yourself
@@ -103,7 +121,10 @@ pnpm install
 pnpm tauri dev                                     # run it
 pnpm tauri build                                   # Linux packages, in target/release/bundle/
 pnpm tauri android build --apk --target aarch64    # Android APK (needs the Android SDK and NDK)
+pnpm build:web                                     # web version, in app/build-web/
 ```
+
+The web build also needs the `wasm32-unknown-unknown` Rust target (`rustup target add wasm32-unknown-unknown`) and `wasm-bindgen-cli` at the version in `Cargo.lock`.
 
 For Android push notifications, put your Firebase project's `google-services.json` in `app/src-tauri/gen/android/app/`. Without it, the app only notifies you while it's open.
 

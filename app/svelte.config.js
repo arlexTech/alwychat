@@ -20,6 +20,8 @@ const config = {
       pages: process.env.ALWY_WEB ? "build-web" : "build",
       assets: process.env.ALWY_WEB ? "build-web" : "build",
     }),
+    // Web version hosted under a sub-path (e.g. ALWY_WEB_BASE=/chat for example.org/chat/).
+    paths: { base: process.env.ALWY_WEB_BASE ?? "" },
   },
 };
 
