@@ -2,7 +2,13 @@
 //! keep space chats out of "Chats"), the children of one space (joined or not), and the
 //! synced "show in Chats" choices (global account data `com.alwy.chat.chat_list`).
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use futures_util::StreamExt;
 use matrix_sdk::{
@@ -10,7 +16,10 @@ use matrix_sdk::{
     ruma::{
         OwnedRoomId, OwnedRoomOrAliasId,
         api::client::room::create_room,
-        events::{GlobalAccountDataEventType, StateEventType},
+        events::{
+            GlobalAccountDataEventType, StateEventType, SyncStateEvent,
+            space::child::SpaceChildEventContent,
+        },
         room::RoomType,
         serde::Raw,
     },
@@ -18,6 +27,7 @@ use matrix_sdk::{
 use matrix_sdk_ui::spaces::{SpaceRoom, SpaceService};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::Notify;
 use tracing::warn;
 
 use crate::{Error, Result};
@@ -115,10 +125,14 @@ impl crate::Core {
     ) -> Result<()> {
         let service = self.space_service().await?;
         let client = self.client()?;
-        let (_, mut updates) = service.subscribe_to_space_filters().await;
+        let (_, filters) = service.subscribe_to_space_filters().await;
+        // Filters only exist for spaces with chats: a new, empty space shows up here.
+        let (_, top_level) = service.subscribe_to_top_level_joined_spaces().await;
         sink(spaces_overview(&client, &service).await);
         let task = tokio::spawn(async move {
-            // The filters change when spaces are joined or left, or their children change.
+            // Spaces joined or left, or their children changed.
+            let mut updates =
+                futures_util::stream::select(filters.map(|_| ()), top_level.map(|_| ()));
             while updates.next().await.is_some() {
                 sink(spaces_overview(&client, &service).await);
             }
@@ -139,30 +153,58 @@ impl crate::Core {
     ) -> Result<()> {
         let service = self.space_service().await?;
         let space_id = OwnedRoomId::try_from(space_id).map_err(|_| Error::UnknownRoom)?;
-        let list = Arc::new(service.space_room_list(space_id).await);
+        let list = Arc::new(service.space_room_list(space_id.clone()).await);
         let (initial, mut updates) = list.subscribe_to_room_updates().await;
         sink(initial.into_iter().map(child).collect());
+        // The hierarchy is fetched once: reload it when the space's children change (a chat
+        // or channel added or removed, by us or anyone).
+        let changed = Arc::new(Notify::new());
+        let notify = changed.clone();
+        let client = self.client()?;
+        let handle = client.add_room_event_handler(
+            &space_id,
+            move |_: SyncStateEvent<SpaceChildEventContent>| {
+                let notify = notify.clone();
+                async move { notify.notify_one() }
+            },
+        );
+        let guard = client.event_handler_drop_guard(handle);
         let feed = list.clone();
+        let reloading = AtomicBool::new(false);
         let task = tokio::spawn(async move {
+            let _guard = guard;
             let paginate = async {
                 loop {
-                    if let Err(e) = feed.paginate().await {
-                        warn!("space hierarchy: {e}");
-                        break;
-                    }
-                    if matches!(
-                        feed.pagination_state(),
-                        matrix_sdk_ui::spaces::room_list::SpaceRoomListPaginationState::Idle {
-                            end_reached: true
+                    loop {
+                        if let Err(e) = feed.paginate().await {
+                            warn!("space hierarchy: {e}");
+                            break;
                         }
-                    ) {
-                        break;
+                        if matches!(
+                            feed.pagination_state(),
+                            matrix_sdk_ui::spaces::room_list::SpaceRoomListPaginationState::Idle {
+                                end_reached: true
+                            }
+                        ) {
+                            break;
+                        }
                     }
+                    changed.notified().await;
+                    // Let a burst of changes settle, then start over.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    reloading.store(true, Ordering::Relaxed);
+                    feed.reset().await;
                 }
             };
             let forward = async {
                 while updates.next().await.is_some() {
-                    sink(feed.rooms().await.into_iter().map(child).collect());
+                    let rooms = feed.rooms().await;
+                    // A reload clears the list first: keep showing the old one meanwhile.
+                    if rooms.is_empty() && reloading.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                    reloading.store(false, Ordering::Relaxed);
+                    sink(rooms.into_iter().map(child).collect());
                 }
             };
             tokio::join!(paginate, forward);
