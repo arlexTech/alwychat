@@ -1,4 +1,5 @@
 <script lang="ts">
+  import logo from "$lib/assets/logo.svg";
   import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
@@ -66,7 +67,10 @@
   <ChatsScreen {account} onSignOut={signOut} />
 {:else}
 <main class:hidden={view === "loading" && !slow}>
-  <h1>{tr("AlwyChat")}</h1>
+  <div class="brand">
+    <img src={logo} alt="" width="56" height="56" />
+    <h1>{tr("AlwyChat")}</h1>
+  </div>
 
   {#if !hasBackend}
     <p class="error">
@@ -107,6 +111,15 @@
     max-width: 420px;
     margin: 12vh auto;
     padding: 0 1.5rem;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .brand img {
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgb(91 91 214 / 0.35);
   }
   h1 {
     font-size: 2rem;

@@ -41,6 +41,8 @@ jobs:
         working-directory: app
         run: |
           pnpm tauri ios init --ci
+          # The app icon from the logo, into the generated project's asset catalog.
+          pnpm tauri icon src-tauri/icons/logo.svg
           # No signing: SideStore/AltStore sign the app on the phone's side. Tauri regenerates the
           # Xcode project from project.yml, so the settings go there (and in the current project).
           cd src-tauri/gen/apple
