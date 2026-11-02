@@ -791,7 +791,10 @@ impl Mapper {
                             key: key.clone(),
                             count: senders.len(),
                             mine: senders.contains_key(&own_id),
-                            senders: by_time.into_iter().map(|(user, _)| user.to_string()).collect(),
+                            senders: by_time
+                                .into_iter()
+                                .map(|(user, _)| user.to_string())
+                                .collect(),
                         }
                     })
                     .collect();
@@ -848,7 +851,7 @@ impl Mapper {
                         .filter(|u| **u != own_id)
                         .map(|u| self.reader(u))
                         .collect(),
-                    mentions_me: event.is_highlighted(),
+                    mentions_me: event.is_highlighted() && !reply_only_mention(msg, &own_id),
                     thread: msg.thread_summary.as_ref().map(|t| {
                         let latest = match &t.latest_event {
                             TimelineDetails::Ready(e) => Some(e),
@@ -1266,4 +1269,37 @@ fn parse_item_id(id: &str) -> Result<TimelineEventItemId> {
 
 fn timeline_err(e: impl std::fmt::Display) -> Error {
     Error::Timeline(e.to_string())
+}
+
+/// A reply to us lists us in its mentions (that's how Matrix notifies the replied-to person), so
+/// the server highlights it like an @mention. Without our name or a link to us in the text
+/// itself, it isn't one: no mention ring (the reply quote already shows it's for us).
+fn reply_only_mention(
+    msg: &matrix_sdk_ui::timeline::MsgLikeContent,
+    own: &matrix_sdk::ruma::UserId,
+) -> bool {
+    use matrix_sdk::ruma::events::room::message::MessageType;
+    if msg.in_reply_to.is_none() {
+        return false;
+    }
+    let MsgLikeKind::Message(m) = &msg.kind else {
+        return false;
+    };
+    let Some(mentions) = m.mentions() else {
+        return false;
+    };
+    if mentions.room || !mentions.user_ids.contains(own) {
+        return false;
+    }
+    let id = own.as_str();
+    let encoded = id.replace('@', "%40");
+    let html = match m.msgtype() {
+        MessageType::Text(t) => t.formatted.as_ref().map(|f| f.body.as_str()),
+        MessageType::Notice(t) => t.formatted.as_ref().map(|f| f.body.as_str()),
+        MessageType::Emote(t) => t.formatted.as_ref().map(|f| f.body.as_str()),
+        _ => None,
+    };
+    let named =
+        m.body().contains(id) || html.is_some_and(|h| h.contains(id) || h.contains(&encoded));
+    !named
 }
