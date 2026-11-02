@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Write latest.json, the update manifest the apps read (Tauri's updater format, plus Android).
+"""Write an update manifest the apps read (Tauri's updater format, plus Android).
 
-    update-manifest.py <files dir> <download base URL> <version> <notes>
+    update-manifest.py <files dir> <download base URL> <version> <notes> [platform]
+
+With a platform (android, linux, windows, macos), only its entries go in latest-<platform>.json,
+which each platform's build publishes as soon as it's ready (one platform never waits for
+another, and never points to another's older files). Without one: latest.json with every
+platform (read by apps from before the per-platform files).
 
 Files are the release files under their stable names, with the `.sig` signatures Tauri's
 bundler made (only when the build had the update-signing key).
@@ -12,6 +17,8 @@ import pathlib
 import sys
 
 files, base, version, notes = pathlib.Path(sys.argv[1]), sys.argv[2].rstrip("/"), sys.argv[3], sys.argv[4]
+only = sys.argv[5] if len(sys.argv) > 5 else None
+PREFIX = {"android": "android", "linux": "linux-", "windows": "windows-", "macos": "darwin-"}
 
 
 def entry(name):
@@ -42,11 +49,15 @@ platforms = {t: e for t, name in targets.items() if (e := entry(name))}
 if (files / "AlwyChat-android-autoupdate.apk").exists():
     platforms["android"] = {"signature": "", "url": f"{base}/AlwyChat-android-autoupdate.apk"}
 
+if only:
+    platforms = {t: e for t, e in platforms.items() if t.startswith(PREFIX[only])}
+
 manifest = {
     "version": version,
     "notes": notes,
     "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "platforms": platforms,
 }
-(files / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-print(f"latest.json: {version}, {len(platforms)} platforms")
+name = f"latest-{only}.json" if only else "latest.json"
+(files / name).write_text(json.dumps(manifest, indent=2) + "\n")
+print(f"{name}: {version}, {len(platforms)} entries")

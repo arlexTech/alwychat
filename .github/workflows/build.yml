@@ -1,9 +1,11 @@
 # Builds AlwyChat for every platform. A pushed `v*` tag also drafts a GitHub release with the
 # files under the stable names the README links to (releases/latest/download/<name>).
-# Every push to the `beta` branch replaces the rolling `beta` pre-release (the README's
-# "Newest" column, releases/download/beta/<name>) with the new build. Both channels publish a
-# latest.json the apps update themselves from (secrets TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]
-# sign the desktop updates; Android checks its own signing key).
+# Every push to the `beta` branch updates the rolling `beta` pre-release (the README's Beta
+# columns, releases/download/beta/<name>): each platform publishes its files and its own update
+# manifest (latest-<platform>.json) as soon as it's built, in this order: Android, Linux,
+# Windows, macOS (each waits for the previous one's job, never for a slower platform's build).
+# The combined latest.json comes last. Secrets TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] sign the
+# desktop updates; Android checks its own signing key.
 #
 # Optional repository secrets:
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
@@ -33,15 +35,26 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
+            platform: linux
+            after: Android
           - name: Windows
             os: windows-latest
+            platform: windows
+            after: Linux
           - name: macOS
             os: macos-latest
+            platform: macos
+            after: Windows
             args: --target universal-apple-darwin
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+      actions: read
     env:
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      PLATFORM: ${{ matrix.platform }}
+      PUBLISH_AFTER: ${{ matrix.after }}
     steps:
       - uses: actions/checkout@v4
       # Releases (v* tags) and the beta branch get a version and their update feed: each platform
@@ -52,9 +65,9 @@ jobs:
         run: |
           repo="https://github.com/${{ github.repository }}/releases"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest.json"
+            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest${PLATFORM:+-$PLATFORM}.json"
           elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
-            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest.json"
+            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
           else
             exit 0
           fi
@@ -151,6 +164,26 @@ jobs:
         with:
           name: alwychat-${{ runner.os }}
           path: out/*
+      # Beta: publish this platform now (files + latest-<platform>.json), after the platform
+      # before it in the order (its job finished, whatever the result).
+      - name: Publish (beta)
+        if: github.ref == 'refs/heads/beta'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -n "$PUBLISH_AFTER" ]; then
+            for i in $(seq 1 180); do
+              state=$(gh run view "$GITHUB_RUN_ID" --json jobs -q ".jobs[] | select(.name == \"$PUBLISH_AFTER\") | .status")
+              [ "$state" = completed ] && break
+              sleep 20
+            done
+          fi
+          gh release view beta >/dev/null 2>&1 || gh release create beta --prerelease --title "Beta" --notes "Building…"
+          py=$(command -v python3 || command -v python)
+          "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}" "$PLATFORM"
+          gh release upload beta out/* --clobber
 
   android:
     name: Android
@@ -160,6 +193,10 @@ jobs:
       # Secrets can't be tested in `if:` directly.
       HAS_FIREBASE: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 != '' }}
       HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      PLATFORM: android
+    permissions:
+      contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       # Releases (v* tags) and the beta branch get a version and their update feed: each platform
@@ -170,9 +207,9 @@ jobs:
         run: |
           repo="https://github.com/${{ github.repository }}/releases"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest.json"
+            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest${PLATFORM:+-$PLATFORM}.json"
           elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
-            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest.json"
+            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
           else
             exit 0
           fi
@@ -255,6 +292,26 @@ jobs:
         with:
           name: alwychat-Android
           path: out/*
+      # Beta: publish this platform now (files + latest-<platform>.json), after the platform
+      # before it in the order (its job finished, whatever the result).
+      - name: Publish (beta)
+        if: github.ref == 'refs/heads/beta'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -n "$PUBLISH_AFTER" ]; then
+            for i in $(seq 1 180); do
+              state=$(gh run view "$GITHUB_RUN_ID" --json jobs -q ".jobs[] | select(.name == \"$PUBLISH_AFTER\") | .status")
+              [ "$state" = completed ] && break
+              sleep 20
+            done
+          fi
+          gh release view beta >/dev/null 2>&1 || gh release create beta --prerelease --title "Beta" --notes "Building…"
+          py=$(command -v python3 || command -v python)
+          "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}" "$PLATFORM"
+          gh release upload beta out/* --clobber
 
   web:
     name: Web
@@ -269,9 +326,9 @@ jobs:
         run: |
           repo="https://github.com/${{ github.repository }}/releases"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest.json"
+            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest${PLATFORM:+-$PLATFORM}.json"
           elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
-            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest.json"
+            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
           else
             exit 0
           fi
@@ -351,7 +408,11 @@ jobs:
           path: out
           merge-multiple: true
       - name: Update manifest
-        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}" "${GITHUB_REF_NAME#v}" "AlwyChat ${{ github.ref_name }}"
+        run: |
+          base="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          for platform in android linux windows macos ""; do
+            python3 .github/scripts/update-manifest.py out "$base" "${GITHUB_REF_NAME#v}" "AlwyChat ${{ github.ref_name }}" $platform
+          done
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
@@ -359,7 +420,10 @@ jobs:
 
   beta:
     name: Newest version (beta)
-    if: github.ref == 'refs/heads/beta'
+    # Last: the platforms published themselves already (see "Publish (beta)"); this adds the
+    # web zip and the combined latest.json (apps from before the per-platform manifests), and
+    # dates the release notes. Runs even if a platform failed: the others are out.
+    if: always() && github.ref == 'refs/heads/beta'
     needs: [desktop, android, web]
     runs-on: ubuntu-latest
     permissions:
@@ -372,15 +436,16 @@ jobs:
         with:
           path: out
           merge-multiple: true
-      - name: Update manifest
-        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Newest version, built from ${{ github.sha }}"
-      # One rolling pre-release: the old one (and its tag) goes, the new one points at this commit.
+      - name: Combined manifest
+        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release delete beta --cleanup-tag --yes || true
-          gh release create beta out/* --prerelease --target "$GITHUB_SHA" \
-            --title "Newest version (updates itself)" \
-            --notes "Version 0.1.${{ github.run_number }}, built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): every change as soon as it's made. Installed from here, AlwyChat updates itself to each new build."
+          gh release view beta >/dev/null 2>&1 || gh release create beta --prerelease --title "Beta" --notes "…"
+          upload=(out/latest.json)
+          if [ -f out/AlwyChat-web.zip ]; then upload+=(out/AlwyChat-web.zip); fi
+          gh release upload beta "${upload[@]}" --clobber
+          gh release edit beta --prerelease --title "Beta (updates itself)" \
+            --notes "Version 0.1.${{ github.run_number }}, built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): every change as soon as it's made. Installed from a -autoupdate file, AlwyChat updates itself to each new build."
