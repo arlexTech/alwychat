@@ -211,6 +211,9 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
       @Suppress("DEPRECATION")
       (intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))?.let { uris.add(it) }
     }
+    // Only files another app offers through its content provider: a file:// link could point
+    // into AlwyChat's own private folder (its session) and get it attached to a message.
+    uris.retainAll { it.scheme == "content" && it.authority != "${activity.packageName}.fileprovider" }
     val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
     val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
     Thread {

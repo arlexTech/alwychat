@@ -1121,6 +1121,11 @@ async fn file_action(
     {
         use tauri_plugin_opener::OpenerExt;
         match action.as_str() {
+            // A program from a message would run: it can be saved, not opened from here.
+            "open" if alwy_core::media::runs_when_opened(&path.display().to_string()) => {
+                let _ = std::fs::remove_file(&path);
+                Err("This kind of file could run a program, so AlwyChat doesn't open it. Save it, and open it yourself only if you trust it.".into())
+            }
             "open" => {
                 app.opener()
                     .open_path(path.display().to_string(), None::<&str>)

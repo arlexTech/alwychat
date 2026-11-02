@@ -122,10 +122,11 @@ pub async fn update_install(
 ) -> Result<(), String> {
     #[cfg(desktop)]
     {
+        // Kept until installed: a failed download (network) can be retried with the same button.
         let update = PENDING
             .lock()
             .unwrap()
-            .take()
+            .clone()
             .ok_or("no update to install")?;
         let mut done = 0u64;
         let progress = on_progress.clone();

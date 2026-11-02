@@ -3,7 +3,18 @@
   import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
-  import { cancelLogin, endSession, hasBackend, login, logout, onSessionEnded, restoreSession, type Account } from "$lib/backend";
+  import {
+    cancelLogin,
+    discoverServer,
+    endSession,
+    hasBackend,
+    login,
+    logout,
+    onSessionEnded,
+    restoreSession,
+    type Account,
+    type ServerInfo,
+  } from "$lib/backend";
   import ChatsScreen from "$lib/components/ChatsScreen.svelte";
 
   type View = "loading" | "signed-out" | "waiting" | "signed-in";
@@ -15,6 +26,40 @@
   let server = $state("matrix.org");
   let account = $state<Account | null>(null);
   let error = $state<string | null>(null);
+
+  // The server is looked up while typing (after a pause): sign-in only starts on one that
+  // exists and supports what AlwyChat needs (browser sign-in, sliding sync).
+  type Check =
+    | { state: "checking"; for: string }
+    | { state: "ok"; for: string; info: ServerInfo }
+    | { state: "missing" | "unsupported"; for: string; reason: string };
+  let check = $state<Check | null>(null);
+  let checkTimer: ReturnType<typeof setTimeout> | undefined;
+  async function lookUp(name: string): Promise<Check> {
+    try {
+      const info = await discoverServer(name);
+      if (!info.oauth_issuer) {
+        return { state: "unsupported", for: name, reason: tr("This server doesn't support signing in through the browser (it needs Matrix Authentication Service).") };
+      }
+      if (!info.sliding_sync) {
+        return { state: "unsupported", for: name, reason: tr("This server is too old for AlwyChat (no sliding sync).") };
+      }
+      return { state: "ok", for: name, info };
+    } catch {
+      return { state: "missing", for: name, reason: tr("No Matrix server answers at {name}.", { name }) };
+    }
+  }
+  $effect(() => {
+    const name = server.trim();
+    clearTimeout(checkTimer);
+    if (!hasBackend || !/\S\.\S|localhost/.test(name)) return void (check = null);
+    check = { state: "checking", for: name };
+    checkTimer = setTimeout(async () => {
+      const result = await lookUp(name);
+      if (server.trim() === name) check = result;
+    }, 600);
+  });
+  const ready = $derived(check?.state === "ok" && check.for === server.trim());
 
   onMount(async () => {
     if (!hasBackend) return void (view = "signed-out");
@@ -36,6 +81,7 @@
   async function signIn(event: SubmitEvent) {
     event.preventDefault();
     error = null;
+    if (!ready) return;
     view = "waiting";
     try {
       account = await login(server.trim());
@@ -87,8 +133,15 @@
           <label for="server">{tr("Your server")}</label>
           <div class="row">
             <input id="server" bind:value={server} autocapitalize="off" spellcheck="false" />
-            <button disabled={!hasBackend || !server.trim()}>{tr("Sign in")}</button>
+            <button disabled={!hasBackend || !ready}>{tr("Sign in")}</button>
           </div>
+          {#if check}
+            <p class="check {check.state}" aria-live="polite">
+              {#if check.state === "checking"}{tr("Looking for the server…")}
+              {:else if check.state === "ok"}✓ {tr("Found {host}", { host: new URL(check.info.homeserver).host })}
+              {:else}{check.reason}{/if}
+            </p>
+          {/if}
           <p class="muted">{tr("Your browser will open your server's sign-in page.")}</p>
         </form>
       {:else if view === "waiting"}
@@ -126,6 +179,18 @@
     background: linear-gradient(90deg, #7b5cff, #ff5c8a);
     background-clip: text;
     color: transparent;
+  }
+  .check {
+    margin: 8px 2px 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .check.ok {
+    color: #3ba55d;
+  }
+  .check.missing,
+  .check.unsupported {
+    color: var(--danger);
   }
   label {
     display: block;

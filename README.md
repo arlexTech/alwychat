@@ -79,6 +79,20 @@ See [docs/features.md](docs/features.md) for the full list, including what's pla
 
 ---
 
+## Privacy and security
+
+What is protected, and what isn't (yet):
+
+- **Messages** in encrypted chats (all private chats by default) are end-to-end encrypted, with the same encryption as Element. Your server can't read them.
+- **Calls and voice channels** go through your server's LiveKit and are encrypted on the way, but **not end-to-end yet**: whoever runs that LiveKit server could listen. Voice channels are unencrypted on purpose, so people on Element can join them.
+- **Stored on your server, readable by its admins:** your drafts, chat folders and app settings (synced between your devices), and who is in which chat, as with every Matrix app.
+- **Android notifications** pass through AlwyChat's push gateway, which only sees a chat ID and a message ID. Your phone fetches and decrypts the message itself.
+- **On your device:** your sign-in is kept in the system keychain (computer) or the app's private storage (Android). The search index and message cache aren't encrypted on disk; the app lock (PIN, fingerprint) hides the app, it doesn't encrypt it. In the web version, the sign-in is kept in the browser's storage.
+- **Updates** that install themselves are signed: the app refuses a file that wasn't built and signed for it.
+- **Files from others** can't be opened from AlwyChat if they could run a program (`.exe`, `.sh`, `.desktop`…). You can still save them.
+
+Found a security problem? Please report it privately through [GitHub's security advisories](https://github.com/arlexTech/alwychat/security/advisories/new) rather than in a public issue.
+
 ## Which server can I use?
 
 Your server needs the newer sign-in system, where you log in through your browser (Matrix Authentication Service). matrix.org has it. Servers that only accept a password typed into the app aren't supported yet.

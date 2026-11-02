@@ -105,12 +105,7 @@ impl crate::Core {
         let media = self.media.get(key)?;
         let (bytes, _) = self.event_media(key, false).await?;
         tokio::fs::create_dir_all(dir).await?;
-        let name = Path::new(&media.filename)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|n| !n.is_empty())
-            .unwrap_or("media")
-            .to_owned();
+        let name = safe_file_name(&media.filename);
         let (stem, ext) = match name.rsplit_once('.') {
             Some((s, e)) if !s.is_empty() => (s.to_owned(), format!(".{e}")),
             _ => (name.clone(), String::new()),
@@ -124,6 +119,109 @@ impl crate::Core {
         tokio::fs::write(&path, bytes).await?;
         Ok(path)
     }
+}
+
+/// A file name from someone else's message, safe to create anywhere: no folders, no characters
+/// Windows reserves (`a.txt:stream`), no control characters, no leading dots (hidden files),
+/// no reserved device names (`CON`, `NUL`…).
+pub fn safe_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let cleaned = cleaned
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches(['.', ' ']);
+    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit());
+    if cleaned.is_empty() || reserved {
+        format!(
+            "media{}",
+            if cleaned.is_empty() {
+                String::new()
+            } else {
+                format!("-{cleaned}")
+            }
+        )
+    } else {
+        cleaned.chars().take(200).collect()
+    }
+}
+
+/// Whether opening this file could run something (a program, script, shortcut or installer):
+/// those can be saved but not opened from a message.
+pub fn runs_when_opened(name: &str) -> bool {
+    const RISKY: &[&str] = &[
+        "exe",
+        "msi",
+        "msix",
+        "appx",
+        "bat",
+        "cmd",
+        "com",
+        "scr",
+        "pif",
+        "cpl",
+        "ps1",
+        "psm1",
+        "vbs",
+        "vbe",
+        "js",
+        "jse",
+        "wsf",
+        "wsh",
+        "hta",
+        "lnk",
+        "url",
+        "reg",
+        "inf",
+        "jar",
+        "jnlp",
+        "desktop",
+        "sh",
+        "bash",
+        "zsh",
+        "run",
+        "bin",
+        "appimage",
+        "deb",
+        "rpm",
+        "flatpakref",
+        "app",
+        "command",
+        "pkg",
+        "dmg",
+        "workflow",
+        "action",
+        "scpt",
+        "py",
+        "pyw",
+        "pl",
+        "rb",
+        "apk",
+        "xapk",
+        "iso",
+        "img",
+        "vhd",
+        "vhdx",
+        "library-ms",
+        "settingcontent-ms",
+    ];
+    // Windows ignores trailing dots and spaces: "x.exe. " runs as "x.exe".
+    let lower = name.to_ascii_lowercase();
+    lower
+        .trim_end_matches([' ', '.'])
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| RISKY.contains(&ext))
 }
 
 /// MIME type from magic bytes, for images served without a declared type.
@@ -149,5 +247,35 @@ pub fn sniff(bytes: &[u8]) -> &'static str {
         ] => "image/webp",
         [_, _, _, _, b'f', b't', b'y', b'p', ..] => "video/mp4",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod file_name_tests {
+    use super::{runs_when_opened, safe_file_name};
+
+    #[test]
+    fn names_from_messages() {
+        assert_eq!(safe_file_name("photo.jpg"), "photo.jpg");
+        assert_eq!(safe_file_name("../../.bashrc"), "bashrc");
+        assert_eq!(safe_file_name("..\\..\\evil.dll"), "evil.dll");
+        assert_eq!(safe_file_name("a.txt:hidden"), "a.txt_hidden");
+        assert_eq!(safe_file_name("CON.txt"), "media-CON.txt");
+        assert_eq!(safe_file_name("com1"), "media-com1");
+        assert_eq!(safe_file_name("..."), "media");
+        assert_eq!(safe_file_name(""), "media");
+        assert_eq!(safe_file_name("report\u{0}.pdf"), "report_.pdf");
+    }
+
+    #[test]
+    fn risky_files() {
+        assert!(runs_when_opened("invoice.pdf.exe"));
+        assert!(runs_when_opened("Setup.MSI"));
+        assert!(runs_when_opened("game.AppImage"));
+        assert!(runs_when_opened("x.desktop"));
+        assert!(runs_when_opened("trick.exe. "));
+        assert!(!runs_when_opened("photo.jpg"));
+        assert!(!runs_when_opened("notes.pdf"));
+        assert!(!runs_when_opened("README"));
     }
 }
