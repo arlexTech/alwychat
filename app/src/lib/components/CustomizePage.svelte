@@ -114,7 +114,7 @@
       {/each}
     </div>
   {:else}
-    <p class="m-hint">{tr("Sent when you tap the button next to the message field, and with a double tap on a message.")}</p>
+    <p class="m-hint">{tr("Sent when you tap the button next to the message field. A double tap on a message puts a ❤️.")}</p>
     <div class="emojis">
       {#each QUICK_REACTIONS as e (e)}
         <button class:on={e === quick} disabled={!canEdit} onclick={() => chooseQuick(e)}>{e}</button>

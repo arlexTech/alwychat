@@ -242,6 +242,11 @@
     swipeX = next;
   }
 
+  /** Double tap: a ❤️ (Messenger), added once (a second double tap doesn't remove it). */
+  function heart() {
+    if (!msg.reactions.some((r) => r.key === "❤️" && r.mine)) react("❤️");
+  }
+
   // A double-tap reacts: single-tap actions wait a moment to be sure it isn't one.
   let tapTimer: ReturnType<typeof setTimeout> | undefined;
   function afterTap(action: () => void) {
@@ -360,7 +365,7 @@
         class:failed={msg.send_state === "failed"}
         title={clockTime(msg.timestamp)}
         onclick={toggleTime}
-        ondblclick={() => (clearTimeout(tapTimer), canReact && react(quickReaction))}
+        ondblclick={() => (clearTimeout(tapTimer), canReact && heart())}
         class:swiping
         style:transform={swipeX ? `translateX(${swipeX}px)` : undefined}
         oncontextmenu={openMenu}

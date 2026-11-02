@@ -552,7 +552,7 @@
   "Send voice message": "Envoyer le message vocal",
   "Send {QUICK_REACTION}": "Envoyer {QUICK_REACTION}",
   "Sending…": "Envoi…",
-  "Sent when you tap the button next to the message field, and with a double tap on a message.": "Envoyée quand tu touches le bouton à côté du champ de message, et par un double appui sur un message.",
+  "Sent when you tap the button next to the message field. A double tap on a message puts a ❤️.": "Envoyée quand tu touches le bouton à côté du champ de message. Un double appui sur un message met un ❤️.",
   "Server: {server}": "Serveur : {server}",
   "Sessions": "Sessions",
   "Set a nickname": "Définir un surnom",
