@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { profiles, ourZone } from "$lib/stores/profiles.svelte";
-  import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus, isTauri } from "$lib/backend";
+  import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus, isTauri, type MessageLayout } from "$lib/backend";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
@@ -629,6 +629,13 @@
       <option value="auto">{tr("Automatic ({name})", { name: languageName(locale) })}</option>
       {#each LANGUAGES as code (code)}<option value={code}>{languageName(code)}</option>{/each}
     </select>
+    <h3 class="section">{tr("Message layout")}</h3>
+    <div class="m-seg">
+      {#each [["auto", tr("Automatic")], ["bubbles", tr("Mine on the right")], ["left", tr("Everyone on the left")]] as [value, label] (value)}
+        <button class:on={(settings.message_layout ?? "auto") === value} onclick={() => save({ message_layout: value as MessageLayout })}>{label}</button>
+      {/each}
+    </div>
+    <p class="m-hint">{tr("Automatic: everyone on the left on wide screens, your messages on the right elsewhere. Each chat can choose for itself in its settings.")}</p>
     <h3 class="section">{tr("Time format")}</h3>
     <div class="m-seg">
       <button class:on={clock.choice === "system"} onclick={() => clock.set("system")}>

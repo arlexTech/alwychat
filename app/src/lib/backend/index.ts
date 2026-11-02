@@ -759,6 +759,9 @@ export const setMarkedUnread = (roomId: string, unread: boolean) =>
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
+/** Where messages go: automatic (left on wide screens, bubbles elsewhere), bubbles, left. */
+export type MessageLayout = "auto" | "bubbles" | "left";
+
 export interface Settings {
   send_read_receipts: boolean;
   send_typing: boolean;
@@ -778,6 +781,7 @@ export interface Settings {
   enter_sends: boolean;
   /** Text size in percent. */
   text_scale: number;
+  message_layout: MessageLayout;
 }
 /** Android: dark system bar icons on a light theme, and the colour behind the bars. */
 export const setSystemBars = (light: boolean, background: string) =>

@@ -31,6 +31,9 @@
   import { DEFAULT_QUICK_REACTION, themeById } from "$lib/themes";
   import Avatar from "./Avatar.svelte";
   import Page, { setPageLayout } from "./Page.svelte";
+  import MessagesSquare from "@lucide/svelte/icons/messages-square";
+  import { layouts } from "$lib/stores/layout.svelte";
+  import type { MessageLayout } from "$lib/backend";
   import Images from "@lucide/svelte/icons/images";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
@@ -162,6 +165,16 @@
       <option value="default">{tr("App default")}</option>
       <option value="hd">{tr("Always HD")}</option>
       <option value="compressed">{tr("Compressed")}</option>
+    </select>
+  </div>
+  <div class="m-row">
+    <span class="m-icon"><MessagesSquare size={20} /></span>
+    <span class="m-text"><strong>{tr("Message layout")}</strong><small>{tr("On this device")}</small></span>
+    <select class="m-select" value={layouts.chatChoice(roomId) ?? "default"} onchange={(e) => layouts.setChat(roomId, e.currentTarget.value === "default" ? null : (e.currentTarget.value as MessageLayout))}>
+      <option value="default">{tr("App default")}</option>
+      <option value="auto">{tr("Automatic")}</option>
+      <option value="bubbles">{tr("My messages on the right")}</option>
+      <option value="left">{tr("Everyone on the left")}</option>
     </select>
   </div>
   {#if summary && !summary.is_dm && spaces.spacesOf(roomId).length}

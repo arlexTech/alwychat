@@ -69,6 +69,7 @@
   } from "$lib/backend";
   import { clockTime, dayLabel, shortTime } from "$lib/format";
   import { chat } from "$lib/stores/chat.svelte";
+  import { layouts } from "$lib/stores/layout.svelte";
   import { drafts } from "$lib/stores/drafts.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { share } from "$lib/stores/share.svelte";
@@ -242,7 +243,8 @@
   // right would be far apart.
   let chatWidth = $state(0);
   let landscape = $state(true);
-  const wide = $derived(chatWidth >= 760 && landscape);
+  const layout = $derived(layouts.of(room.id));
+  const wide = $derived(layout === "left" || (layout === "auto" && chatWidth >= 760 && landscape));
   $effect(() => {
     const observer = new ResizeObserver(([entry]) => {
       chatWidth = entry.contentRect.width;

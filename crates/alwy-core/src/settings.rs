@@ -37,6 +37,10 @@ pub struct Settings {
     pub enter_sends: bool,
     /// Text size, in percent of the default.
     pub text_scale: u16,
+    /// Where messages go: "auto" (everyone on the left on wide screens, your bubbles on the
+    /// right elsewhere), "bubbles" (yours always on the right) or "left" (everyone on the left).
+    /// Chats can override it on this device.
+    pub message_layout: String,
 }
 
 impl Default for Settings {
@@ -54,6 +58,7 @@ impl Default for Settings {
             hide_in_switcher: false,
             enter_sends: true,
             text_scale: 100,
+            message_layout: "auto".to_owned(),
         }
     }
 }
