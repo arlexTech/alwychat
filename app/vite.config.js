@@ -2,12 +2,11 @@ import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
-// @ts-expect-error type error without @types/node package
-import fs from "node:fs";
 const host = process.env.TAURI_DEV_HOST;
-// Web version in development (scripts/dev-web.sh): https on its own name, sign-in needs it.
+// Web version in development (scripts/dev-web.sh): plain http on the LAN, behind a reverse
+// proxy that gives it an https name (sign-in and the media service worker need https).
 const webHost = process.env.ALWY_DEV_HOST;
-const webCert = process.env.ALWY_DEV_CERT;
+const webPort = Number(process.env.ALWY_DEV_PORT || 8090);
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
@@ -20,14 +19,10 @@ export default defineConfig(() => ({
   // 2. tauri expects a fixed port, fail if that port is not available
   server: webHost
     ? {
-        host: "127.0.0.1",
-        port: 8443,
+        host: "0.0.0.0",
+        port: webPort,
         strictPort: true,
         allowedHosts: [webHost],
-        https: {
-          key: fs.readFileSync(`${webCert}/${webHost}.key`),
-          cert: fs.readFileSync(`${webCert}/${webHost}.crt`),
-        },
         watch: { ignored: ["**/src-tauri/**"] },
       }
     : {
