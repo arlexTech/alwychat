@@ -406,8 +406,8 @@
                 <strong>{live ? tr("Live location") : tr("Live location ended")}</strong>
                 <small>
                   {#if !at}{tr("Waiting for the first position…")}
-                  {:else if live}{tr("{value}{value2} · Open in maps", { value: c.ends_at - Date.now() > 20 * 3600_000 ? "Until stopped" : `Until ${untilTime(c.ends_at)}`, value2: c.updated ? ` · updated ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "" })}
-                  {:else}{tr("Last position{value} · Open in maps", { value: c.updated ? ` at ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "" })}{/if}
+                  {:else if live}{c.ends_at - Date.now() > 20 * 3600_000 ? tr("Until stopped") : tr("Until {time}", { time: untilTime(c.ends_at) })}{c.updated ? tr(" · updated {time}", { time: clockTime(c.updated) }) : ""}{tr(" · Open in maps")}
+                  {:else}{c.updated ? tr("Last position at {time}", { time: clockTime(c.updated) }) : tr("Last position")}{tr(" · Open in maps")}{/if}
                 </small>
               </span>
             </button>

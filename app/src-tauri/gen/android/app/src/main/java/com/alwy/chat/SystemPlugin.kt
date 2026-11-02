@@ -70,6 +70,14 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   /** The system prompt if Android still allows asking, else the app's notification settings. */
+  /** The user's 12/24-hour choice (Settings → System → Date & time). */
+  @Command
+  fun clock(invoke: Invoke) {
+    val ret = JSObject()
+    ret.put("h24", android.text.format.DateFormat.is24HourFormat(activity))
+    invoke.resolve(ret)
+  }
+
   @Command
   fun fixNotifications(invoke: Invoke) {
     if (NotificationManagerCompat.from(activity).areNotificationsEnabled()) {

@@ -1,7 +1,8 @@
 // Our live location shares: follow the position while AlwyChat runs and send it to each chat
 // (Element-compatible beacons), until the chosen time is up or "Stop".
 import { startLiveLocation, stopLiveLocation, updateLiveLocation } from "$lib/backend";
-import { tr } from "$lib/i18n/index.svelte";
+import { locale, tr } from "$lib/i18n/index.svelte";
+import { clockTime } from "$lib/format";
 
 /** Don't send more often than this, unless we moved a lot. */
 const MIN_INTERVAL_MS = 15_000;
@@ -10,10 +11,10 @@ const KEY = "alwychat.liveLocation";
 
 /** "14:30", "tomorrow 14:30" or a date: when a share ends. */
 export function untilTime(at: number) {
-  const time = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = clockTime(at);
   const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((day(new Date(at)) - day(new Date())) / 86_400_000);
-  return days === 0 ? time : days === 1 ? tr("tomorrow {time}", { time }) : `${new Date(at).toLocaleDateString()} ${time}`;
+  return days === 0 ? time : days === 1 ? tr("tomorrow {time}", { time }) : `${new Date(at).toLocaleDateString(locale)} ${time}`;
 }
 
 type Share = { roomId: string; shareId: string; endsAt: number };

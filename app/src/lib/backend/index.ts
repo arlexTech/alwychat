@@ -307,15 +307,23 @@ export function nativeCallJoin(
 ) {
   const channel = new Channel<NativeCallEvent>();
   channel.onmessage = onEvent;
-  // Raw bytes: [key length][key][JPEG].
+  return invoke<void>("native_call_join", { url, token, micOn, setup, onEvent: channel, onFrame: frameChannel(onFrame) });
+}
+
+/** Video frames from the native engine: raw bytes [key length][key][JPEG]. */
+function frameChannel(onFrame: (key: string, jpeg: Uint8Array) => void) {
   const frames = new Channel<ArrayBuffer>();
   frames.onmessage = (data) => {
     const bytes = new Uint8Array(data);
     const keyLength = bytes[0];
     onFrame(new TextDecoder().decode(bytes.subarray(1, 1 + keyLength)), bytes.subarray(1 + keyLength));
   };
-  return invoke<void>("native_call_join", { url, token, micOn, setup, onEvent: channel, onFrame: frames });
+  return frames;
 }
+
+/** Settings' camera preview through the native capture; frames under "local:preview". */
+export const nativeCameraPreview = (on: boolean, camera: string | null, onFrame: (key: string, jpeg: Uint8Array) => void) =>
+  invoke<void>("native_camera_preview", { on, camera, onFrame: frameChannel(onFrame) });
 export const nativeCallSetCamera = (on: boolean) => invoke<void>("native_call_set_camera", { on });
 export const nativeCallSetScreen = (on: boolean) => invoke<void>("native_call_set_screen", { on });
 export const nativeCallLeave = () => invoke<void>("native_call_leave");
@@ -358,6 +366,10 @@ export interface SystemStatus {
 /** Read the status, or with `fix`, ask Android / open its settings page for that item. */
 export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData" | "appSettings") =>
   invoke<SystemStatus>("system_status", { fix: fix ?? null });
+
+/** The system's clock: `h24` when the system says (Android), else the locale of its time
+ * format (Linux LC_TIME). Not in browsers. */
+export const systemClock = () => invoke<{ h24: boolean | null; locale: string | null }>("system_clock");
 
 /** Shared look of a chat (room state `com.alwy.chat.room.*`). */
 export interface ChatStyle {

@@ -807,6 +807,39 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
     }
 }
 
+/// The system's clock: 24-hour or not when it says so (Android's setting), and the locale of
+/// its time format (Linux `LC_TIME`; webviews only see the language). The UI decides with these.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct SystemClock {
+    h24: Option<bool>,
+    locale: Option<String>,
+}
+
+#[tauri::command]
+async fn system_clock(app: tauri::AppHandle) -> Result<SystemClock, String> {
+    #[cfg(target_os = "android")]
+    {
+        return app
+            .state::<android::System>()
+            .0
+            .run_mobile_plugin_async("clock", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        // LC_ALL wins over LC_TIME, which wins over LANG ("fr_BE.UTF-8" → "fr-BE").
+        let locale = ["LC_ALL", "LC_TIME", "LANG"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .find(|v| !v.is_empty() && v != "C" && v != "POSIX")
+            .map(|v| v.split(['.', '@']).next().unwrap_or("").replace('_', "-"))
+            .filter(|v| !v.is_empty());
+        Ok(SystemClock { h24: None, locale })
+    }
+}
+
 /// Android: system bar icons (dark on a light theme) and the colour behind them.
 #[tauri::command]
 async fn set_system_bars(
@@ -1840,12 +1873,14 @@ pub fn run() {
             native_call::native_call_set_muted_for_me,
             native_call::native_call_set_setup,
             native_call::native_devices,
+            native_call::native_camera_preview,
             native_call::native_call_set_camera,
             native_call::native_call_set_screen,
             call_participants,
             presence,
             report_activity,
             system_status,
+            system_clock,
             link_preview,
             pin_message,
             create_poll,

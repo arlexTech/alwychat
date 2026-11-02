@@ -9,6 +9,7 @@
   import { presence } from "$lib/stores/presence.svelte";
   import Page, { setPageLayout } from "./Page.svelte";
   import VoiceSettings from "./VoiceSettings.svelte";
+  import { clock } from "$lib/stores/clock.svelte";
   import FolderPage from "./FolderPage.svelte";
   import PinPad from "./PinPad.svelte";
   import { appLock } from "$lib/stores/applock.svelte";
@@ -407,7 +408,7 @@
       <span class="m-icon"><Lock size={20} /></span><span class="m-text"><strong>{tr("Privacy & security")}</strong><small>{tr("Read receipts, app lock, sessions, blocked people")}</small></span><ChevronRight size={18} />
     </button>
     <button class="m-row" class:active={wide.current && section === "appearance"} onclick={() => (section = "appearance")}>
-      <span class="m-icon"><Palette size={20} /></span><span class="m-text"><strong>{tr("Appearance")}</strong><small>{tr("Language, theme, text size, effects")}</small></span><ChevronRight size={18} />
+      <span class="m-icon"><Palette size={20} /></span><span class="m-text"><strong>{tr("Appearance")}</strong><small>{tr("Language, time format, theme, text size, effects")}</small></span><ChevronRight size={18} />
     </button>
     <button class="m-row" class:active={wide.current && section === "chats"} onclick={() => (section = "chats")}>
       <span class="m-icon"><MessagesSquare size={20} /></span><span class="m-text"><strong>{tr("Chats & media")}</strong><small>{tr("Spaces in Chats, folders, photo quality")}</small></span><ChevronRight size={18} />
@@ -627,6 +628,14 @@
       <option value="auto">{tr("Automatic ({name})", { name: languageName(locale) })}</option>
       {#each LANGUAGES as code (code)}<option value={code}>{languageName(code)}</option>{/each}
     </select>
+    <h3 class="section">{tr("Time format")}</h3>
+    <div class="m-seg">
+      <button class:on={clock.choice === "system"} onclick={() => clock.set("system")}>
+        {tr("System ({format})", { format: clock.system12 ? tr("12-hour") : tr("24-hour") })}
+      </button>
+      <button class:on={clock.choice === "24"} onclick={() => clock.set("24")}>{tr("24-hour")}</button>
+      <button class:on={clock.choice === "12"} onclick={() => clock.set("12")}>{tr("12-hour")}</button>
+    </div>
     <h3 class="section">{tr("Appearance")}</h3>
     <div class="themes" role="radiogroup" aria-label={tr("Theme")}>
       {#each THEMES as t (t.id)}

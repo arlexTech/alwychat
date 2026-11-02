@@ -1,6 +1,7 @@
 import { SvelteMap } from "svelte/reactivity";
 import { profileExtras, type ProfileExtras } from "$lib/backend";
 import { tr } from "$lib/i18n/index.svelte";
+import { timeInZone } from "$lib/format";
 
 /** Profiles are re-read at most this often per person. */
 const FRESH_MS = 2 * 60 * 1000;
@@ -52,8 +53,7 @@ class Profiles {
     if (!zone) return null;
     const at = new Date(this.#now);
     try {
-      const fmt = (timeZone: string) =>
-        new Intl.DateTimeFormat(undefined, { timeZone, hour: "2-digit", minute: "2-digit" }).format(at);
+      const fmt = (timeZone: string) => timeInZone(at, timeZone);
       const theirs = fmt(zone);
       return theirs === fmt(ourZone()) ? null : tr("{theirs} their time", { theirs: theirs });
     } catch {

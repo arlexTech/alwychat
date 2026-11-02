@@ -1,5 +1,24 @@
 import { locale, tr } from "$lib/i18n/index.svelte";
-const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
+import { clock } from "$lib/stores/clock.svelte";
+
+// Times follow the clock setting (24 h / 12 h, the system's by default): formatters per choice.
+const timeFormats = new Map<string, Intl.DateTimeFormat>();
+function timeFormat(timeZone?: string): Intl.DateTimeFormat {
+  const hour12 = clock.hour12;
+  const key = `${hour12}|${timeZone ?? ""}`;
+  let format = timeFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hour12, timeZone });
+    timeFormats.set(key, format);
+  }
+  return format;
+}
+const time = { format: (d: Date) => timeFormat().format(d) };
+
+/** A time of day in another time zone (people's local time). */
+export function timeInZone(at: Date, timeZone: string): string {
+  return timeFormat(timeZone).format(at);
+}
 const weekday = new Intl.DateTimeFormat(locale, { weekday: "short" });
 const date = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" });
 const fullDate = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" });
