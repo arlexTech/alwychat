@@ -44,8 +44,9 @@ jobs:
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
-      # Releases (v* tags) and the beta branch get a version and their update feed; the apps
-      # then update themselves from that channel (latest.json, see .github/scripts).
+      # Releases (v* tags) and the beta branch get a version and their update feed: each platform
+      # is then built twice, plain (stores, no self-update) and "-autoupdate" (follows its
+      # channel's latest.json, see .github/scripts).
       - name: Version and update channel
         shell: bash
         run: |
@@ -69,7 +70,8 @@ jobs:
               change(config)
               json.dump(config, open(path, "w", encoding="utf-8"), indent=2)
           PY
-          echo "ALWY_UPDATE_FEED=$feed" >> "$GITHUB_ENV"
+          # Only the "updates itself" builds are compiled with it (ALWY_UPDATE_FEED).
+          echo "ALWY_FEED_URL=$feed" >> "$GITHUB_ENV"
           echo "version $version, updates from $feed"
 
       - name: Linux libraries
@@ -114,37 +116,37 @@ jobs:
               | awk 'BEGIN{ORS="%0A"} {print}' | sed "s/^/::warning title=$1 build tail::/"
             echo
           }
-          updater=()
-          if [ "$HAS_UPDATER_KEY" = true ]; then updater=(--config '{"bundle":{"createUpdaterArtifacts":true}}'); fi
-          if ! pnpm tauri build ${{ matrix.args }} "${updater[@]}" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
-            show_tail "${{ matrix.name }}"
-            exit 1
+          mkdir -p ../out
+          if [ "${{ runner.os }}" = macOS ]; then b=../target/universal-apple-darwin/release/bundle; else b=../target/release/bundle; fi
+          # $1: file name suffix ("" or "-autoupdate"); the rest: extra build arguments.
+          build() {
+            local suffix=$1; shift
+            rm -rf "$b"
+            if ! pnpm tauri build ${{ matrix.args }} "$@" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              show_tail "${{ matrix.name }}$suffix"
+              exit 1
+            fi
+            put() { cp "$1" "../out/$2"; if [ -f "$1.sig" ]; then cp "$1.sig" "../out/$2.sig"; fi; }
+            case "${{ runner.os }}" in
+              Linux)
+                put "$(ls $b/appimage/*.AppImage)" "AlwyChat-linux-x86_64$suffix.AppImage"
+                put "$(ls $b/deb/*.deb)" "AlwyChat-linux-amd64$suffix.deb"
+                put "$(ls $b/rpm/*.rpm)" "AlwyChat-linux-x86_64$suffix.rpm" ;;
+              Windows)
+                put "$(ls $b/nsis/*-setup.exe)" "AlwyChat-windows-x64$suffix-setup.exe"
+                put "$(ls $b/msi/*.msi)" "AlwyChat-windows-x64$suffix.msi" ;;
+              macOS)
+                put "$(ls $b/dmg/*.dmg)" "AlwyChat-macos$suffix.dmg"
+                if ls $b/macos/*.app.tar.gz >/dev/null 2>&1; then
+                  put "$(ls $b/macos/*.app.tar.gz)" "AlwyChat-macos$suffix.app.tar.gz"
+                fi ;;
+            esac
+          }
+          build ""
+          if [ -n "$ALWY_FEED_URL" ] && [ "$HAS_UPDATER_KEY" = true ]; then
+            ALWY_UPDATE_FEED="$ALWY_FEED_URL" build -autoupdate --config '{"bundle":{"createUpdaterArtifacts":true}}'
           fi
-
-      - name: Collect
-        shell: bash
-        run: |
-          mkdir out
-          b=target/release/bundle
-          case "${{ runner.os }}" in
-            Linux)
-              put() { cp $1 out/$2; cp $1.sig out/$2.sig 2>/dev/null || true; }
-              put "$(ls $b/appimage/*.AppImage)" AlwyChat-linux-x86_64.AppImage
-              put "$(ls $b/deb/*.deb)" AlwyChat-linux-amd64.deb
-              put "$(ls $b/rpm/*.rpm)" AlwyChat-linux-x86_64.rpm ;;
-            Windows)
-              put() { cp "$1" out/$2; cp "$1.sig" out/$2.sig 2>/dev/null || true; }
-              put "$(ls $b/nsis/*-setup.exe)" AlwyChat-windows-x64-setup.exe
-              put "$(ls $b/msi/*.msi)" AlwyChat-windows-x64.msi ;;
-            macOS)
-              m=target/universal-apple-darwin/release/bundle
-              cp $m/dmg/*.dmg out/AlwyChat-macos.dmg
-              if ls $m/macos/*.app.tar.gz >/dev/null 2>&1; then
-                cp $m/macos/*.app.tar.gz out/AlwyChat-macos.app.tar.gz
-                cp $m/macos/*.app.tar.gz.sig out/AlwyChat-macos.app.tar.gz.sig
-              fi ;;
-          esac
-          ls -la out
+          ls -la ../out
       - uses: actions/upload-artifact@v4
         with:
           name: alwychat-${{ runner.os }}
@@ -160,8 +162,9 @@ jobs:
       HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
-      # Releases (v* tags) and the beta branch get a version and their update feed; the apps
-      # then update themselves from that channel (latest.json, see .github/scripts).
+      # Releases (v* tags) and the beta branch get a version and their update feed: each platform
+      # is then built twice, plain (stores, no self-update) and "-autoupdate" (follows its
+      # channel's latest.json, see .github/scripts).
       - name: Version and update channel
         shell: bash
         run: |
@@ -185,7 +188,8 @@ jobs:
               change(config)
               json.dump(config, open(path, "w", encoding="utf-8"), indent=2)
           PY
-          echo "ALWY_UPDATE_FEED=$feed" >> "$GITHUB_ENV"
+          # Only the "updates itself" builds are compiled with it (ALWY_UPDATE_FEED).
+          echo "ALWY_FEED_URL=$feed" >> "$GITHUB_ENV"
           echo "version $version, updates from $feed"
       - uses: actions/setup-java@v4
         with:
@@ -232,17 +236,21 @@ jobs:
       - name: Build
         working-directory: app
         run: |
-          if [ "${{ steps.signing.outputs.signed }}" = true ]; then
-            pnpm tauri android build --apk --target aarch64 armv7 x86_64
-          else
-            pnpm tauri android build --apk --debug --target aarch64 armv7 x86_64
+          mkdir -p ../out
+          mode=(--debug)
+          if [ "${{ steps.signing.outputs.signed }}" = true ]; then mode=(); fi
+          # $1: file name suffix ("" or "-autoupdate").
+          build() {
+            rm -rf src-tauri/gen/android/app/build/outputs/apk
+            pnpm tauri android build --apk "${mode[@]}" --target aarch64 armv7 x86_64
+            cp "$(find src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)" "../out/AlwyChat-android$1.apk"
+          }
+          build ""
+          # Self-update needs the same signing key on every build (else Android refuses).
+          if [ -n "$ALWY_FEED_URL" ] && [ "${{ steps.signing.outputs.signed }}" = true ]; then
+            ALWY_UPDATE_FEED="$ALWY_FEED_URL" build -autoupdate
           fi
-      - name: Collect
-        run: |
-          mkdir out
-          apk=$(find app/src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)
-          cp "$apk" out/AlwyChat-android.apk
-          ls -la out
+          ls -la ../out
       - uses: actions/upload-artifact@v4
         with:
           name: alwychat-Android
@@ -253,8 +261,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      # Releases (v* tags) and the beta branch get a version and their update feed; the apps
-      # then update themselves from that channel (latest.json, see .github/scripts).
+      # Releases (v* tags) and the beta branch get a version and their update feed: each platform
+      # is then built twice, plain (stores, no self-update) and "-autoupdate" (follows its
+      # channel's latest.json, see .github/scripts).
       - name: Version and update channel
         shell: bash
         run: |
@@ -278,7 +287,8 @@ jobs:
               change(config)
               json.dump(config, open(path, "w", encoding="utf-8"), indent=2)
           PY
-          echo "ALWY_UPDATE_FEED=$feed" >> "$GITHUB_ENV"
+          # Only the "updates itself" builds are compiled with it (ALWY_UPDATE_FEED).
+          echo "ALWY_FEED_URL=$feed" >> "$GITHUB_ENV"
           echo "version $version, updates from $feed"
       - uses: pnpm/action-setup@v4
         with:

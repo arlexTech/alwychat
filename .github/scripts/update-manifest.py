@@ -21,25 +21,26 @@ def entry(name):
     return {"signature": sig.read_text().strip(), "url": f"{base}/{name}"}
 
 
-# Updater targets: {os}-{arch}-{bundle type}, and {os}-{arch} as the fallback.
+# Updater targets: {os}-{arch}-{bundle type}, and {os}-{arch} as the fallback. Always the
+# "-autoupdate" files: an app that updated itself must go on doing so.
 targets = {
-    "linux-x86_64-appimage": "AlwyChat-linux-x86_64.AppImage",
-    "linux-x86_64-deb": "AlwyChat-linux-amd64.deb",
-    "linux-x86_64-rpm": "AlwyChat-linux-x86_64.rpm",
-    "linux-x86_64": "AlwyChat-linux-x86_64.AppImage",
-    "windows-x86_64-nsis": "AlwyChat-windows-x64-setup.exe",
-    "windows-x86_64-msi": "AlwyChat-windows-x64.msi",
-    "windows-x86_64": "AlwyChat-windows-x64-setup.exe",
-    "darwin-aarch64-app": "AlwyChat-macos.app.tar.gz",
-    "darwin-x86_64-app": "AlwyChat-macos.app.tar.gz",
-    "darwin-aarch64": "AlwyChat-macos.app.tar.gz",
-    "darwin-x86_64": "AlwyChat-macos.app.tar.gz",
+    "linux-x86_64-appimage": "AlwyChat-linux-x86_64-autoupdate.AppImage",
+    "linux-x86_64-deb": "AlwyChat-linux-amd64-autoupdate.deb",
+    "linux-x86_64-rpm": "AlwyChat-linux-x86_64-autoupdate.rpm",
+    "linux-x86_64": "AlwyChat-linux-x86_64-autoupdate.AppImage",
+    "windows-x86_64-nsis": "AlwyChat-windows-x64-autoupdate-setup.exe",
+    "windows-x86_64-msi": "AlwyChat-windows-x64-autoupdate.msi",
+    "windows-x86_64": "AlwyChat-windows-x64-autoupdate-setup.exe",
+    "darwin-aarch64-app": "AlwyChat-macos-autoupdate.app.tar.gz",
+    "darwin-x86_64-app": "AlwyChat-macos-autoupdate.app.tar.gz",
+    "darwin-aarch64": "AlwyChat-macos-autoupdate.app.tar.gz",
+    "darwin-x86_64": "AlwyChat-macos-autoupdate.app.tar.gz",
 }
 platforms = {t: e for t, name in targets.items() if (e := entry(name))}
 # Android: no Tauri updater there; the app downloads the APK and Android checks that it's
 # signed with the same key as the installed app.
-if (files / "AlwyChat-android.apk").exists():
-    platforms["android"] = {"signature": "", "url": f"{base}/AlwyChat-android.apk"}
+if (files / "AlwyChat-android-autoupdate.apk").exists():
+    platforms["android"] = {"signature": "", "url": f"{base}/AlwyChat-android-autoupdate.apk"}
 
 manifest = {
     "version": version,

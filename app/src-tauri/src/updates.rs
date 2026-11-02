@@ -1,11 +1,13 @@
-//! AlwyChat updates itself from the channel it was built for (CI sets it: releases or the
-//! rolling `beta` build, each with a `latest.json`):
-//! - desktop: tauri-plugin-updater (the feed is `plugins.updater.endpoints` in tauri.conf.json;
-//!   updates must be signed with the key whose public half is in that config);
-//! - Android: the APK listed in the feed (`ALWY_UPDATE_FEED` at build time) is downloaded and
-//!   handed to Android's installer, which only accepts it if it's signed like the installed app.
-//!
-//! Builds without a channel (local ones) never offer updates.
+//! The "updates itself" builds: CI compiles them with `ALWY_UPDATE_FEED`, the `latest.json` of
+//! their channel (stable releases or the rolling beta). Builds without it (local ones, and the
+//! plain Stable / Beta downloads meant for stores) never look for updates.
+//! - desktop: tauri-plugin-updater; updates must be signed with the key whose public half is
+//!   `plugins.updater.pubkey` in tauri.conf.json;
+//! - Android: the APK listed in the feed is downloaded and handed to Android's installer, which
+//!   only accepts it if it's signed like the installed app.
+
+/// This build's update feed, if it updates itself.
+const FEED: Option<&str> = option_env!("ALWY_UPDATE_FEED");
 
 use serde::Serialize;
 use tauri::{AppHandle, ipc::Channel};
@@ -57,8 +59,15 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
     #[cfg(desktop)]
     {
         use tauri_plugin_updater::UpdaterExt;
-        let updater = app.updater().map_err(|e| e.to_string())?;
-        // No feed configured (local build) or no signing key yet: nothing to offer.
+        let Some(feed) = FEED.filter(|f| !f.is_empty()) else {
+            return Ok(None);
+        };
+        let url = feed.parse().map_err(|e| format!("{e}"))?;
+        let updater = app
+            .updater_builder()
+            .endpoints(vec![url])
+            .and_then(|b| b.build())
+            .map_err(|e| e.to_string())?;
         let update = match updater.check().await {
             Ok(update) => update,
             Err(e) => {
@@ -75,7 +84,7 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
     }
     #[cfg(target_os = "android")]
     {
-        let Some(feed) = option_env!("ALWY_UPDATE_FEED") else {
+        let Some(feed) = FEED.filter(|f| !f.is_empty()) else {
             return Ok(None);
         };
         let text = alwy_core::download::fetch_text(feed)
