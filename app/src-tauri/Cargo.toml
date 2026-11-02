@@ -29,6 +29,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 # Asks D-Bus whether a tray host exists (stock GNOME has none).
+# Desktop apps update themselves (signed builds from GitHub releases).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
 # Calls: WebKitGTK has no WebRTC, so LiveKit runs natively there (crates/alwy-call).

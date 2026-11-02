@@ -18,6 +18,8 @@
   import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
   import { onMount } from "svelte";
+  import Download from "@lucide/svelte/icons/download";
+  import { updates } from "$lib/stores/updates.svelte";
   import { flip } from "svelte/animate";
   import { fade, fly } from "svelte/transition";
   import {
@@ -235,6 +237,7 @@
       () => ((tab = "spaces"), (selectedId = null), (newChatOpen = false)),
     );
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
+    updates.start();
     presence.start();
     call.listen();
     spaces.start();
@@ -295,6 +298,22 @@
         {:else if connection.shown === "offline"}<WifiOff size={15} /> {tr("Waiting for network…")}
         {:else}<WifiOff size={15} /> {tr("Can't reach the server, retrying…")}{/if}
       </div>
+    {/if}
+    {#if updates.available}
+      {@const u = updates}
+      <button class="unlock-banner update" disabled={u.stage === "downloading" || u.stage === "installing"} onclick={() => u.install()} transition:fade>
+        <span class="update-icon"><Download size={18} /></span>
+        <span>
+          <strong>{tr("Update to AlwyChat {version}", { version: u.available!.version })}</strong>
+          <small>
+            {#if u.stage === "downloading"}{u.progress === null ? tr("Downloading…") : tr("Downloading… {percent}%", { percent: Math.round(u.progress * 100) })}
+            {:else if u.stage === "installing"}{isAndroid ? tr("Confirm the installation") : tr("Installing, AlwyChat restarts…")}
+            {:else if u.stage === "needs-permission"}{tr("Allow AlwyChat to install updates, then tap here again")}
+            {:else if u.error}{u.error}
+            {:else}{tr("Tap to update")}{/if}
+          </small>
+        </span>
+      </button>
     {/if}
     {#if encryption.locked}
       <button class="unlock-banner" onclick={() => (encryption.sheetOpen = true)} transition:fade>
@@ -830,6 +849,13 @@
   .unlock-banner span:last-child {
     display: flex;
     flex-direction: column;
+  }
+  .update-icon {
+    display: grid;
+    color: var(--accent-a);
+  }
+  .unlock-banner:disabled {
+    cursor: default;
   }
   .unlock-banner small {
     color: var(--muted);

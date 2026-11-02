@@ -6,6 +6,8 @@
 pub mod applock;
 pub mod custom;
 pub mod discovery;
+#[cfg(not(target_family = "wasm"))]
+pub mod download;
 pub mod drafts;
 mod effects;
 pub mod encryption;

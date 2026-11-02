@@ -21,6 +21,7 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 mod native_call;
+mod updates;
 
 #[tauri::command]
 async fn discover_server(server: String) -> alwy_core::Result<ServerInfo> {
@@ -1741,6 +1742,8 @@ pub fn run() {
     let builder = builder
         .plugin(android::gallery_plugin())
         .plugin(android::system_plugin());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     let builder = builder.setup(|app| {
         #[cfg(target_os = "android")]
         init_android_tls()?;
@@ -1881,6 +1884,8 @@ pub fn run() {
             report_activity,
             system_status,
             system_clock,
+            updates::update_check,
+            updates::update_install,
             link_preview,
             pin_message,
             create_poll,

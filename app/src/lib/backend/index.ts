@@ -5,7 +5,7 @@ import { eventMediaUrl } from "$lib/media";
 /** False when the UI is opened in a plain browser without the WebAssembly core (e.g. `pnpm dev`). */
 export const hasBackend = isTauri || isWeb;
 /** The web version (core in the page as WebAssembly), not the app. */
-export { isWeb };
+export { isTauri, isWeb };
 
 export const isAndroid = /Android/.test(navigator.userAgent);
 
@@ -370,6 +370,22 @@ export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData
 /** The system's clock: `h24` when the system says (Android), else the locale of its time
  * format (Linux LC_TIME). Not in browsers. */
 export const systemClock = () => invoke<{ h24: boolean | null; locale: string | null }>("system_clock");
+
+/** A newer AlwyChat on this build's update channel (none for local builds and browsers). */
+export interface UpdateInfo {
+  version: string;
+  notes: string | null;
+}
+export type UpdateProgress =
+  | { kind: "downloading"; done: number; total: number | null }
+  | { kind: "installing" }
+  | { kind: "needs_permission" };
+export const updateCheck = () => (isTauri ? invoke<UpdateInfo | null>("update_check") : Promise.resolve(null));
+export function updateInstall(onProgress: (progress: UpdateProgress) => void) {
+  const channel = new Channel<UpdateProgress>();
+  channel.onmessage = onProgress;
+  return invoke<void>("update_install", { onProgress: channel });
+}
 
 /** Shared look of a chat (room state `com.alwy.chat.room.*`). */
 export interface ChatStyle {

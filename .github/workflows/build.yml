@@ -1,7 +1,9 @@
 # Builds AlwyChat for every platform. A pushed `v*` tag also drafts a GitHub release with the
 # files under the stable names the README links to (releases/latest/download/<name>).
 # Every push to the `beta` branch replaces the rolling `beta` pre-release (the README's
-# "Test version" column, releases/download/beta/<name>) with the new build.
+# "Newest" column, releases/download/beta/<name>) with the new build. Both channels publish a
+# latest.json the apps update themselves from (secrets TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]
+# sign the desktop updates; Android checks its own signing key).
 #
 # Optional repository secrets:
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
@@ -38,8 +40,37 @@ jobs:
             args: --target universal-apple-darwin
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    env:
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
+      # Releases (v* tags) and the beta branch get a version and their update feed; the apps
+      # then update themselves from that channel (latest.json, see .github/scripts).
+      - name: Version and update channel
+        shell: bash
+        run: |
+          repo="https://github.com/${{ github.repository }}/releases"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest.json"
+          elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
+            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest.json"
+          else
+            exit 0
+          fi
+          py=$(command -v python3 || command -v python)
+          "$py" - "$version" "$feed" <<'PY'
+          import json, sys
+          version, feed = sys.argv[1], sys.argv[2]
+          for path, change in [
+              ("app/src-tauri/tauri.conf.json", lambda c: c.update(version=version) or c["plugins"]["updater"].update(endpoints=[feed])),
+              ("app/package.json", lambda c: c.update(version=version)),
+          ]:
+              config = json.load(open(path, encoding="utf-8"))
+              change(config)
+              json.dump(config, open(path, "w", encoding="utf-8"), indent=2)
+          PY
+          echo "ALWY_UPDATE_FEED=$feed" >> "$GITHUB_ENV"
+          echo "version $version, updates from $feed"
 
       - name: Linux libraries
         if: runner.os == 'Linux'
@@ -72,6 +103,10 @@ jobs:
       - name: Build
         working-directory: app
         shell: bash
+        env:
+          # Signs the update files (.sig) the apps check before installing an update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           # Logs need a GitHub sign-in: the end of a failed build is shown as annotations too.
           show_tail() {
@@ -79,7 +114,9 @@ jobs:
               | awk 'BEGIN{ORS="%0A"} {print}' | sed "s/^/::warning title=$1 build tail::/"
             echo
           }
-          if ! pnpm tauri build ${{ matrix.args }} 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+          updater=()
+          if [ "$HAS_UPDATER_KEY" = true ]; then updater=(--config '{"bundle":{"createUpdaterArtifacts":true}}'); fi
+          if ! pnpm tauri build ${{ matrix.args }} "${updater[@]}" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
             show_tail "${{ matrix.name }}"
             exit 1
           fi
@@ -91,14 +128,21 @@ jobs:
           b=target/release/bundle
           case "${{ runner.os }}" in
             Linux)
-              cp $b/appimage/*.AppImage out/AlwyChat-linux-x86_64.AppImage
-              cp $b/deb/*.deb out/AlwyChat-linux-amd64.deb
-              cp $b/rpm/*.rpm out/AlwyChat-linux-x86_64.rpm ;;
+              put() { cp $1 out/$2; cp $1.sig out/$2.sig 2>/dev/null || true; }
+              put "$(ls $b/appimage/*.AppImage)" AlwyChat-linux-x86_64.AppImage
+              put "$(ls $b/deb/*.deb)" AlwyChat-linux-amd64.deb
+              put "$(ls $b/rpm/*.rpm)" AlwyChat-linux-x86_64.rpm ;;
             Windows)
-              cp $b/nsis/*-setup.exe out/AlwyChat-windows-x64-setup.exe
-              cp $b/msi/*.msi out/AlwyChat-windows-x64.msi ;;
+              put() { cp "$1" out/$2; cp "$1.sig" out/$2.sig 2>/dev/null || true; }
+              put "$(ls $b/nsis/*-setup.exe)" AlwyChat-windows-x64-setup.exe
+              put "$(ls $b/msi/*.msi)" AlwyChat-windows-x64.msi ;;
             macOS)
-              cp target/universal-apple-darwin/release/bundle/dmg/*.dmg out/AlwyChat-macos.dmg ;;
+              m=target/universal-apple-darwin/release/bundle
+              cp $m/dmg/*.dmg out/AlwyChat-macos.dmg
+              if ls $m/macos/*.app.tar.gz >/dev/null 2>&1; then
+                cp $m/macos/*.app.tar.gz out/AlwyChat-macos.app.tar.gz
+                cp $m/macos/*.app.tar.gz.sig out/AlwyChat-macos.app.tar.gz.sig
+              fi ;;
           esac
           ls -la out
       - uses: actions/upload-artifact@v4
@@ -116,6 +160,33 @@ jobs:
       HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
+      # Releases (v* tags) and the beta branch get a version and their update feed; the apps
+      # then update themselves from that channel (latest.json, see .github/scripts).
+      - name: Version and update channel
+        shell: bash
+        run: |
+          repo="https://github.com/${{ github.repository }}/releases"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest.json"
+          elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
+            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest.json"
+          else
+            exit 0
+          fi
+          py=$(command -v python3 || command -v python)
+          "$py" - "$version" "$feed" <<'PY'
+          import json, sys
+          version, feed = sys.argv[1], sys.argv[2]
+          for path, change in [
+              ("app/src-tauri/tauri.conf.json", lambda c: c.update(version=version) or c["plugins"]["updater"].update(endpoints=[feed])),
+              ("app/package.json", lambda c: c.update(version=version)),
+          ]:
+              config = json.load(open(path, encoding="utf-8"))
+              change(config)
+              json.dump(config, open(path, "w", encoding="utf-8"), indent=2)
+          PY
+          echo "ALWY_UPDATE_FEED=$feed" >> "$GITHUB_ENV"
+          echo "version $version, updates from $feed"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -182,6 +253,33 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      # Releases (v* tags) and the beta branch get a version and their update feed; the apps
+      # then update themselves from that channel (latest.json, see .github/scripts).
+      - name: Version and update channel
+        shell: bash
+        run: |
+          repo="https://github.com/${{ github.repository }}/releases"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest.json"
+          elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
+            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest.json"
+          else
+            exit 0
+          fi
+          py=$(command -v python3 || command -v python)
+          "$py" - "$version" "$feed" <<'PY'
+          import json, sys
+          version, feed = sys.argv[1], sys.argv[2]
+          for path, change in [
+              ("app/src-tauri/tauri.conf.json", lambda c: c.update(version=version) or c["plugins"]["updater"].update(endpoints=[feed])),
+              ("app/package.json", lambda c: c.update(version=version)),
+          ]:
+              config = json.load(open(path, encoding="utf-8"))
+              change(config)
+              json.dump(config, open(path, "w", encoding="utf-8"), indent=2)
+          PY
+          echo "ALWY_UPDATE_FEED=$feed" >> "$GITHUB_ENV"
+          echo "version $version, updates from $feed"
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -235,27 +333,37 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
+      - name: Update manifest
+        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}" "${GITHUB_REF_NAME#v}" "AlwyChat ${{ github.ref_name }}"
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: out/*
 
   beta:
-    name: Test version (beta)
+    name: Newest version (beta)
     if: github.ref == 'refs/heads/beta'
     needs: [desktop, android, web]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
+      - name: Update manifest
+        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Newest version, built from ${{ github.sha }}"
       # One rolling pre-release: the old one (and its tag) goes, the new one points at this commit.
       - name: Publish
         env:
@@ -264,5 +372,5 @@ jobs:
         run: |
           gh release delete beta --cleanup-tag --yes || true
           gh release create beta out/* --prerelease --target "$GITHUB_SHA" \
-            --title "Test version (beta)" \
-            --notes "Built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): the latest changes, not yet in a release. It may have bugs."
+            --title "Newest version (updates itself)" \
+            --notes "Version 0.1.${{ github.run_number }}, built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): every change as soon as it's made. Installed from here, AlwyChat updates itself to each new build."

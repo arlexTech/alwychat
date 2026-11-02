@@ -30,6 +30,8 @@ pub enum Error {
     UnknownUser,
     #[error("call: {0}")]
     Call(String),
+    #[error("download: {0}")]
+    Download(String),
     #[error("push: {0}")]
     Push(String),
     #[error("poll: {0}")]

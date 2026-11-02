@@ -3,12 +3,13 @@
   import { onMount } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { profiles, ourZone } from "$lib/stores/profiles.svelte";
-  import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus } from "$lib/backend";
+  import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus, isTauri } from "$lib/backend";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import Page, { setPageLayout } from "./Page.svelte";
   import VoiceSettings from "./VoiceSettings.svelte";
+  import { updates } from "$lib/stores/updates.svelte";
   import { clock } from "$lib/stores/clock.svelte";
   import FolderPage from "./FolderPage.svelte";
   import PinPad from "./PinPad.svelte";
@@ -703,6 +704,21 @@
       <p>{tr("Server: {server}", { server: server })}</p>
       <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button></p>
     </div>
+    {#if isTauri}
+      <h3 class="section">{tr("Updates")}</h3>
+      {#if updates.available}
+        <button class="m-btn" disabled={updates.stage === "downloading" || updates.stage === "installing"} onclick={() => updates.install()}>
+          {tr("Update to AlwyChat {version}", { version: updates.available.version })}
+        </button>
+      {:else}
+        <button class="m-btn" disabled={updates.stage === "checking"} onclick={() => updates.check()}>
+          {updates.stage === "checking" ? tr("Checking…") : tr("Check for updates")}
+        </button>
+        {#if updates.upToDate}<p class="m-hint">{tr("You have the latest version.")}</p>{/if}
+      {/if}
+      {#if updates.error}<p class="m-hint">{updates.error}</p>{/if}
+      <p class="m-hint">{tr("AlwyChat installed from GitHub updates itself: it checks a few times a day and asks before installing.")}</p>
+    {/if}
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </Page>

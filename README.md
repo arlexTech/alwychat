@@ -1,14 +1,16 @@
+<img src="app/src-tauri/icons/logo.svg" width="96" alt="AlwyChat logo" align="right" />
+
 # AlwyChat
 
 A chat app for [Matrix](https://matrix.org). Messages are end-to-end encrypted, and you can talk with people on Element, Element X, FluffyChat or any other Matrix app.
 
-> AlwyChat is in beta. The first release isn't out yet, so the **Download** links below won't work until it is. Until then, take the **Test version**.
+> AlwyChat is in beta. The first stable release isn't out yet, so take the **Newest version** for now.
 
 ## Which file do I download?
 
 Find your device in the table and click the file next to it.
 
-| Your device | Download | Test version |
+| Your device | Stable version | Newest version |
 |---|---|---|
 | 📱 **Android** phone or tablet (Android 7 or newer) | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-android.apk) | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-android.apk) |
 | 🐧 **Linux**, any distribution | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.AppImage) | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64.AppImage) |
@@ -20,9 +22,12 @@ Find your device in the table and click the file next to it.
 
 🌐 **Web browser**: AlwyChat also runs in a browser, hosted on your own server. See [how to host it](#web-version).
 
-The **Test version** has the newest changes as soon as they're made, so it may have bugs.
+**Updates:** once installed, AlwyChat updates itself (Android, Windows, macOS and every Linux file). It checks a few times a day and asks before installing.
 
-**Updates:** the apps don't update themselves yet. To get a newer version, download the file again and install it over the old one.
+- **Stable version:** tested releases. It updates to the next release.
+- **Newest version:** every change as soon as it's made, so it may have bugs. It updates to each new build.
+
+iPhone and iPad aren't available yet.
 
 Not sure which Linux file to pick? Take the **AppImage**, it works on every distribution.
 

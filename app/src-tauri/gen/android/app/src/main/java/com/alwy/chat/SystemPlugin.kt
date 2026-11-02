@@ -23,6 +23,11 @@ import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
 
 @InvokeArg
+class InstallArgs {
+  lateinit var path: String
+}
+
+@InvokeArg
 class SecureArgs {
   var secure = false
 }
@@ -70,6 +75,34 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   /** The system prompt if Android still allows asking, else the app's notification settings. */
+  /**
+   * Hand a downloaded update (an APK in the app's cache) to Android's installer, which only
+   * accepts it if it's signed like the installed app. The first time, Android needs the user to
+   * allow AlwyChat to install apps: that settings page opens and `needsPermission` is returned.
+   */
+  @Command
+  fun installApk(invoke: Invoke) {
+    val args = invoke.parseArgs(InstallArgs::class.java)
+    val ret = JSObject()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
+      activity.startActivity(
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$pkg"))
+      )
+      ret.put("needsPermission", true)
+      invoke.resolve(ret)
+      return
+    }
+    val uri = androidx.core.content.FileProvider.getUriForFile(
+      activity, "$pkg.fileprovider", java.io.File(args.path)
+    )
+    val intent = Intent(Intent.ACTION_VIEW)
+      .setDataAndType(uri, "application/vnd.android.package-archive")
+      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    activity.startActivity(intent)
+    ret.put("needsPermission", false)
+    invoke.resolve(ret)
+  }
+
   /** The user's 12/24-hour choice (Settings → System → Date & time). */
   @Command
   fun clock(invoke: Invoke) {
