@@ -1083,14 +1083,18 @@ mod tests {
     fn parses_addresses() {
         assert_eq!(
             parse_address("https://matrix.to/#/%23test:example.org?via=example.org"),
-            Some(("#test:example.org".to_owned(), vec!["example.org".to_owned()]))
+            Some((
+                "#test:example.org".to_owned(),
+                vec!["example.org".to_owned()]
+            ))
         );
         assert_eq!(
             parse_address("!abc:example.org").map(|a| a.0),
             Some("!abc:example.org".to_owned())
         );
         assert_eq!(
-            parse_address("https://matrix.to/#/!abc:example.org/$event?via=a.b&via=c.d").map(|a| a.1),
+            parse_address("https://matrix.to/#/!abc:example.org/$event?via=a.b&via=c.d")
+                .map(|a| a.1),
             Some(vec!["a.b".to_owned(), "c.d".to_owned()])
         );
         assert_eq!(

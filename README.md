@@ -86,7 +86,7 @@ What is protected, and what isn't (yet):
 - **Messages** in encrypted chats (all private chats by default) are end-to-end encrypted, with the same encryption as Element. Your server can't read them.
 - **Calls and voice channels** go through your server's LiveKit and are encrypted on the way, but **not end-to-end yet**: whoever runs that LiveKit server could listen. Voice channels are unencrypted on purpose, so people on Element can join them.
 - **Stored on your server, readable by its admins:** your drafts, chat folders and app settings (synced between your devices), and who is in which chat, as with every Matrix app.
-- **Android notifications** pass through AlwyChat's push gateway, which only sees a chat ID and a message ID. Your phone fetches and decrypts the message itself.
+- **Android notifications**, where your server offers them, go through Google's push service and a push gateway, which only see a chat ID and a message ID. Your phone fetches and decrypts the message itself.
 - **On your device:** your sign-in is kept in the system keychain (computer) or the app's private storage (Android). The search index and message cache aren't encrypted on disk; the app lock (PIN, fingerprint) hides the app, it doesn't encrypt it. In the web version, the sign-in is kept in the browser's storage.
 - **Updates** that install themselves are signed: the app refuses a file that wasn't built and signed for it.
 - **Files from others** can't be opened from AlwyChat if they could run a program (`.exe`, `.sh`, `.desktop`…). You can still save them.
@@ -105,7 +105,7 @@ Your server needs the newer sign-in system, where you log in through your browse
 | Sync | A recent Synapse (simplified sliding sync is on by default) |
 | Calls and voice channels | [LiveKit](https://livekit.io) and [lk-jwt-service](https://github.com/element-hq/lk-jwt-service), listed in `/.well-known/matrix/client` under `org.matrix.msc4143.rtc_foci` (the same setup Element Call uses) |
 | Link previews | `url_preview_enabled: true` in Synapse |
-| Android notifications | Nothing. They go through AlwyChat's push gateway, which only sees a chat ID and a message ID. The phone downloads and decrypts the message itself. |
+| Android notifications while AlwyChat is closed | Not available for other servers yet ([UnifiedPush](https://unifiedpush.org) support is planned). Until then, AlwyChat notifies you while it's open or in the background. |
 
 <a id="web-version"></a>
 ### Web version (host it yourself)

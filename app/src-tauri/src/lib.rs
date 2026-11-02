@@ -1572,6 +1572,10 @@ async fn setup_push(
 ) -> Result<bool, String> {
     #[cfg(target_os = "android")]
     {
+        // The homeserver offers no push gateway: notifications come from the running app.
+        if enabled && core.push_gateway().await.ok().flatten().is_none() {
+            return Ok(false);
+        }
         #[derive(serde::Deserialize)]
         struct Token {
             token: String,

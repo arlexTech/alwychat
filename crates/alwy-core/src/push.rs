@@ -1,4 +1,8 @@
-//! Push notifications: FCM on Android, through AlwyChat's push gateway (Sygnal on example.org).
+//! Push notifications: FCM on Android, through a push gateway (Sygnal holding the app's
+//! Firebase credentials). No gateway is built into the app: the user's homeserver advertises one
+//! in its `/.well-known/matrix/client` as `"com.alwy.chat.push": { "gateway": "<url>" }` (the URL is
+//! given to the homeserver as the pusher's, so it can be an address only that homeserver
+//! reaches). Servers without it get no push: the app notifies while it runs.
 //!
 //! The homeserver only sends "event X in room Y" (`event_id_only`, nothing readable leaves
 //! it); the phone wakes the app, which fetches and decrypts the event here and shows it.
@@ -17,8 +21,8 @@ use tracing::info;
 
 use crate::Result;
 
-/// The gateway the homeserver forwards pushes to (Sygnal holds the FCM credentials).
-pub const PUSH_GATEWAY: &str = "https://matrix.example.org/_matrix/push/v1/notify";
+/// Key in the homeserver's `/.well-known/matrix/client` naming its AlwyChat push gateway.
+const WELL_KNOWN_KEY: &str = "com.alwy.chat.push";
 /// Must match the app id in the gateway's config.
 pub const PUSH_APP_ID: &str = "com.alwy.chat";
 /// Event ID of the test notification (see `test_push`).
@@ -47,6 +51,32 @@ pub struct PushNotification {
 }
 
 impl crate::Core {
+    /// The push gateway our homeserver advertises, if any (asked each time: it's one small
+    /// request at startup, and a server can add or remove it).
+    pub async fn push_gateway(&self) -> Result<Option<String>> {
+        let client = self.client()?;
+        let server = client
+            .user_id()
+            .ok_or(crate::Error::NotLoggedIn)?
+            .server_name()
+            .to_owned();
+        let url = format!("https://{server}/.well-known/matrix/client");
+        let Ok(text) = crate::download::fetch_text(&url).await else {
+            return Ok(None);
+        };
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        Ok(json[WELL_KNOWN_KEY]["gateway"]
+            .as_str()
+            .filter(|g| g.starts_with("https://") || g.starts_with("http://"))
+            .map(ToOwned::to_owned))
+    }
+
+    async fn gateway(&self) -> Result<String> {
+        self.push_gateway().await?.ok_or_else(|| {
+            crate::Error::Push("your server doesn't offer push notifications for AlwyChat".into())
+        })
+    }
+
     /// Ask the homeserver to push this device's events to `token` (an FCM registration token).
     /// Check push end to end for `token`: is the pusher registered on the homeserver with our
     /// gateway, and does the gateway accept a (test) notification for it? The phone then shows
@@ -54,11 +84,12 @@ impl crate::Core {
     pub async fn test_push(&self, token: &str) -> Result<PushTest> {
         use matrix_sdk::ruma::api::client::push::get_pushers;
         let client = self.client()?;
+        let gateway = self.gateway().await?;
         let pushers = client.send(get_pushers::v3::Request::new()).await?.pushers;
         let registered = pushers.iter().any(|p| {
             p.ids.pushkey == token
                 && p.ids.app_id == PUSH_APP_ID
-                && matches!(&p.kind, matrix_sdk::ruma::api::client::push::PusherKind::Http(h) if h.url == PUSH_GATEWAY)
+                && matches!(&p.kind, matrix_sdk::ruma::api::client::push::PusherKind::Http(h) if h.url == gateway)
         });
         let body = serde_json::json!({
             "notification": {
@@ -75,7 +106,7 @@ impl crate::Core {
             },
         });
         let (gateway_ok, rejected, error) = match reqwest::Client::new()
-            .post(PUSH_GATEWAY)
+            .post(gateway)
             .json(&body)
             .timeout(std::time::Duration::from_secs(20))
             .send()
@@ -93,6 +124,13 @@ impl crate::Core {
                 false,
                 Some(format!("the push gateway answered {}", r.status())),
             ),
+            // An internal gateway (only the homeserver reaches it) is fine: this direct test
+            // just can't run from the phone.
+            Err(e) if e.is_connect() || e.is_timeout() => (
+                false,
+                false,
+                Some("your server's push gateway can only be reached by the server itself, so this test can't run from here; send yourself a message from another device instead".into()),
+            ),
             Err(e) => (false, false, Some(format!("push gateway unreachable: {e}"))),
         };
         Ok(PushTest {
@@ -105,7 +143,7 @@ impl crate::Core {
 
     pub async fn register_pusher(&self, token: &str, device_name: &str) -> Result<()> {
         let client = self.client()?;
-        let mut data = HttpPusherData::new(PUSH_GATEWAY.to_owned());
+        let mut data = HttpPusherData::new(self.gateway().await?);
         data.format = Some(PushFormat::EventIdOnly);
         let pusher: Pusher = PusherInit {
             ids: PusherIds::new(token.to_owned(), PUSH_APP_ID.to_owned()),

@@ -1,4 +1,4 @@
-//! Extended profile fields (MSC4133, stable on example.org): a custom status with an emoji
+//! Extended profile fields (MSC4133, stable in recent Synapse): a custom status with an emoji
 //! (MSC4426's `org.matrix.msc4426.status`, as other clients will read it) and the time zone
 //! (`m.tz`), so a chat can show someone's local time.
 

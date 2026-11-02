@@ -13,7 +13,7 @@ pub struct ServerInfo {
     pub sliding_sync: bool,
 }
 
-/// Resolve `server` (e.g. `example.org`) via .well-known and probe its capabilities.
+/// Resolve `server` (e.g. `matrix.org`) via .well-known and probe its capabilities.
 pub async fn discover(server: &str) -> Result<ServerInfo> {
     let client = Client::builder()
         .server_name_or_homeserver_url(server)

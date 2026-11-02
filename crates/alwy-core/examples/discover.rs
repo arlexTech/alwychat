@@ -1,8 +1,10 @@
-//! `cargo run -p alwy-core --example discover -- example.org`
+//! `cargo run -p alwy-core --example discover -- matrix.org`
 
 #[tokio::main]
 async fn main() {
-    let server = std::env::args().nth(1).unwrap_or_else(|| "example.org".into());
+    let server = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "matrix.org".into());
     match alwy_core::discovery::discover(&server).await {
         Ok(info) => println!("{info:#?}"),
         Err(e) => eprintln!("error: {e}"),

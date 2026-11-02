@@ -22,7 +22,7 @@ Compat: 🟢 Matrix spec (works with Element/FluffyChat) · 🟡 custom `com.alw
 - [x] P2 🟢 Threads
 - [x] P2 🟢 Pinned messages
 - [x] P2 🟢 Polls
-- [x] P2 🟢 Scheduled messages (delayed events — enabled on example.org, max 24h)
+- [x] P2 🟢 Scheduled messages (delayed events, max 24h on Synapse by default)
 - [x] P2 🟢 Custom emoji & sticker packs (MSC2545 — FluffyChat/Cinny compatible)
 - [ ] P2 🔵 GIF search (needs a provider key; privacy trade-off)
 - [x] P2 🔵 Forward / multi-select / copy
@@ -46,7 +46,7 @@ Compat: 🟢 Matrix spec (works with Element/FluffyChat) · 🟡 custom `com.alw
 ## 4. Chat list & organisation
 - [x] P1 🔵 Pin, mute, archive, mark unread
 - [x] P2 🔵 Chat folders/filters (Telegram style, synced via account data)
-- [x] P2 🟢 Custom status + emoji (extended profiles — supported on example.org)
+- [x] P2 🟢 Custom status + emoji (extended profiles, MSC4133)
 - [x] P3 🟢 Pronouns / timezone / "local time" shown on profile (not pronouns)
 
 ## 5. Servers (Spaces) — Discord-style
@@ -70,7 +70,7 @@ Compat: 🟢 Matrix spec (works with Element/FluffyChat) · 🟡 custom `com.alw
 
 ## 7. Security & privacy
 - [x] P1 🟢 E2EE, device verification (emoji/QR), cross-signing, key backup + recovery key
-- [x] P1 🟢 OIDC login via MAS (auth.example.org)
+- [x] P1 🟢 OIDC login via MAS
 - [x] P2 🔵 App lock (PIN / biometrics), hide content in app switcher (but not enable by default, fully optionnal and not even proposed, just in the settings)
 - [ ] P3 🔵 Multi-account
 

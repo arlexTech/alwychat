@@ -48,9 +48,9 @@ Svelte component ──invoke("send_gallery", …)──▶ src-tauri command �
 
 | Module | Built on | Notes |
 |---|---|---|
-| `session` | `matrix_sdk::Client`, OAuth 2.0 (MAS) | Login via auth.example.org with system browser + deep link. Tokens in OS keychain. |
+| `session` | `matrix_sdk::Client`, OAuth 2.0 (MAS) | Login via the server's MAS with system browser + deep link. Tokens in OS keychain. |
 | `store` | `matrix-sdk-sqlite` | One encrypted SQLite store per account; passphrase in keychain/Keystore. |
-| `sync` | `matrix_sdk_ui::SyncService` | Simplified sliding sync (enabled on example.org). |
+| `sync` | `matrix_sdk_ui::SyncService` | Simplified sliding sync. |
 | `rooms` | `RoomListService` | Filters, folders, pins, unread, spaces tree. |
 | `timeline` | `matrix_sdk_ui::Timeline` | Plus our grouping layer: albums, burst grouping, effects. |
 | `media` | `image`, `fast_image_resize`, `blurhash` | Parallel encrypted uploads, thumbnails, HD/compressed policy, save-to-gallery handoff. |
@@ -74,7 +74,7 @@ Svelte component ──invoke("send_gallery", …)──▶ src-tauri command �
 
 | Platform | Transport | Content |
 |---|---|---|
-| iOS | APNs ← Sygnal (to deploy on example.org) | Notification Service Extension calls `alwy-ffi` to decrypt (24 MB memory limit → minimal store access). **Needs paid Apple account.** |
+| iOS | APNs ← Sygnal (to deploy) | Notification Service Extension calls `alwy-ffi` to decrypt (24 MB memory limit → minimal store access). **Needs paid Apple account.** |
 | Android | UnifiedPush (ntfy, self-hostable) or FCM | Decrypt in-process via the core. |
 | Desktop | No push; app keeps syncing (tray) | libnotify / OS notifications. |
 
@@ -100,7 +100,7 @@ Svelte component ──invoke("send_gallery", …)──▶ src-tauri command �
 | Quick reaction | room state | `com.alwy.chat.room.quick_reaction` |
 | Nicknames for others | room state (map user → name) | `com.alwy.chat.room.nicknames` |
 | Countdown / anniversary | room state | `com.alwy.chat.room.countdowns` |
-| Disappearing messages | room state + sender schedules delayed redactions | `com.alwy.chat.room.disappearing` (≤24h on example.org) |
+| Disappearing messages | room state + sender schedules delayed redactions | `com.alwy.chat.room.disappearing` (≤24h on Synapse by default) |
 | View once | content flag; recipient redacts after view | `com.alwy.chat.view_once` |
 | Per-chat media prefs (HD, auto-save) | room account data (private) | `com.alwy.chat.room.media_prefs` |
 | Chat folders | account data | `com.alwy.chat.folders` |
@@ -125,7 +125,7 @@ Note: room **state is not end-to-end encrypted** today, so theme, nicknames and 
 ## 10. Tooling and conventions
 
 - Rust stable, `cargo fmt`, `clippy -D warnings`. TypeScript strict, Biome for lint and format.
-- Tests: core integration tests run against `dev/docker-compose.yml` (local Synapse + LiveKit). **Never against example.org.**
+- Tests: core integration tests run against `dev/docker-compose.yml` (local Synapse + LiveKit). **Never against a real server.**
 - Conventional commits; one ADR per significant decision.
 - CI: Linux/Android builds on Forgejo Actions. iOS builds on a macOS machine (local or CI runner).
 
