@@ -46,6 +46,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev rpm
+          # Native calls (crates/alwy-call): LiveKit's prebuilt WebRTC needs clang 21+ (the
+          # runner has 14) and V4L2 headers for the camera.
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 21
+          sudo apt-get install -y libv4l-dev
+          echo "CC=clang-21" >> "$GITHUB_ENV"
+          echo "CXX=clang++-21" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -213,7 +219,8 @@ jobs:
       - name: Collect
         run: |
           mkdir out
-          (cd app/build-web && zip -qr ../../out/AlwyChat-web.zip .)
+          # Python's zip (the runner may have no zip command).
+          python3 -c "import shutil; shutil.make_archive('out/AlwyChat-web', 'zip', 'app/build-web')"
           ls -la out
       - uses: actions/upload-artifact@v4
         with:

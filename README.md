@@ -20,7 +20,9 @@ Find your device in the table and click the file next to it.
 
 🌐 **Web browser**: AlwyChat also runs in a browser, hosted on your own server. See [how to host it](#web-version).
 
-The **Test version** has the newest changes as soon as they're made, so it may have bugs. To update it, download it again and install it over the old one.
+The **Test version** has the newest changes as soon as they're made, so it may have bugs.
+
+**Updates:** the apps don't update themselves yet. To get a newer version, download the file again and install it over the old one.
 
 Not sure which Linux file to pick? Take the **AppImage**, it works on every distribution.
 
