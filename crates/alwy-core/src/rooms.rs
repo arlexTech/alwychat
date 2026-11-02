@@ -207,10 +207,16 @@ async fn summarize(room: &Room) -> RoomSummary {
         avatar = room.heroes().await.into_iter().find_map(|h| h.avatar_url);
     }
     let avatar = avatar.map(|uri| uri.to_string());
-    let name = room
-        .cached_display_name()
-        .map(|n| n.to_string())
-        .unwrap_or_else(|| room.room_id().to_string());
+    // The SDK caches a computed name only for some rooms (a fresh sign-in can list a room
+    // before it did): compute it then, and never show the ID while the room has a name.
+    let name = match room.cached_display_name() {
+        Some(name) => Some(name),
+        None => room.display_name().await.ok(),
+    }
+    .map(|n| n.to_string())
+    .or_else(|| room.name())
+    .or_else(|| room.canonical_alias().map(|a| a.to_string()))
+    .unwrap_or_else(|| room.room_id().to_string());
 
     RoomSummary {
         id: room.room_id().to_string(),
