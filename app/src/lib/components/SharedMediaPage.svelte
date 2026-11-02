@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import FileText from "@lucide/svelte/icons/file-text";
   import Mic from "@lucide/svelte/icons/mic";
@@ -19,9 +20,9 @@
   }: { roomId: string; onShow: (eventId: string) => void; onClose: () => void } = $props();
 
   const TABS: { id: KindFilter; label: string }[] = [
-    { id: "media", label: "Photos & videos" },
-    { id: "files", label: "Files" },
-    { id: "links", label: "Links" },
+    { id: "media", label: tr("Photos & videos") },
+    { id: "files", label: tr("Files") },
+    { id: "links", label: tr("Links") },
   ];
   const PAGE = 60;
 
@@ -90,12 +91,12 @@
 
   async function onFile(item: SharedItem, action: "open" | "save_as" | "downloads") {
     if (!item.media) return;
-    if (action === "open") flash("Opening…");
+    if (action === "open") flash(tr("Opening…"));
     try {
       const result = await fileAction(item.media, action);
       if (result) flash(result.replace(/^Saved to \/home\/[^/]+/, "Saved to ~"));
     } catch (e) {
-      flash(`Couldn't ${action === "open" ? "open" : "save"}: ${e}`);
+      flash(tr("Couldn't {value}: {e}", { value: action === "open" ? "open" : "save", e: e }));
     }
   }
 
@@ -108,7 +109,7 @@
   };
 </script>
 
-<Page title="Shared media" {onClose}>
+<Page title={tr("Shared media")} {onClose}>
   <nav class="tabs">
     {#each TABS as t (t.id)}
       <button class:active={tab === t.id} onclick={() => show(t.id)}>{t.label}</button>
@@ -120,7 +121,7 @@
   {:else if tab === "media"}
     <div class="grid">
       {#each visual as item, i (item.event_id)}
-        <button class="cell" onclick={() => (viewer = i)} aria-label={item.kind === "video" ? "Play video" : "Open photo"}>
+        <button class="cell" onclick={() => (viewer = i)} aria-label={item.kind === "video" ? tr("Play video") : tr("Open photo")}>
           <img src={eventMediaUrl(item.media!, true)} alt="" loading="lazy" decoding="async" />
           {#if item.kind === "video"}
             <span class="badge"><Play size={11} fill="currentColor" />{formatDuration(item.duration_ms)}</span>
@@ -136,7 +137,7 @@
             <button class="main" onclick={() => (fileFor = item)}>
               <span class="icon">{#if item.kind === "voice"}<Mic size={20} />{:else}<FileText size={20} />{/if}</span>
               <span class="text">
-                <strong>{item.kind === "voice" ? "Voice message" : item.filename}</strong>
+                <strong>{item.kind === "voice" ? tr("Voice message") : item.filename}</strong>
                 <small>{[formatSize(item.size), item.sender_name, shortTime(item.timestamp)].filter(Boolean).join(" · ")}</small>
               </span>
             </button>
@@ -144,13 +145,13 @@
             <button class="main" onclick={() => item.url && openExternal(item.url)}>
               <span class="icon"><Link size={20} /></span>
               <span class="text">
-                <strong>{item.url ? host(item.url) : "Link"}</strong>
+                <strong>{item.url ? host(item.url) : tr("Link")}</strong>
                 <small class="clamp">{item.text}</small>
                 <small>{item.sender_name} · {shortTime(item.timestamp)}</small>
               </span>
             </button>
           {/if}
-          <button class="show" onclick={() => onShow(item.event_id)} aria-label="Show in chat"><MessageSquare size={18} /></button>
+          <button class="show" onclick={() => onShow(item.event_id)} aria-label={tr("Show in chat")}><MessageSquare size={18} /></button>
         </li>
       {/each}
     </ul>
@@ -158,11 +159,11 @@
 
   {#if !loading && !error && items.length === 0}
     <p class="note">
-      {tab === "media" ? "No photos or videos yet." : tab === "files" ? "No files yet." : "No links yet."}
+      {tab === "media" ? tr("No photos or videos yet.") : tab === "files" ? tr("No files yet.") : tr("No links yet.")}
     </p>
   {/if}
   {#if !complete}
-    <p class="note small">Still reading older messages: more may appear.</p>
+    <p class="note small">{tr("Still reading older messages: more may appear.")}</p>
   {/if}
   <div bind:this={sentinel} class="sentinel"></div>
   {#if toast}<p class="toast">{toast}</p>{/if}

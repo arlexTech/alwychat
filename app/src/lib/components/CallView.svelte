@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Mic from "@lucide/svelte/icons/mic";
   import MicOff from "@lucide/svelte/icons/mic-off";
@@ -9,12 +10,19 @@
   import Headphones from "@lucide/svelte/icons/headphones";
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
-  import Volume1 from "@lucide/svelte/icons/volume-1";
+  import MessageSquare from "@lucide/svelte/icons/message-square";
+  import VolumeX from "@lucide/svelte/icons/volume-x";
   import { fade, fly } from "svelte/transition";
   import type { Track } from "livekit-client";
   import { isAndroid } from "$lib/backend";
   import { call } from "$lib/stores/call.svelte";
+  import Maximize2 from "@lucide/svelte/icons/maximize-2";
+  import Minimize2 from "@lucide/svelte/icons/minimize-2";
+  import X from "@lucide/svelte/icons/x";
+  import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
+  import { keyName } from "$lib/keys";
+  import NativeVideo from "./NativeVideo.svelte";
 
   /** Show a LiveKit video track in a <video> element. */
   function video(el: HTMLVideoElement, track: Track) {
@@ -33,25 +41,80 @@
 
   const statusText = $derived(
     call.status === "connecting"
-      ? "Connecting…"
+      ? tr("Connecting…")
       : call.status === "reconnecting"
-        ? "Reconnecting…"
+        ? tr("Reconnecting…")
         : call.calling
-          ? "Calling…"
+          ? tr("Calling…")
           : null,
   );
-  /** Screen shares get the big spot. */
-  const featured = $derived(call.tiles.find((t) => t.screen) ?? null);
-  const canShareScreen = !isAndroid && !!navigator.mediaDevices?.getDisplayMedia;
+  type Tile = (typeof call.tiles)[number];
+  type Spot = "screen" | "camera" | "person";
+  const hasScreen = (t: Tile) => !!(t.screen || t.screenFrames);
+  const hasCamera = (t: Tile) => !!(t.camera || t.cameraFrames);
+  /** Clicked tile (Discord: click someone to focus them); null = automatic. */
+  let focus = $state<string | null>(null);
+  /** The big spot: the focused person (their screen, else camera, else avatar), or the first
+   * screen share. */
+  const featured = $derived.by((): { tile: Tile; what: Spot } | null => {
+    const focused = focus ? call.tiles.find((t) => t.id === focus) : undefined;
+    const tile = focused ?? call.tiles.find(hasScreen);
+    if (!tile) return null;
+    return { tile, what: hasScreen(tile) ? "screen" : hasCamera(tile) ? "camera" : "person" };
+  });
+  function toggleFocus(t: Tile) {
+    if (longPressed) return void (longPressed = false);
+    focus = focus === t.id ? null : t.id;
+  }
 
-  /** Whose volume slider is open (tap a person's tile). */
-  let volumeFor = $state<string | null>(null);
+  // Touch: tap focuses, long-press opens the person menu (as a sheet).
+  let pressTimer: ReturnType<typeof setTimeout> | undefined;
+  let longPressed = false;
+  function pressStart(e: PointerEvent, t: Tile) {
+    if (e.pointerType !== "touch") return;
+    longPressed = false;
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      navigator.vibrate?.(10);
+      call.openMenu(person(t), e);
+    }, 450);
+  }
+  const pressEnd = () => clearTimeout(pressTimer);
+
+  // Full screen for the big spot: the system's when the webview has it, else the whole window.
+  let spot = $state<HTMLElement>();
+  let immersive = $state(false);
+  async function toggleFullscreen() {
+    if (document.fullscreenElement || immersive) {
+      immersive = false;
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      return;
+    }
+    try {
+      if (!spot?.requestFullscreen) throw new Error("no fullscreen");
+      await spot.requestFullscreen();
+    } catch {
+      immersive = true;
+    }
+  }
+  $effect(() => {
+    if (immersive) return onBack(() => (immersive = false));
+  });
+  const canShareScreen = $derived(!isAndroid && (call.native || !!navigator.mediaDevices?.getDisplayMedia));
+
+  const person = (t: (typeof call.tiles)[number]) => ({
+    userId: t.userId,
+    name: t.name,
+    avatar: t.avatar,
+    isMe: t.isMe,
+    live: true,
+  });
   let optionsOpen = $state(false);
 
   // Push-to-talk on a keyboard: hold Space (outside text fields).
   const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && !!e.target.closest("input, textarea, [contenteditable]");
   function onKey(e: KeyboardEvent, down: boolean) {
-    if (!call.active || !call.prefs.pushToTalk || e.code !== "Space" || typing(e)) return;
+    if (!call.active || !call.prefs.pushToTalk || e.code !== call.prefs.pttKey || typing(e)) return;
     e.preventDefault();
     if (!e.repeat) void call.talk(down);
   }
@@ -66,38 +129,69 @@
   <button class="pill" onclick={() => (call.minimized = false)} transition:fly={{ y: -16, duration: 180 }}>
     <span class="dot"></span>
     <span class="pill-name">{call.roomName}</span>
-    <span class="pill-count">{call.tiles.length} in call</span>
+    <span class="pill-count">{tr("{length} in call", { length: call.tiles.length })}</span>
   </button>
 {:else if call.active}
-  <div class="call" transition:fade={{ duration: 160 }}>
+  <div class="call" class:side={call.sideChat} transition:fade={{ duration: 160 }}>
     <header>
-      <button class="icon" onclick={() => (call.minimized = true)} aria-label="Back to chats"><ChevronDown size={24} /></button>
+      <button class="icon" onclick={() => (call.minimized = true)} aria-label={tr("Back to chats")}><ChevronDown size={24} /></button>
       <div class="title">
         <strong>{call.roomName}</strong>
-        <small>{statusText ?? `${call.tiles.length} in call`}</small>
+        <small>{statusText ?? tr("{length} in call", { length: call.tiles.length })}</small>
       </div>
-      <button class="icon options" class:open={optionsOpen} onclick={() => (optionsOpen = !optionsOpen)} aria-label="Call options" aria-expanded={optionsOpen}>
+      <button class="icon chat" class:open={call.sideChat} onclick={() => call.toggleChat()} aria-label={tr("Chat")} title={tr("Chat")} aria-pressed={call.sideChat}>
+        <MessageSquare size={20} />
+      </button>
+      <button class="icon options" class:open={optionsOpen} onclick={() => (optionsOpen = !optionsOpen)} aria-label={tr("Call options")} aria-expanded={optionsOpen}>
         <SlidersHorizontal size={20} />
       </button>
     </header>
     {#if optionsOpen}
       <div class="options-panel" transition:fly={{ y: -8, duration: 150 }}>
         <label>
-          <span><strong>Noise suppression</strong><small>Filters background noise from your mic</small></span>
+          <span><strong>{tr("Noise suppression")}</strong><small>{tr("Filters background noise from your mic")}</small></span>
           <input type="checkbox" role="switch" checked={call.prefs.noiseSuppression} onchange={(e) => call.setNoiseSuppression(e.currentTarget.checked)} />
         </label>
         <label>
-          <span><strong>Push to talk</strong><small>Your mic is open only while you hold the talk button{isAndroid ? "" : " or Space"}</small></span>
+          <span><strong>{tr("Push to talk")}</strong><small>{tr("Your mic is open only while you hold the talk button{value}", { value: isAndroid ? "" : ` or ${keyName(call.prefs.pttKey)}` })}</small></span>
           <input type="checkbox" role="switch" checked={call.prefs.pushToTalk} onchange={(e) => call.setPushToTalk(e.currentTarget.checked)} />
         </label>
       </div>
     {/if}
 
-    {#if featured?.screen}
-      <div class="featured">
+    {#if featured}
+      {@const f = featured.tile}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="featured" class:immersive bind:this={spot} ondblclick={toggleFullscreen}>
         <!-- svelte-ignore a11y_media_has_caption -->
-        <video use:video={featured.screen} autoplay playsinline muted></video>
-        <span class="label">{featured.isMe ? "Your screen" : featured.name}</span>
+        {#if featured.what === "screen"}
+          {#if f.screen}
+            <video use:video={f.screen} autoplay playsinline muted></video>
+          {:else if f.screenFrames}
+            <NativeVideo frames={f.screenFrames} contain />
+          {/if}
+        {:else if featured.what === "camera"}
+          {#if f.camera}
+            <video class="contain" use:video={f.camera} autoplay playsinline muted class:mirror={f.isMe}></video>
+          {:else if f.cameraFrames}
+            <NativeVideo frames={f.cameraFrames} mirror={f.isMe} contain />
+          {/if}
+        {:else}
+          <div class="face big" class:speaking={f.speaking}>
+            <div class="ring"><Avatar name={f.name} mxc={f.avatar} size={140} /></div>
+          </div>
+        {/if}
+        <span class="label">
+          {featured.what === "screen" ? (f.isMe ? tr("Your screen") : tr("{name}'s screen", { name: f.name })) : f.isMe ? tr("You") : f.name}
+        </span>
+        <div class="spot-actions">
+          <button onclick={toggleFullscreen} aria-label={tr("Full screen")} title={tr("Full screen")}>
+            {#if immersive}<Minimize2 size={18} />{:else}<Maximize2 size={18} />{/if}
+          </button>
+          {#if focus}
+            <button onclick={() => (focus = null)} aria-label={tr("Stop focusing")} title={tr("Stop focusing")}><X size={18} /></button>
+          {/if}
+        </div>
       </div>
     {/if}
 
@@ -107,11 +201,18 @@
         <div
           class="tile"
           class:speaking={t.speaking}
-          class:tappable={!t.isMe}
-          onclick={() => !t.isMe && (volumeFor = volumeFor === t.userId ? null : t.userId)}
+          class:focused={focus === t.id}
+          onclick={() => toggleFocus(t)}
+          onpointerdown={(e) => pressStart(e, t)}
+          onpointerup={pressEnd}
+          onpointercancel={pressEnd}
+          onpointerleave={pressEnd}
+          oncontextmenu={(e) => (e.preventDefault(), (e as unknown as PointerEvent).pointerType !== "touch" && call.openMenu(person(t), e))}
           transition:fade={{ duration: 150 }}
         >
-          {#if t.camera}
+          {#if t.cameraFrames}
+            <NativeVideo frames={t.cameraFrames} mirror={t.isMe} />
+          {:else if t.camera}
             <!-- svelte-ignore a11y_media_has_caption -->
             <video use:video={t.camera} autoplay playsinline muted class:mirror={t.isMe}></video>
           {:else}
@@ -120,24 +221,9 @@
             </div>
           {/if}
           <span class="name">
-            {#if t.isMe && call.deafened}<HeadphoneOff size={13} />{:else if !t.micOn}<MicOff size={13} />{/if}{t.isMe ? "You" : t.name}
-            {#if !t.isMe && call.volumeOf(t.userId) < 1}<small>{Math.round(call.volumeOf(t.userId) * 100)}%</small>{/if}
+            {#if t.isMe && call.deafened}<HeadphoneOff size={13} />{:else if !t.micOn}<MicOff size={13} />{/if}{t.isMe ? tr("You") : t.name}
+            {#if !t.isMe && call.isMutedForMe(t.userId)}<small><VolumeX size={13} /></small>{:else if !t.isMe && call.volumeOf(t.userId) < 1}<small>{Math.round(call.volumeOf(t.userId) * 100)}%</small>{/if}
           </span>
-          {#if volumeFor === t.userId}
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <div class="volume" onclick={(e) => e.stopPropagation()} transition:fade={{ duration: 120 }}>
-              <Volume1 size={16} />
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={Math.round(call.volumeOf(t.userId) * 100)}
-                oninput={(e) => call.setVolume(t.userId, Number(e.currentTarget.value) / 100)}
-                aria-label="Volume of {t.name}"
-              />
-              <span>{Math.round(call.volumeOf(t.userId) * 100)}%</span>
-            </div>
-          {/if}
         </div>
       {/each}
     </div>
@@ -154,24 +240,24 @@
         onpointercancel={() => call.talk(false)}
         oncontextmenu={(e) => e.preventDefault()}
       >
-        <Mic size={20} />{call.talking ? "Talking…" : "Hold to talk"}
+        <Mic size={20} />{call.talking ? tr("Talking…") : tr("Hold to talk")}
       </button>
     {/if}
 
     <div class="controls">
-      <button class="ctl" class:off={!call.micOn} onclick={() => call.toggleMic()} aria-label={call.micOn ? "Mute" : "Unmute"}>
+      <button class="ctl" class:off={!call.micOn} onclick={() => call.toggleMic()} aria-label={call.micOn ? tr("Mute") : tr("Unmute")}>
         {#if call.micOn}<Mic size={24} />{:else}<MicOff size={24} />{/if}
       </button>
-      <button class="ctl" class:off={call.deafened} onclick={() => call.toggleDeafen()} aria-label={call.deafened ? "Undeafen" : "Deafen"}>
+      <button class="ctl" class:off={call.deafened} onclick={() => call.toggleDeafen()} aria-label={call.deafened ? tr("Undeafen") : tr("Deafen")}>
         {#if call.deafened}<HeadphoneOff size={24} />{:else}<Headphones size={24} />{/if}
       </button>
-      <button class="ctl" class:on={call.camOn} onclick={() => call.toggleCamera()} aria-label={call.camOn ? "Turn camera off" : "Turn camera on"}>
+      <button class="ctl" class:on={call.camOn} onclick={() => call.toggleCamera()} aria-label={call.camOn ? tr("Turn camera off") : tr("Turn camera on")}>
         {#if call.camOn}<Video size={24} />{:else}<VideoOff size={24} />{/if}
       </button>
       {#if canShareScreen}
-        <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label="Share screen"><MonitorUp size={24} /></button>
+        <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label={tr("Share screen")}><MonitorUp size={24} /></button>
       {/if}
-      <button class="ctl hangup" onclick={() => call.leave()} aria-label="Leave call"><PhoneOff size={24} /></button>
+      <button class="ctl hangup" onclick={() => call.leave()} aria-label={tr("Leave call")}><PhoneOff size={24} /></button>
     </div>
   </div>
 {/if}
@@ -186,6 +272,10 @@
     gap: 12px;
     padding: 12px 12px 20px;
     background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent-a) 25%, var(--bg)), var(--bg) 70%);
+  }
+  /* The call's chat docked on the right (ChatsScreen), same width. */
+  .call.side {
+    right: var(--side-chat);
   }
   header {
     display: flex;
@@ -223,6 +313,60 @@
     border-radius: 18px;
     overflow: hidden;
     background: black;
+  }
+  .featured:fullscreen,
+  .featured.immersive {
+    border-radius: 0;
+  }
+  .featured.immersive {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+  }
+  .featured :global(canvas),
+  .featured video.contain {
+    object-fit: contain;
+  }
+  .featured .face.big {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    place-items: center;
+    background: var(--surface-2);
+  }
+  .spot-actions {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .featured:hover .spot-actions,
+  .featured:focus-within .spot-actions,
+  .featured.immersive .spot-actions {
+    opacity: 1;
+  }
+  @media (pointer: coarse) {
+    .spot-actions {
+      opacity: 1;
+    }
+  }
+  .spot-actions button {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: rgb(0 0 0 / 0.55);
+    color: #fff;
+    cursor: pointer;
+  }
+  .tile.focused {
+    outline: 2px solid var(--accent-a);
+    outline-offset: -2px;
   }
   .featured video {
     width: 100%;
@@ -333,6 +477,13 @@
   .options {
     margin-left: auto;
   }
+  .chat {
+    margin-left: auto;
+  }
+  .chat + .options {
+    margin-left: 0;
+  }
+  .chat.open,
   .options.open {
     background: var(--accent);
     color: #fff;
@@ -361,36 +512,13 @@
     color: var(--muted);
     font-size: 0.8rem;
   }
-  .tile.tappable {
+  .tile {
     cursor: pointer;
   }
   .name small {
+    display: inline-flex;
     margin-left: 4px;
     opacity: 0.8;
-  }
-  .volume {
-    position: absolute;
-    right: 8px;
-    bottom: 40px;
-    left: 8px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 12px;
-    background: rgb(0 0 0 / 0.65);
-    color: #fff;
-    font-size: 0.8rem;
-  }
-  .volume input {
-    flex: 1;
-    min-width: 0;
-    accent-color: var(--accent);
-  }
-  .volume span {
-    width: 3.2em;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
   }
   .talk {
     display: flex;

@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { LANGUAGES, chooseLanguage, languageChoice, languageName, locale, tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { profiles, ourZone } from "$lib/stores/profiles.svelte";
   import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus } from "$lib/backend";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
-  import Page from "./Page.svelte";
+  import Page, { setPageLayout } from "./Page.svelte";
+  import VoiceSettings from "./VoiceSettings.svelte";
   import FolderPage from "./FolderPage.svelte";
   import PinPad from "./PinPad.svelte";
   import { appLock } from "$lib/stores/applock.svelte";
@@ -23,6 +26,7 @@
   import UserX from "@lucide/svelte/icons/user-x";
   import X from "@lucide/svelte/icons/x";
   import Bell from "@lucide/svelte/icons/bell";
+  import Mic from "@lucide/svelte/icons/mic";
   import Info from "@lucide/svelte/icons/info";
   import Lock from "@lucide/svelte/icons/lock";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
@@ -74,7 +78,14 @@
   // ── Account pages ──
   let sub = $state<"devices" | "security" | "blocked" | null>(null);
   /** The settings page open on top of the main list. */
-  let section = $state<"status" | "notifications" | "privacy" | "appearance" | "chats" | "about" | null>(null);
+  let section = $state<"status" | "notifications" | "voice" | "privacy" | "appearance" | "chats" | "about" | null>(null);
+  // Wide screens show the list and a section side by side (Discord): one is always open.
+  const wide = new MediaQuery("min-width: 900px");
+  $effect(() => {
+    if (wide.current && section === null) section = "status";
+  });
+  // Pages opened from a section (sessions, security…) cover only the section's side.
+  setPageLayout("detail");
   $effect(() => {
     if (section) return onBack(() => (section = null));
   });
@@ -124,17 +135,17 @@
   }
   type Step = { label: string; ok: boolean | null; hint?: string };
   function pushSteps(t: PushTestResult | { error: string }): Step[] {
-    if (!("permission" in t)) return [{ label: "The test couldn't run", ok: false, hint: t.error }];
+    if (!("permission" in t)) return [{ label: tr("The test couldn't run"), ok: false, hint: t.error }];
     const steps: Step[] = [
-      { label: "Allowed to show notifications", ok: t.permission, hint: t.permission ? undefined : "Turn on “New messages” above, or allow AlwyChat in Android's settings." },
-      { label: "Push available in this app", ok: t.token, hint: t.token ? undefined : "This build has no Firebase setup: notifications only arrive while AlwyChat is open." },
+      { label: tr("Allowed to show notifications"), ok: t.permission, hint: t.permission ? undefined : tr("Turn on “New messages” above, or allow AlwyChat in Android's settings.") },
+      { label: tr("Push available in this app"), ok: t.token, hint: t.token ? undefined : tr("This build has no Firebase setup: notifications only arrive while AlwyChat is open.") },
     ];
     if (!t.token) return steps;
-    steps.push({ label: "Your server knows this phone", ok: !!t.registered, hint: t.registered ? undefined : "The registration didn't stick; try again in a moment." });
+    steps.push({ label: tr("Your server knows this phone"), ok: !!t.registered, hint: t.registered ? undefined : "The registration didn't stick; try again in a moment." });
     steps.push({
-      label: "Push gateway → Google → this phone",
+      label: tr("Push gateway → Google → this phone"),
       ok: !!t.gateway_ok && !t.rejected,
-      hint: t.error ?? (t.rejected ? "Google doesn't know this phone's token: restart AlwyChat and try again." : "A notification should appear within a few seconds."),
+      hint: t.error ?? (t.rejected ? tr("Google doesn't know this phone's token: restart AlwyChat and try again.") : tr("A notification should appear within a few seconds.")),
     });
     return steps;
   }
@@ -145,10 +156,10 @@
   });
   const server = $derived(userId.split(":").slice(1).join(":"));
   const TEXT_SIZES = [
-    { value: 90, label: "Small" },
+    { value: 90, label: tr("Small") },
     { value: 100, label: "Default" },
-    { value: 115, label: "Large" },
-    { value: 130, label: "Huge" },
+    { value: 115, label: tr("Large") },
+    { value: 130, label: tr("Huge") },
   ];
 
   // ── Status and time zone (extended profile, visible to everyone) ──
@@ -217,10 +228,10 @@
     if (pinFlow) return onBack(() => (pinFlow = null));
   });
   const LOCK_AFTER = [
-    { s: 60, label: "After 1 minute away" },
-    { s: 300, label: "After 5 minutes away" },
-    { s: 900, label: "After 15 minutes away" },
-    { s: 3600, label: "After 1 hour away" },
+    { s: 60, label: tr("After 1 minute away") },
+    { s: 300, label: tr("After 5 minutes away") },
+    { s: 900, label: tr("After 15 minutes away") },
+    { s: 3600, label: tr("After 1 hour away") },
   ];
   $effect(() => {
     void appLock.refresh().catch(() => {});
@@ -229,10 +240,10 @@
     !pinFlow
       ? ""
       : pinFlow.step === "current"
-        ? "Enter your current PIN"
+        ? tr("Enter your current PIN")
         : pinFlow.step === "new"
-          ? "Choose a PIN"
-          : "Enter it again",
+          ? tr("Choose a PIN")
+          : tr("Enter it again"),
   );
 
   async function pinStep(pin: string): Promise<string | null> {
@@ -240,8 +251,8 @@
     if (!flow) return null;
     if (flow.step === "current") {
       const r = await unlockApp(pin);
-      if (r.result === "wait") return `Too many tries. Wait ${r.seconds} s`;
-      if (r.result === "wrong") return "Wrong PIN";
+      if (r.result === "wait") return tr("Too many tries. Wait {seconds} s", { seconds: r.seconds });
+      if (r.result === "wrong") return tr("Wrong PIN");
       if (flow.mode === "disable") {
         await setAppLock(null);
         await appLock.refresh();
@@ -254,7 +265,7 @@
       return null;
     }
     if (pin !== flow.first) {
-      pinFlow = { ...flow, step: "new", first: undefined, notice: "The PINs didn't match. Try again" };
+      pinFlow = { ...flow, step: "new", first: undefined, notice: tr("The PINs didn't match. Try again") };
       return null;
     }
     await setAppLock(pin);
@@ -271,37 +282,37 @@
   const privacy: Toggle[] = [
     {
       key: "send_read_receipts",
-      label: "Send read receipts",
-      hint: "Others see when you've read their messages. Off: your unread counts still sync between your devices.",
+      label: tr("Send read receipts"),
+      hint: tr("Others see when you've read their messages. Off: your unread counts still sync between your devices."),
     },
-    { key: "send_typing", label: "Show when I'm typing", hint: "Others see the typing dots while you write." },
+    { key: "send_typing", label: tr("Show when I'm typing"), hint: tr("Others see the typing dots while you write.") },
     {
       key: "share_presence",
-      label: "Show when I'm active",
-      hint: "Others see when you're online or when you were last active.",
+      label: tr("Show when I'm active"),
+      hint: tr("Others see when you're online or when you were last active."),
     },
   ];
 
   const THEMES: { id: AppTheme; label: string }[] = [
-    { id: "system", label: "System" },
-    { id: "light", label: "Light" },
-    { id: "dark", label: "Dark" },
-    { id: "amoled", label: "Black" },
+    { id: "system", label: tr("System") },
+    { id: "light", label: tr("Light") },
+    { id: "dark", label: tr("Dark") },
+    { id: "amoled", label: tr("Black") },
   ];
 
   const appearance: Toggle[] = [
     {
       key: "chat_effects",
-      label: "Message effects",
-      hint: "Confetti, fireworks, hearts, snow… when a message with 🎉 🎆 💝 ❄️ arrives (works with Element).",
+      label: tr("Message effects"),
+      hint: tr("Confetti, fireworks, hearts, snow… when a message with 🎉 🎆 💝 ❄️ arrives (works with Element)."),
     },
   ];
 
   const media: Toggle[] = [
     {
       key: "hd_media",
-      label: "Send photos in HD",
-      hint: "Original quality by default. Off: photos are compressed (faster, smaller). Each chat can override this.",
+      label: tr("Send photos in HD"),
+      hint: tr("Original quality by default. Off: photos are compressed (faster, smaller). Each chat can override this."),
     },
   ];
 
@@ -367,56 +378,59 @@
   </label>
 {/snippet}
 
-<Page title="Settings" {onClose}>
+<Page title={tr("Settings")} {onClose} layout="list">
   {#if settings}
     <div class="profile">
       <AvatarEdit name={me.profile?.name ?? userId} mxc={me.profile?.avatar ?? null} onPicked={savePhoto} />
       {#if nameDraft !== null}
         <form class="name-row" onsubmit={(e) => (e.preventDefault(), saveName())}>
           <!-- svelte-ignore a11y_autofocus -->
-          <input class="m-input" bind:value={nameDraft} maxlength="60" placeholder="Your name" autofocus />
-          <button class="m-btn" disabled={nameBusy}>Save</button>
+          <input class="m-input" bind:value={nameDraft} maxlength="60" placeholder={tr("Your name")} autofocus />
+          <button class="m-btn" disabled={nameBusy}>{tr("Save")}</button>
         </form>
       {:else}
-        <button class="name" onclick={() => (nameDraft = me.profile?.name ?? "")} title="Change your name">{me.profile?.name ?? userId}</button>
+        <button class="name" onclick={() => (nameDraft = me.profile?.name ?? "")} title={tr("Change your name")}>{me.profile?.name ?? userId}</button>
       {/if}
       <small>{userId}</small>
     </div>
 
-    <button class="m-row" onclick={() => (section = "status")}>
-      <span class="m-icon"><Smile size={20} /></span><span class="m-text"><strong>Status</strong><small>{profiles.statusLabel(userId) ?? "Set a status"}</small></span><ChevronRight size={18} />
+    <button class="m-row" class:active={wide.current && section === "status"} onclick={() => (section = "status")}>
+      <span class="m-icon"><Smile size={20} /></span><span class="m-text"><strong>{tr("Status")}</strong><small>{profiles.statusLabel(userId) ?? tr("Set a status")}</small></span><ChevronRight size={18} />
     </button>
-    <button class="m-row" onclick={() => (section = "notifications")}>
-      <span class="m-icon"><Bell size={20} /></span><span class="m-text"><strong>Notifications</strong><small>{notificationsOn ? "On" : "Off"} · mentions, keywords</small></span><ChevronRight size={18} />
+    <button class="m-row" class:active={wide.current && section === "notifications"} onclick={() => (section = "notifications")}>
+      <span class="m-icon"><Bell size={20} /></span><span class="m-text"><strong>{tr("Notifications")}</strong><small>{tr("{value} · mentions, keywords", { value: notificationsOn ? "On" : "Off" })}</small></span><ChevronRight size={18} />
     </button>
-    <button class="m-row" onclick={() => (section = "privacy")}>
-      <span class="m-icon"><Lock size={20} /></span><span class="m-text"><strong>Privacy & security</strong><small>Read receipts, app lock, sessions, blocked people</small></span><ChevronRight size={18} />
+    <button class="m-row" class:active={wide.current && section === "voice"} onclick={() => (section = "voice")}>
+      <span class="m-icon"><Mic size={20} /></span><span class="m-text"><strong>{tr("Voice & video")}</strong><small>{tr("Microphone, speakers, camera, push to talk")}</small></span><ChevronRight size={18} />
     </button>
-    <button class="m-row" onclick={() => (section = "appearance")}>
-      <span class="m-icon"><Palette size={20} /></span><span class="m-text"><strong>Appearance</strong><small>Theme, text size, effects</small></span><ChevronRight size={18} />
+    <button class="m-row" class:active={wide.current && section === "privacy"} onclick={() => (section = "privacy")}>
+      <span class="m-icon"><Lock size={20} /></span><span class="m-text"><strong>{tr("Privacy & security")}</strong><small>{tr("Read receipts, app lock, sessions, blocked people")}</small></span><ChevronRight size={18} />
     </button>
-    <button class="m-row" onclick={() => (section = "chats")}>
-      <span class="m-icon"><MessagesSquare size={20} /></span><span class="m-text"><strong>Chats & media</strong><small>Spaces in Chats, folders, photo quality</small></span><ChevronRight size={18} />
+    <button class="m-row" class:active={wide.current && section === "appearance"} onclick={() => (section = "appearance")}>
+      <span class="m-icon"><Palette size={20} /></span><span class="m-text"><strong>{tr("Appearance")}</strong><small>{tr("Language, theme, text size, effects")}</small></span><ChevronRight size={18} />
     </button>
-    <button class="m-row" onclick={() => (section = "about")}>
-      <span class="m-icon"><Info size={20} /></span><span class="m-text"><strong>About</strong><small>{version ? `AlwyChat ${version}` : "AlwyChat"}</small></span><ChevronRight size={18} />
+    <button class="m-row" class:active={wide.current && section === "chats"} onclick={() => (section = "chats")}>
+      <span class="m-icon"><MessagesSquare size={20} /></span><span class="m-text"><strong>{tr("Chats & media")}</strong><small>{tr("Spaces in Chats, folders, photo quality")}</small></span><ChevronRight size={18} />
+    </button>
+    <button class="m-row" class:active={wide.current && section === "about"} onclick={() => (section = "about")}>
+      <span class="m-icon"><Info size={20} /></span><span class="m-text"><strong>{tr("About")}</strong><small>{version ? tr("AlwyChat {version}", { version: version }) : tr("AlwyChat")}</small></span><ChevronRight size={18} />
     </button>
     <button class="m-row" onclick={() => openAccount("profile")}>
-      <span class="m-icon"><ExternalLink size={20} /></span><span class="m-text"><strong>Manage account</strong><small>Email, password, deactivation (your server's account page)</small></span>
+      <span class="m-icon"><ExternalLink size={20} /></span><span class="m-text"><strong>{tr("Manage account")}</strong><small>{tr("Email, password, deactivation (your server's account page)")}</small></span>
     </button>
     <button class="m-row danger" onclick={onSignOut}>
-      <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>Sign out</strong></span>
+      <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>{tr("Sign out")}</strong></span>
     </button>
   {:else if !error}
-    <p class="muted">Loading…</p>
+    <p class="muted">{tr("Loading…")}</p>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
 </Page>
 
 {#if section === "status"}
-  <Page title="Status" onClose={() => (section = null)}>
+  <Page title={tr("Status")} onClose={() => (section = null)} layout="section">
     {#if settings}
-    <div class="status-emoji" role="radiogroup" aria-label="Status emoji">
+    <div class="status-emoji" role="radiogroup" aria-label={tr("Status emoji")}>
       {#each STATUS_EMOJI as e (e)}
         <button
           role="radio"
@@ -429,22 +443,22 @@
     <div class="status-row">
       <input
         class="status-text"
-        placeholder="What's up?"
+        placeholder={tr("What's up?")}
         maxlength="80"
         bind:value={statusText}
         onkeydown={(e) => e.key === "Enter" && statusChanged && saveStatus()}
       />
       {#if statusChanged}
-        <button class="status-save" disabled={statusBusy} onclick={() => saveStatus()}>Save</button>
+        <button class="status-save" disabled={statusBusy} onclick={() => saveStatus()}>{tr("Save")}</button>
       {:else if statusSaved}
-        <button class="status-clear" disabled={statusBusy} onclick={() => saveStatus(true)}>Clear</button>
+        <button class="status-clear" disabled={statusBusy} onclick={() => saveStatus(true)}>{tr("Clear")}</button>
       {/if}
     </div>
-    <small class="status-hint">Anyone who can see your profile sees it, in AlwyChat and other apps that support statuses.</small>
+    <small class="status-hint">{tr("Anyone who can see your profile sees it, in AlwyChat and other apps that support statuses.")}</small>
     <label class="toggle">
       <span>
-        <strong>Share my local time</strong>
-        <small>People see your time zone ({ourZone()}) and the time it is for you.</small>
+        <strong>{tr("Share my local time")}</strong>
+        <small>{tr("People see your time zone ({ourZone}) and the time it is for you.", { ourZone: ourZone() })}</small>
       </span>
       <input type="checkbox" role="switch" checked={shareZone} onchange={(e) => toggleZone(e.currentTarget.checked)} />
     </label>
@@ -453,17 +467,16 @@
   </Page>
 {/if}
 {#if section === "notifications"}
-  <Page title="Notifications" onClose={() => (section = null)}>
+  <Page title={tr("Notifications")} onClose={() => (section = null)} layout="section">
     {#if settings}
-    <h3 class="section">Notifications</h3>
+    <h3 class="section">{tr("Notifications")}</h3>
     <label class="toggle">
       <span>
-        <strong>New messages</strong>
+        <strong>{tr("New messages")}</strong>
         <small>
-          {isAndroid ? "While AlwyChat isn't on screen." : "While AlwyChat isn't in front."}
-          Follows your mute and mention settings.
+          {tr("{value} Follows your mute and mention settings.", { value: isAndroid ? "While AlwyChat isn't on screen." : "While AlwyChat isn't in front." })}
           {#if settings.notifications && system && !system.notifications}
-            <em>Turned off in {isAndroid ? "Android" : "system"} settings.</em>
+            <em>{tr("Turned off in {value} settings.", { value: isAndroid ? "Android" : "system" })}</em>
           {/if}
         </small>
       </span>
@@ -473,56 +486,56 @@
       <div class="check">
         <span class="mark" class:ok={system.batteryUnrestricted}>{system.batteryUnrestricted ? "✓" : "!"}</span>
         <span>
-          <strong>Battery</strong>
+          <strong>{tr("Battery")}</strong>
           <small>
             {system.batteryUnrestricted
-              ? "AlwyChat can keep running in the background."
-              : "Battery optimisation pauses AlwyChat in the background: notifications come late or not at all."}
+              ? tr("AlwyChat can keep running in the background.")
+              : tr("Battery optimisation pauses AlwyChat in the background: notifications come late or not at all.")}
           </small>
         </span>
-        {#if !system.batteryUnrestricted}<button onclick={() => fix("battery")}>Allow</button>{/if}
+        {#if !system.batteryUnrestricted}<button onclick={() => fix("battery")}>{tr("Allow")}</button>{/if}
       </div>
       <div class="check">
         <span class="mark" class:ok={system.backgroundData}>{system.backgroundData ? "✓" : "!"}</span>
         <span>
-          <strong>Background data</strong>
+          <strong>{tr("Background data")}</strong>
           <small>
             {system.backgroundData
-              ? "AlwyChat can receive messages in the background."
-              : "Data saver blocks AlwyChat in the background, so new messages can't arrive."}
+              ? tr("AlwyChat can receive messages in the background.")
+              : tr("Data saver blocks AlwyChat in the background, so new messages can't arrive.")}
           </small>
         </span>
-        {#if !system.backgroundData}<button onclick={() => fix("backgroundData")}>Allow</button>{/if}
+        {#if !system.backgroundData}<button onclick={() => fix("backgroundData")}>{tr("Allow")}</button>{/if}
       </div>
     {/if}
 
     {#if rules}
       <label class="toggle">
-        <span><strong>@room mentions</strong><small>Notify when someone alerts a whole group.</small></span>
+        <span><strong>{tr("@room mentions")}</strong><small>{tr("Notify when someone alerts a whole group.")}</small></span>
         <input type="checkbox" role="switch" checked={rules.room_mentions} onchange={(e) => changeRule("room_mentions", e.currentTarget.checked)} />
       </label>
       <label class="toggle">
-        <span><strong>Invites</strong><small>Notify when you're invited to a chat or space.</small></span>
+        <span><strong>{tr("Invites")}</strong><small>{tr("Notify when you're invited to a chat or space.")}</small></span>
         <input type="checkbox" role="switch" checked={rules.invites} onchange={(e) => changeRule("invites", e.currentTarget.checked)} />
       </label>
       <div class="keywords">
-        <strong>Keywords</strong>
-        <small>Messages containing these notify you, even in chats set to mentions only. Synced with your other apps.</small>
+        <strong>{tr("Keywords")}</strong>
+        <small>{tr("Messages containing these notify you, even in chats set to mentions only. Synced with your other apps.")}</small>
         <div class="m-chips">
           {#each rules.keywords as k (k)}
-            <button class="m-chip kw" onclick={() => changeKeyword(k, false)} aria-label="Remove {k}">{k}<X size={14} /></button>
+            <button class="m-chip kw" onclick={() => changeKeyword(k, false)} aria-label={tr("Remove {k}", { k: k })}>{k}<X size={14} /></button>
           {/each}
         </div>
         <form class="name-row" onsubmit={(e) => (e.preventDefault(), changeKeyword(keyword, true))}>
-          <input class="m-input" bind:value={keyword} placeholder="Add a keyword" maxlength="40" />
-          <button class="m-btn plain" disabled={!keyword.trim()}>Add</button>
+          <input class="m-input" bind:value={keyword} placeholder={tr("Add a keyword")} maxlength="40" />
+          <button class="m-btn plain" disabled={!keyword.trim()}>{tr("Add")}</button>
         </form>
       </div>
     {/if}
     {#if isAndroid}
-      <h3 class="section">Test</h3>
+      <h3 class="section">{tr("Test")}</h3>
       <button class="m-btn plain wide-btn" disabled={pushTest === "running"} onclick={runPushTest}>
-        {pushTest === "running" ? "Testing…" : "Send a test notification"}
+        {pushTest === "running" ? tr("Testing…") : tr("Send a test notification")}
       </button>
       {#if pushTest && pushTest !== "running"}
         <ul class="push-test">
@@ -539,16 +552,21 @@
     {#if error}<p class="error">{error}</p>{/if}
   </Page>
 {/if}
+{#if section === "voice"}
+  <Page title={tr("Voice & video")} onClose={() => (section = null)} layout="section">
+    <VoiceSettings />
+  </Page>
+{/if}
 {#if section === "privacy"}
-  <Page title="Privacy &amp; security" onClose={() => (section = null)}>
+  <Page title={tr("Privacy & security")} onClose={() => (section = null)} layout="section">
     {#if settings}
-    <h3 class="section">Privacy</h3>
+    <h3 class="section">{tr("Privacy")}</h3>
     {#each privacy as t (t.key)}{@render row(t)}{/each}
-    <h3 class="section">App lock</h3>
+    <h3 class="section">{tr("App lock")}</h3>
     <label class="toggle">
       <span>
-        <strong>Lock with a PIN</strong>
-        <small>Asked when AlwyChat opens and after you've been away. It hides the app; messages on this device aren't encrypted with it.</small>
+        <strong>{tr("Lock with a PIN")}</strong>
+        <small>{tr("Asked when AlwyChat opens and after you've been away. It hides the app; messages on this device aren't encrypted with it.")}</small>
       </span>
       <input
         type="checkbox"
@@ -562,7 +580,7 @@
     </label>
     {#if appLock.state.enabled}
       <label class="toggle">
-        <span><strong>Lock again</strong></span>
+        <span><strong>{tr("Lock again")}</strong></span>
         <select
           value={settings.app_lock_after_s}
           onchange={(e) => save({ app_lock_after_s: Number(e.currentTarget.value) })}
@@ -572,40 +590,45 @@
       </label>
       {#if appLock.state.biometry}
         <label class="toggle">
-          <span><strong>Unlock with {appLock.state.biometry === "face" ? "face" : "fingerprint"}</strong></span>
+          <span><strong>{tr("Unlock with {value}", { value: appLock.state.biometry === "face" ? "face" : "fingerprint" })}</strong></span>
           <input type="checkbox" role="switch" checked={settings.app_lock_biometric} onchange={() => toggle("app_lock_biometric")} />
         </label>
       {/if}
-      <button class="link-row" onclick={() => (pinFlow = { mode: "change", step: "current" })}>Change PIN</button>
+      <button class="link-row" onclick={() => (pinFlow = { mode: "change", step: "current" })}>{tr("Change PIN")}</button>
     {/if}
     {#if isAndroid}
       <label class="toggle">
         <span>
-          <strong>Hide in app switcher</strong>
-          <small>Recent apps shows a blank screen, and screenshots are blocked.</small>
+          <strong>{tr("Hide in app switcher")}</strong>
+          <small>{tr("Recent apps shows a blank screen, and screenshots are blocked.")}</small>
         </span>
         <input type="checkbox" role="switch" checked={settings.hide_in_switcher} onchange={() => toggle("hide_in_switcher")} />
       </label>
     {/if}
-    <h3 class="section">Account security</h3>
+    <h3 class="section">{tr("Account security")}</h3>
     <button class="m-row" onclick={() => (sub = "devices")}>
-      <span class="m-icon"><Laptop size={20} /></span><span class="m-text"><strong>Sessions</strong><small>Where you're signed in</small></span><ChevronRight size={18} />
+      <span class="m-icon"><Laptop size={20} /></span><span class="m-text"><strong>{tr("Sessions")}</strong><small>{tr("Where you're signed in")}</small></span><ChevronRight size={18} />
     </button>
     <button class="m-row" onclick={() => (sub = "security")}>
-      <span class="m-icon"><KeyRound size={20} /></span><span class="m-text"><strong>Security & recovery</strong><small>Verification, key backup, recovery key</small></span><ChevronRight size={18} />
+      <span class="m-icon"><KeyRound size={20} /></span><span class="m-text"><strong>{tr("Security & recovery")}</strong><small>{tr("Verification, key backup, recovery key")}</small></span><ChevronRight size={18} />
     </button>
     <button class="m-row" onclick={() => (sub = "blocked")}>
-      <span class="m-icon"><UserX size={20} /></span><span class="m-text"><strong>Blocked people</strong></span><ChevronRight size={18} />
+      <span class="m-icon"><UserX size={20} /></span><span class="m-text"><strong>{tr("Blocked people")}</strong></span><ChevronRight size={18} />
     </button>
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </Page>
 {/if}
 {#if section === "appearance"}
-  <Page title="Appearance" onClose={() => (section = null)}>
+  <Page title={tr("Appearance")} onClose={() => (section = null)} layout="section">
     {#if settings}
-    <h3 class="section">Appearance</h3>
-    <div class="themes" role="radiogroup" aria-label="Theme">
+    <h3 class="section">{tr("Language")}</h3>
+    <select class="m-input language" value={languageChoice} onchange={(e) => chooseLanguage(e.currentTarget.value)}>
+      <option value="auto">{tr("Automatic ({name})", { name: languageName(locale) })}</option>
+      {#each LANGUAGES as code (code)}<option value={code}>{languageName(code)}</option>{/each}
+    </select>
+    <h3 class="section">{tr("Appearance")}</h3>
+    <div class="themes" role="radiogroup" aria-label={tr("Theme")}>
       {#each THEMES as t (t.id)}
         <button role="radio" aria-checked={settings.app_theme === t.id} class:on={settings.app_theme === t.id} onclick={() => save({ app_theme: t.id })}>
           <span class="swatch {t.id}"></span>{t.label}
@@ -613,7 +636,7 @@
       {/each}
     </div>
     {#each appearance as t (t.key)}{@render row(t)}{/each}
-    <h3 class="section">Text size</h3>
+    <h3 class="section">{tr("Text size")}</h3>
     <div class="m-seg">
       {#each TEXT_SIZES as t (t.value)}
         <button class:on={settings.text_scale === t.value} onclick={() => save({ text_scale: t.value })}>{t.label}</button>
@@ -624,13 +647,13 @@
   </Page>
 {/if}
 {#if section === "chats"}
-  <Page title="Chats &amp; media" onClose={() => (section = null)}>
+  <Page title={tr("Chats & media")} onClose={() => (section = null)} layout="section">
     {#if settings}
-    <h3 class="section">Chats</h3>
+    <h3 class="section">{tr("Chats")}</h3>
     <label class="toggle">
       <span>
-        <strong>Show chats from spaces in Chats</strong>
-        <small>Off: they're only under Spaces. Each space and chat can choose for itself in its settings. Synced to your other devices.</small>
+        <strong>{tr("Show chats from spaces in Chats")}</strong>
+        <small>{tr("Off: they're only under Spaces. Each space and chat can choose for itself in its settings. Synced to your other devices.")}</small>
       </span>
       <input
         type="checkbox"
@@ -640,22 +663,22 @@
       />
     </label>
 
-    <h3 class="section">Folders</h3>
+    <h3 class="section">{tr("Folders")}</h3>
     <ul class="folders">
       {#each spaces.prefs.folders as f, i (f.id)}
         <li>
           <button class="folder-name" onclick={() => (folderEdit = f)}>{f.name}</button>
-          <button class="icon" disabled={i === 0} onclick={() => move(f.id, -1)} aria-label="Move up"><ChevronUp size={18} /></button>
-          <button class="icon" disabled={i === spaces.prefs.folders.length - 1} onclick={() => move(f.id, 1)} aria-label="Move down"><ChevronDown size={18} /></button>
+          <button class="icon" disabled={i === 0} onclick={() => move(f.id, -1)} aria-label={tr("Move up")}><ChevronUp size={18} /></button>
+          <button class="icon" disabled={i === spaces.prefs.folders.length - 1} onclick={() => move(f.id, 1)} aria-label={tr("Move down")}><ChevronDown size={18} /></button>
         </li>
       {/each}
-      <li><button class="folder-name new" onclick={() => (folderEdit = "new")}><Plus size={18} />New folder</button></li>
+      <li><button class="folder-name new" onclick={() => (folderEdit = "new")}><Plus size={18} />{tr("New folder")}</button></li>
     </ul>
-    <h3 class="section">Media</h3>
+    <h3 class="section">{tr("Media")}</h3>
     {#each media as t (t.key)}{@render row(t)}{/each}
     {#if !isAndroid}
       <label class="toggle">
-        <span><strong>Enter sends</strong><small>{settings.enter_sends ? "Shift+Enter adds a new line." : "Enter adds a new line, Ctrl+Enter sends."}</small></span>
+        <span><strong>{tr("Enter sends")}</strong><small>{settings.enter_sends ? tr("Shift+Enter adds a new line.") : tr("Enter adds a new line, Ctrl+Enter sends.")}</small></span>
         <input type="checkbox" role="switch" checked={settings.enter_sends} onchange={() => toggle("enter_sends")} />
       </label>
     {/if}
@@ -664,19 +687,19 @@
   </Page>
 {/if}
 {#if section === "about"}
-  <Page title="About" onClose={() => (section = null)}>
+  <Page title={tr("About")} onClose={() => (section = null)} layout="section">
     {#if settings}
     <div class="about">
-      <p><strong>AlwyChat</strong> {version}</p>
-      <p>Server: {server}</p>
-      <p>Free software (AGPL-3.0-or-later). <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>Source code</button></p>
+      <p><strong>{tr("AlwyChat")}</strong> {version}</p>
+      <p>{tr("Server: {server}", { server: server })}</p>
+      <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button></p>
     </div>
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </Page>
 {/if}
 {#if pinFlow}
-  <Page title={pinFlow.mode === "disable" ? "Turn off app lock" : pinFlow.mode === "change" ? "Change PIN" : "App lock"} onClose={() => (pinFlow = null)}>
+  <Page title={pinFlow.mode === "disable" ? tr("Turn off app lock") : pinFlow.mode === "change" ? tr("Change PIN") : tr("App lock")} onClose={() => (pinFlow = null)}>
     <div class="pin-page">
       {#key pinFlow.step}
         <PinPad

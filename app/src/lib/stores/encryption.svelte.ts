@@ -11,10 +11,18 @@ class Encryption {
   /** The unlock sheet is open. */
   sheetOpen = $state(false);
 
-  /** True when old encrypted messages may be unreadable on this device. */
+  /** This device isn't verified: encrypted messages may be unreadable (the chat list banner). */
   get locked() {
     const s = this.status;
-    return !!s && (!s.device_verified || s.recovery === "incomplete");
+    return !!s && !s.device_verified;
+  }
+
+  /** Verified, but the key backup secret didn't come along (some apps don't share it when
+   * verifying): new messages are fine, old ones may need the recovery key. Shown in Settings →
+   * Security only, not as the banner (it looked like the unlock had failed). */
+  get backupMissing() {
+    const s = this.status;
+    return !!s && s.device_verified && s.recovery === "incomplete";
   }
 
   async start() {

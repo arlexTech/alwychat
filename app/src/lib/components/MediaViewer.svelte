@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -133,7 +134,7 @@
               {:then url}
                 <video src={url} controls autoplay onclick={(e) => e.stopPropagation()}></video>
               {:catch}
-                <div class="video-placeholder">Couldn't load the video</div>
+                <div class="video-placeholder">{tr("Couldn't load the video")}</div>
               {/await}
             {:else}
               <div class="video-placeholder">▶</div>
@@ -145,19 +146,19 @@
   </div>
 
   <div class="bar" onclick={(e) => e.stopPropagation()}>
-    <button onclick={() => save(false)} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+    <button onclick={() => save(false)} disabled={saving}>{saving ? tr("Saving…") : tr("Save")}</button>
     {#if items.length > 1}
-      <button onclick={() => save(true)} disabled={saving}>Save all ({items.length})</button>
+      <button onclick={() => save(true)} disabled={saving}>{tr("Save all ({length})", { length: items.length })}</button>
     {/if}
-    <button onclick={onClose} aria-label="Close"><X size={18} /></button>
+    <button onclick={onClose} aria-label={tr("Close")}><X size={18} /></button>
   </div>
 
   {#if items.length > 1}
     {#if index > 0}
-      <button class="nav prev" onclick={(e) => (e.stopPropagation(), step(-1))} aria-label="Previous"><ChevronLeft size={28} /></button>
+      <button class="nav prev" onclick={(e) => (e.stopPropagation(), step(-1))} aria-label={tr("Previous")}><ChevronLeft size={28} /></button>
     {/if}
     {#if index < items.length - 1}
-      <button class="nav next" onclick={(e) => (e.stopPropagation(), step(1))} aria-label="Next"><ChevronRight size={28} /></button>
+      <button class="nav next" onclick={(e) => (e.stopPropagation(), step(1))} aria-label={tr("Next")}><ChevronRight size={28} /></button>
     {/if}
     <span class="counter">{index + 1} / {items.length}</span>
   {/if}

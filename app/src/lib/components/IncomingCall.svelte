@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { fade, fly } from "svelte/transition";
   import Phone from "@lucide/svelte/icons/phone";
   import PhoneOff from "@lucide/svelte/icons/phone-off";
@@ -27,13 +28,13 @@
     <div class="who" in:fly={{ y: 20, duration: 260 }}>
       <div class="pulse"><Avatar name={ring.caller_name} mxc={ring.caller_avatar} size={120} /></div>
       <strong>{ring.caller_name}</strong>
-      <span>{ring.video ? "Incoming video call" : "Incoming call"}</span>
+      <span>{ring.video ? tr("Incoming video call") : tr("Incoming call")}</span>
     </div>
     <div class="buttons">
-      <button class="decline" onclick={() => call.decline()} aria-label="Decline">
+      <button class="decline" onclick={() => call.decline()} aria-label={tr("Decline")}>
         <PhoneOff size={28} />
       </button>
-      <button class="accept" onclick={() => room && call.accept(room)} disabled={!room} aria-label="Answer">
+      <button class="accept" onclick={() => room && call.accept(room)} disabled={!room} aria-label={tr("Answer")}>
         {#if ring.video}<Video size={28} />{:else}<Phone size={28} />{/if}
       </button>
     </div>

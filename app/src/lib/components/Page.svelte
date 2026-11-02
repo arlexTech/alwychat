@@ -1,15 +1,39 @@
+<script lang="ts" module>
+  import { getContext, setContext } from "svelte";
+
+  /**
+   * How pages sit on a wide screen (900 px+; phones always get full-screen pages):
+   * `full` covers the app; `list` / `section` / `detail` are app settings, Discord style (the
+   * list stays on the left, the chosen section on the right, pages opened from a section over
+   * it); `panel` is chat settings, Messenger style (a column on the right, the chat visible).
+   */
+  export type PageLayout = "full" | "list" | "section" | "detail" | "panel";
+  const LAYOUT = Symbol("page layout");
+
+  /** Every page opened inside the calling component (and below) uses `layout`. */
+  export function setPageLayout(layout: PageLayout) {
+    setContext(LAYOUT, layout);
+  }
+</script>
+
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { Snippet } from "svelte";
   import { fly } from "svelte/transition";
 
   /** A full-screen page (settings and the like) that slides in over the app. */
-  let { title, onClose, children }: { title: string; onClose: () => void; children: Snippet } = $props();
+  let {
+    title,
+    onClose,
+    children,
+    layout = getContext<PageLayout | undefined>(LAYOUT) ?? "full",
+  }: { title: string; onClose: () => void; children: Snippet; layout?: PageLayout } = $props();
 </script>
 
-<div class="page" role="dialog" aria-modal="true" aria-label={title} transition:fly={{ x: 48, duration: 220 }}>
+<div class="page {layout}" role="dialog" aria-modal="true" aria-label={title} transition:fly={{ x: 48, duration: 220 }}>
   <header>
-    <button class="back" onclick={onClose} aria-label="Back"><ArrowLeft size={22} /></button>
+    <button class="back" onclick={onClose} aria-label={tr("Back")}><ArrowLeft size={22} /></button>
     <h2>{title}</h2>
   </header>
   <div class="body">
@@ -62,5 +86,37 @@
     max-width: 640px;
     margin-inline: auto;
     padding: 16px 20px 32px;
+  }
+
+  @media (min-width: 900px) {
+    .page.list {
+      right: auto;
+      width: var(--settings-list);
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .page.section,
+    .page.detail {
+      left: var(--settings-list);
+    }
+    .page.section .inner,
+    .page.detail .inner {
+      max-width: 760px;
+      margin-inline: 32px auto;
+      padding-top: 24px;
+    }
+    /* The section is chosen in the list: its back arrow would only empty the right side. */
+    .page.section .back {
+      display: none;
+    }
+    .page.section header {
+      padding-left: 32px;
+    }
+    .page.panel {
+      left: auto;
+      width: 400px;
+      border-left: 1px solid var(--border);
+      box-shadow: -16px 0 40px rgb(0 0 0 / 0.25);
+    }
   }
 </style>

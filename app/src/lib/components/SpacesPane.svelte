@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import { onDestroy } from "svelte";
   import { fly } from "svelte/transition";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -142,7 +143,7 @@
       await joinRoom(child.id, child.via);
       await call.join(await arrival(child.id), false, false);
     } catch (e) {
-      error = `Couldn't join: ${e}`;
+      error = tr("Couldn't join: {e}", { e: e });
     } finally {
       joining = null;
     }
@@ -175,7 +176,7 @@
     try {
       await joinRoom(child.id, child.via);
     } catch (e) {
-      error = `Couldn't join: ${e}`;
+      error = tr("Couldn't join: {e}", { e: e });
     } finally {
       joining = null;
     }
@@ -186,10 +187,10 @@
   <div class="list">
     <button class="space new" onclick={() => (newSpace = true)}>
       <span class="plus"><Plus size={22} /></span>
-      <span class="text"><strong>New space</strong><small>Group chats and voice channels, like a server</small></span>
+      <span class="text"><strong>{tr("New space")}</strong><small>{tr("Group chats and voice channels, like a server")}</small></span>
     </button>
     {#if spaces.loaded && spaces.list.length === 0}
-      <p class="state">You haven't joined any spaces yet.<br />Spaces group chats together, like Discord servers.</p>
+      <p class="state">{tr("You haven't joined any spaces yet.")}<br />{tr("Spaces group chats together, like Discord servers.")}</p>
     {/if}
     {#each spaces.list as space (space.id)}
       {@const unread = unreadIn(space.rooms)}
@@ -197,7 +198,7 @@
         <Avatar name={space.name} mxc={space.avatar} size={48} square />
         <span class="text">
           <strong>{space.name}</strong>
-          <small>{space.rooms.length} {space.rooms.length === 1 ? "chat" : "chats"}{spaces.spaceShown(space.id) ? " · also in Chats" : ""}</small>
+          <small>{trn(space.rooms.length, "{n} chat", "{n} chats")}{spaces.spaceShown(space.id) ? tr(" · also in Chats") : ""}</small>
         </span>
         {#if unread}<span class="badge">{unread}</span>{/if}
         <ChevronRight size={18} />
@@ -207,10 +208,10 @@
 {:else}
   <div class="space-view" in:fly={{ x: 24, duration: 180 }}>
     <header>
-      <button class="icon" onclick={() => (path = path.slice(0, -1))} aria-label="Back"><ChevronLeft size={22} /></button>
+      <button class="icon" onclick={() => (path = path.slice(0, -1))} aria-label={tr("Back")}><ChevronLeft size={22} /></button>
       <Avatar name={current.name} mxc={current.avatar} size={32} square />
       <strong class="title">{current.name}</strong>
-      <button class="icon" onclick={() => (settingsFor = current)} aria-label="Space settings"><Settings size={20} /></button>
+      <button class="icon" onclick={() => (settingsFor = current)} aria-label={tr("Space settings")}><Settings size={20} /></button>
     </header>
     {#if error}<p class="state error">{error}</p>{/if}
     {#each joinedChats as room (room.id)}
@@ -218,9 +219,9 @@
     {/each}
     {#if voiceChannels.length || canAdd}
       <h4 class="with-action">
-        Voice channels
+        {tr("Voice channels")}
         {#if canAdd}
-          <button class="icon small" onclick={() => (newChannel = { name: "", busy: false, error: null })} aria-label="New voice channel" title="New voice channel"><Plus size={18} /></button>
+          <button class="icon small" onclick={() => (newChannel = { name: "", busy: false, error: null })} aria-label={tr("New voice channel")} title={tr("New voice channel")}><Plus size={18} /></button>
         {/if}
       </h4>
       {#each voiceChannels as v (v.child.id)}
@@ -236,21 +237,21 @@
     {#each subSpaces as sub (sub.id)}
       <button class="space" onclick={() => (path = [...path, { id: sub.id, name: sub.name, avatar: sub.avatar }])}>
         <Avatar name={sub.name} mxc={sub.avatar} size={44} square />
-        <span class="text"><strong>{sub.name}</strong><small>Space{sub.joined ? "" : " · not joined"}</small></span>
+        <span class="text"><strong>{sub.name}</strong><small>{tr("Space{value}", { value: sub.joined ? "" : " · not joined" })}</small></span>
         <ChevronRight size={18} />
       </button>
     {/each}
     {#if joinable.length}
-      <h4>Other chats in this space</h4>
+      <h4>{tr("Other chats in this space")}</h4>
       {#each joinable as child (child.id)}
         <div class="joinable">
           <Avatar name={child.name} mxc={child.avatar} size={44} />
           <span class="text">
-            <strong>{child.name}{#if child.suggested}<em> · suggested</em>{/if}</strong>
+            <strong>{child.name}{#if child.suggested}<em> {tr("· suggested")}</em>{/if}</strong>
             <small><Users size={12} /> {child.members}{child.topic ? ` · ${child.topic}` : ""}</small>
           </span>
           <button class="join" disabled={joining === child.id} onclick={() => join(child)}>
-            {joining === child.id ? "Joining…" : "Join"}
+            {joining === child.id ? tr("Joining…") : tr("Join")}
           </button>
         </div>
       {/each}
@@ -258,20 +259,20 @@
     {#if loading && !children.length}
       {#each Array(4) as _, i (i)}<div class="skeleton"></div>{/each}
     {:else if !joinedChats.length && !voiceChannels.length && !subSpaces.length && !joinable.length && !error}
-      <p class="state">This space has no chats yet.</p>
+      <p class="state">{tr("This space has no chats yet.")}</p>
     {/if}
   </div>
 {/if}
 
 {#if newChannel}
   {@const form = newChannel}
-  <Page title="New voice channel" onClose={() => (newChannel = null)}>
+  <Page title={tr("New voice channel")} onClose={() => (newChannel = null)}>
     <form class="new-channel" onsubmit={(e) => (e.preventDefault(), createChannel())}>
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Channel name" maxlength="60" bind:value={form.name} autofocus />
-      <p class="hint">Everyone in {current?.name ?? "the space"} can join. Tapping the channel joins the call; it also has a text chat. Voice channels aren't end-to-end encrypted, so people using Element can join too.</p>
+      <input placeholder={tr("Channel name")} maxlength="60" bind:value={form.name} autofocus />
+      <p class="hint">{tr("Everyone in {value} can join. Tapping the channel joins the call; it also has a text chat. Voice channels aren't end-to-end encrypted, so people using Element can join too.", { value: current?.name ?? "the space" })}</p>
       {#if form.error}<p class="hint error">{form.error}</p>{/if}
-      <button class="create" disabled={!form.name.trim() || form.busy}>{form.busy ? "Creating…" : "Create"}</button>
+      <button class="create" disabled={!form.name.trim() || form.busy}>{form.busy ? tr("Creating…") : tr("Create")}</button>
     </form>
   </Page>
 {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Check from "@lucide/svelte/icons/check";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import type { Folder, RoomSummary } from "$lib/backend";
@@ -73,29 +74,29 @@
   }
 </script>
 
-<Page title={folder ? "Edit folder" : "New folder"} {onClose}>
-  <input class="name" placeholder="Folder name" maxlength="40" bind:value={draft.name} />
+<Page title={folder ? tr("Edit folder") : tr("New folder")} {onClose}>
+  <input class="name" placeholder={tr("Folder name")} maxlength="40" bind:value={draft.name} />
 
-  <h3 class="section">Include</h3>
+  <h3 class="section">{tr("Include")}</h3>
   <label class="toggle">
-    <span><strong>All 1:1 chats</strong></span>
+    <span><strong>{tr("All 1:1 chats")}</strong></span>
     <input type="checkbox" role="switch" bind:checked={draft.people} />
   </label>
   <label class="toggle">
-    <span><strong>All groups</strong><small>Chats inside spaces only if they show in Chats</small></span>
+    <span><strong>{tr("All groups")}</strong><small>{tr("Chats inside spaces only if they show in Chats")}</small></span>
     <input type="checkbox" role="switch" bind:checked={draft.groups} />
   </label>
   <label class="toggle">
-    <span><strong>Only unread</strong><small>Chats leave the folder once read</small></span>
+    <span><strong>{tr("Only unread")}</strong><small>{tr("Chats leave the folder once read")}</small></span>
     <input type="checkbox" role="switch" bind:checked={draft.unread_only} />
   </label>
   <label class="toggle">
-    <span><strong>Hide muted chats</strong></span>
+    <span><strong>{tr("Hide muted chats")}</strong></span>
     <input type="checkbox" role="switch" bind:checked={draft.hide_muted} />
   </label>
 
-  <h3 class="section">Chats <small>{count} in this folder</small></h3>
-  <input class="filter" type="search" placeholder="Find a chat" bind:value={query} />
+  <h3 class="section">{tr("Chats")} <small>{tr("{count} in this folder", { count: count })}</small></h3>
+  <input class="filter" type="search" placeholder={tr("Find a chat")} bind:value={query} />
   <ul class="rooms">
     {#each rooms as r (r.id)}
       {@const on = included(r)}
@@ -112,9 +113,9 @@
   {#if error}<p class="error">{error}</p>{/if}
   <div class="buttons">
     {#if folder}
-      <button class="delete" onclick={remove}><Trash2 size={18} />Delete folder</button>
+      <button class="delete" onclick={remove}><Trash2 size={18} />{tr("Delete folder")}</button>
     {/if}
-    <button class="save" disabled={!valid || saving} onclick={save}>Save</button>
+    <button class="save" disabled={!valid || saving} onclick={save}>{tr("Save")}</button>
   </div>
 </Page>
 

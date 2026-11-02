@@ -1,0 +1,22 @@
+[package]
+name = "alwy-call"
+description = "Native calls (LiveKit + WebRTC) for desktops whose webview has no WebRTC (Linux)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+livekit = { version = "0.10", default-features = false, features = ["native", "rustls-tls-native-roots"] }
+# Two TLS crypto backends end up in the build (ring, aws-lc): rustls then needs one chosen.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+futures-util.workspace = true
+# Video frames for the UI: fast pure-Rust JPEG.
+jpeg-encoder = "0.7"
+serde.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+# Camera (Linux).
+v4l = "0.14"
+
+[lints]
+workspace = true

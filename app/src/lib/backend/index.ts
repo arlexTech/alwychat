@@ -261,6 +261,69 @@ export const joinCall = (roomId: string, video: boolean) =>
 export const leaveCall = () => invoke<void>("leave_call");
 export const callParticipants = (roomId: string) => invoke<Member[]>("call_participants", { roomId });
 
+// ── Native calls (Linux desktop: WebKitGTK has no WebRTC, LiveKit runs in Rust) ──────────────
+export interface NativeCallMember {
+  identity: string;
+  is_local: boolean;
+  speaking: boolean;
+  mic_on: boolean;
+  /** Frame keys (see `nativeCallJoin`'s `onFrame`) of their camera / shared screen. */
+  camera: string | null;
+  screen: string | null;
+}
+export type NativeCallEvent =
+  | { kind: "members"; members: NativeCallMember[] }
+  | { kind: "reconnecting" }
+  | { kind: "connected" }
+  | { kind: "screen_ended" }
+  | { kind: "ended"; reason: string };
+
+/** Whether this build runs calls natively (false in browsers and on Android). */
+export const nativeCalls = () => (isTauri ? invoke<boolean>("native_calls").catch(() => false) : Promise.resolve(false));
+/** Devices (empty: the system's default) and audio processing for a native call. */
+export interface NativeAudioSetup {
+  input: string | null;
+  output: string | null;
+  camera: string | null;
+  noise_suppression: boolean;
+  echo_cancellation: boolean;
+  auto_gain: boolean;
+}
+export interface NativeDevice {
+  id: string;
+  name: string;
+}
+export const nativeDevices = () =>
+  invoke<{ inputs: NativeDevice[]; outputs: NativeDevice[]; cameras: NativeDevice[] }>("native_devices");
+export const nativeCallSetSetup = (setup: NativeAudioSetup) => invoke<void>("native_call_set_setup", { setup });
+export function nativeCallJoin(
+  url: string,
+  token: string,
+  micOn: boolean,
+  setup: NativeAudioSetup,
+  onEvent: (event: NativeCallEvent) => void,
+  /** A video frame: which picture (`camera` / `screen` keys above) and its JPEG. */
+  onFrame: (key: string, jpeg: Uint8Array) => void,
+) {
+  const channel = new Channel<NativeCallEvent>();
+  channel.onmessage = onEvent;
+  // Raw bytes: [key length][key][JPEG].
+  const frames = new Channel<ArrayBuffer>();
+  frames.onmessage = (data) => {
+    const bytes = new Uint8Array(data);
+    const keyLength = bytes[0];
+    onFrame(new TextDecoder().decode(bytes.subarray(1, 1 + keyLength)), bytes.subarray(1 + keyLength));
+  };
+  return invoke<void>("native_call_join", { url, token, micOn, setup, onEvent: channel, onFrame: frames });
+}
+export const nativeCallSetCamera = (on: boolean) => invoke<void>("native_call_set_camera", { on });
+export const nativeCallSetScreen = (on: boolean) => invoke<void>("native_call_set_screen", { on });
+export const nativeCallLeave = () => invoke<void>("native_call_leave");
+export const nativeCallSetMic = (on: boolean) => invoke<void>("native_call_set_mic", { on });
+export const nativeCallSetDeafened = (deafened: boolean) => invoke<void>("native_call_set_deafened", { deafened });
+export const nativeCallSetMutedForMe = (userId: string, muted: boolean) =>
+  invoke<void>("native_call_set_muted_for_me", { userId, muted });
+
 export interface Presence {
   user_id: string;
   online: boolean;

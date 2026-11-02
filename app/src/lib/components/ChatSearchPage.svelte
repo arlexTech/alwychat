@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import Search from "@lucide/svelte/icons/search";
   import type { KindFilter } from "$lib/backend";
@@ -14,10 +15,10 @@
   let input = $state<HTMLInputElement>();
 
   const KINDS: { id: KindFilter | null; label: string }[] = [
-    { id: null, label: "All" },
-    { id: "media", label: "Photos & videos" },
-    { id: "files", label: "Files" },
-    { id: "links", label: "Links" },
+    { id: null, label: tr("All") },
+    { id: "media", label: tr("Photos & videos") },
+    { id: "files", label: tr("Files") },
+    { id: "links", label: tr("Links") },
   ];
 
   onMount(() => {
@@ -27,13 +28,13 @@
   });
 </script>
 
-<Page title="Search in chat" {onClose}>
+<Page title={tr("Search in chat")} {onClose}>
   <label class="field">
     <Search size={18} />
     <input
       bind:this={input}
       type="search"
-      placeholder="Words, names of files…"
+      placeholder={tr("Words, names of files…")}
       bind:value={search.query}
       oninput={() => search.changed()}
       enterkeyhint="search"
@@ -48,14 +49,14 @@
   {#if search.error}
     <p class="note error">{search.error}</p>
   {:else if !search.active}
-    <p class="note">Type at least 2 letters. Accents and capitals don't matter, and the end of a word can be left out.</p>
+    <p class="note">{tr("Type at least 2 letters. Accents and capitals don't matter, and the end of a word can be left out.")}</p>
   {:else if search.hits.length}
     <SearchResults hits={search.hits} showChat={false} onPick={(h) => onPick(h.event_id)} onMore={() => search.more()} />
   {:else if !search.loading}
-    <p class="note">No messages found.</p>
+    <p class="note">{tr("No messages found.")}</p>
   {/if}
   {#if search.status?.chat_done === false}
-    <p class="note small">Still reading this chat's older messages: more results may appear.</p>
+    <p class="note small">{tr("Still reading this chat's older messages: more results may appear.")}</p>
   {/if}
 </Page>
 

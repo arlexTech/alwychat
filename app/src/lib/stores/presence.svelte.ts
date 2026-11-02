@@ -1,4 +1,5 @@
 import { getPresence, reportActivity, type Presence } from "$lib/backend";
+import { tr, trn } from "$lib/i18n/index.svelte";
 
 /** Our own activity is re-reported this often while the app is in front. */
 const REPORT_EVERY_MS = 2 * 60 * 1000;
@@ -35,16 +36,16 @@ class PresenceStore {
   label(userId: string | null | undefined): string | null {
     const p = userId ? this.#seen[userId] : undefined;
     if (!p) return null;
-    if (p.online) return "Online";
+    if (p.online) return tr("Online");
     if (p.last_active_ago_ms == null) return null;
     const ago = this.#now - (p.fetchedAt - p.last_active_ago_ms);
     const min = Math.floor(ago / 60_000);
-    if (min < 1) return "Last seen just now";
-    if (min < 60) return `Last seen ${min} min ago`;
+    if (min < 1) return tr("Last seen just now");
+    if (min < 60) return tr("Last seen {min} min ago", { min: min });
     const h = Math.floor(min / 60);
-    if (h < 24) return `Last seen ${h} h ago`;
+    if (h < 24) return tr("Last seen {h} h ago", { h: h });
     const d = Math.floor(h / 24);
-    return d === 1 ? "Last seen yesterday" : `Last seen ${d} days ago`;
+    return d === 1 ? tr("Last seen yesterday") : trn(d, "Last seen {n} day ago", "Last seen {n} days ago");
   }
 
   /** Start reporting our activity (online while visible, away when hidden). Call once. */

@@ -1,4 +1,5 @@
 import { saveMedia } from "$lib/backend";
+import { tr, trn } from "$lib/i18n/index.svelte";
 
 const home = (path: string) => path.replace(/^\/home\/[^/]+/, "~");
 const folder = (path: string) => home(path.slice(0, path.lastIndexOf("/")));
@@ -17,8 +18,8 @@ export async function saveToGallery(media: string[]): Promise<string> {
     }
   }
   const saved = media.length - failed;
-  if (saved === 0) return `Couldn't save: ${error}`;
-  if (media.length === 1) return `Saved to ${home(lastPath)}`;
-  const done = `Saved ${saved} ${saved === 1 ? "item" : "items"} to ${folder(lastPath)}`;
+  if (saved === 0) return tr("Couldn't save: {error}", { error: error });
+  if (media.length === 1) return tr("Saved to {value}", { value: home(lastPath) });
+  const done = trn(saved, "Saved {n} item to {folder}", "Saved {n} items to {folder}", { folder: folder(lastPath) });
   return failed ? `${done} (${failed} failed: ${error})` : done;
 }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/alwy-core", "crates/alwy-web", "app/src-tauri"]
+members = ["crates/alwy-core", "crates/alwy-web", "crates/alwy-call", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -54,3 +54,7 @@ debug = false
 [profile.web]
 inherits = "release"
 opt-level = "z"
+
+# Video frames of native calls are encoded on every frame: keep it fast in dev builds too.
+[profile.dev.package.jpeg-encoder]
+opt-level = 3

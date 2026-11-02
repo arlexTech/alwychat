@@ -31,6 +31,8 @@ tracing-subscriber.workspace = true
 # Asks D-Bus whether a tray host exists (stock GNOME has none).
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
+# Calls: WebKitGTK has no WebRTC, so LiveKit runs natively there (crates/alwy-call).
+alwy-call = { path = "../../crates/alwy-call" }
 # Microphone / camera permission answers in the main webview (see `enable_media_capture`).
 # Same version as wry's.
 webkit2gtk = "2.0.2"

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Link from "@lucide/svelte/icons/link";
   import UserPlus from "@lucide/svelte/icons/user-plus";
   import { onBack } from "$lib/back.svelte";
@@ -55,12 +56,12 @@
     return q ? list.filter((m) => m.name.toLowerCase().includes(q) || m.user_id.toLowerCase().includes(q)) : list;
   });
   const groups = $derived([
-    { title: "Admins", people: shown.filter((m) => m.membership === "join" && m.power >= 100) },
-    { title: "Moderators", people: shown.filter((m) => m.membership === "join" && m.power >= 50 && m.power < 100) },
-    { title: "Members", people: shown.filter((m) => m.membership === "join" && m.power < 50) },
-    { title: "Asking to join", people: shown.filter((m) => m.membership === "knock") },
-    { title: "Invited", people: shown.filter((m) => m.membership === "invite") },
-    { title: "Banned", people: shown.filter((m) => m.membership === "ban") },
+    { title: tr("Admins"), people: shown.filter((m) => m.membership === "join" && m.power >= 100) },
+    { title: tr("Moderators"), people: shown.filter((m) => m.membership === "join" && m.power >= 50 && m.power < 100) },
+    { title: tr("Members"), people: shown.filter((m) => m.membership === "join" && m.power < 50) },
+    { title: tr("Asking to join"), people: shown.filter((m) => m.membership === "knock") },
+    { title: tr("Invited"), people: shown.filter((m) => m.membership === "invite") },
+    { title: tr("Banned"), people: shown.filter((m) => m.membership === "ban") },
   ]);
   const link = $derived(
     `https://matrix.to/#/${encodeURIComponent(room.alias ?? room.id)}${room.alias ? "" : `?via=${room.id.split(":")[1]}`}`,
@@ -75,7 +76,7 @@
     }
     busy = false;
     if (failed.length) error = failed.join("\n");
-    else notice = `Invited ${toInvite.map((u) => u.name).join(", ")}`;
+    else notice = tr("Invited {value}", { value: toInvite.map((u) => u.name).join(", ") });
     toInvite = [];
     if (!failed.length) inviting = false;
     reload();
@@ -83,7 +84,7 @@
   }
 
   function copyLink() {
-    navigator.clipboard?.writeText(link).then(() => (notice = "Link copied")).catch(() => {});
+    navigator.clipboard?.writeText(link).then(() => (notice = tr("Link copied"))).catch(() => {});
   }
 </script>
 
@@ -91,26 +92,26 @@
   <UserPicker multiple bind:picked={toInvite} exclude={list.filter((m) => m.membership === "join" || m.membership === "invite").map((m) => m.user_id)} />
   <div class="m-buttons sticky">
     <button class="m-btn" disabled={!toInvite.length || busy} onclick={sendInvites}>
-      {busy ? "Inviting…" : toInvite.length ? `Invite ${toInvite.length}` : "Invite"}
+      {busy ? tr("Inviting…") : toInvite.length ? tr("Invite {length}", { length: toInvite.length }) : tr("Invite")}
     </button>
   </div>
 {/snippet}
 
-<Page title={inviting ? `Invite to ${room.name}` : `Members · ${room.members}`} onClose={inviting && !startInviting ? () => (inviting = false) : onClose}>
+<Page title={inviting ? tr("Invite to {name}", { name: room.name }) : tr("Members · {members}", { members: room.members })} onClose={inviting && !startInviting ? () => (inviting = false) : onClose}>
   {#if inviting}
     {@render invitePanel()}
   {:else}
     {#if canInvite}
       <button class="m-row" onclick={() => (inviting = true)}>
-        <span class="m-icon"><UserPlus size={20} /></span><span class="m-text"><strong>Invite people</strong></span>
+        <span class="m-icon"><UserPlus size={20} /></span><span class="m-text"><strong>{tr("Invite people")}</strong></span>
       </button>
     {/if}
     {#if room.join_rule === "public" || room.alias}
       <button class="m-row" onclick={copyLink}>
-        <span class="m-icon"><Link size={20} /></span><span class="m-text"><strong>Copy link</strong><small>{link}</small></span>
+        <span class="m-icon"><Link size={20} /></span><span class="m-text"><strong>{tr("Copy link")}</strong><small>{link}</small></span>
       </button>
     {/if}
-    {#if list.length > 8}<input class="m-input search" type="search" placeholder="Find a member" bind:value={query} />{/if}
+    {#if list.length > 8}<input class="m-input search" type="search" placeholder={tr("Find a member")} bind:value={query} />{/if}
     {#each groups as g (g.title)}
       {#if g.people.length}
         <h3 class="m-section">{g.title} · {g.people.length}</h3>
@@ -120,13 +121,13 @@
               <Avatar name={m.name} mxc={m.avatar} size={40} />
               {#if presence.online(m.user_id)}<span class="dot"></span>{/if}
             </span>
-            <span class="m-text"><strong>{m.name}{m.is_me ? " (you)" : ""}</strong><small>{m.user_id}</small></span>
+            <span class="m-text"><strong>{m.name}{m.is_me ? tr(" (you)") : ""}</strong><small>{m.user_id}</small></span>
             {#if m.power !== 0 && m.power !== 50 && m.power !== 100}<span class="m-end">{roleName(m.power)}</span>{/if}
           </button>
         {/each}
       {/if}
     {/each}
-    {#if !loaded}<p class="m-hint">Loading…</p>{/if}
+    {#if !loaded}<p class="m-hint">{tr("Loading…")}</p>{/if}
   {/if}
   {#if notice}<p class="m-hint">{notice}</p>{/if}
   {#if error}<p class="m-error">{error}</p>{/if}

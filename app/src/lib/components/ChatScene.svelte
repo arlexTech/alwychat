@@ -21,10 +21,23 @@
   const petals = dots(23, 16);
   const flies = dots(31, 14);
   const hearts = dots(43, 14);
+
+  let width = $state(0);
+  let height = $state(0);
+  const wide = $derived(!mini && width > height * 0.75);
 </script>
 
-<div class="scene" class:mini aria-hidden="true">
-  <svg viewBox="0 0 400 860" preserveAspectRatio="xMidYMax slice">
+<!-- Drawn for a phone (portrait). On a wider-than-tall chat, covering would zoom it far in, so
+     the whole scene is fitted to the height in the middle and the sides get a blurred, still
+     copy of it (like a letterboxed video). -->
+<div class="scene" class:mini aria-hidden="true" bind:clientWidth={width} bind:clientHeight={height}>
+  {#if wide}
+    <svg class="backdrop" viewBox="0 0 400 860" preserveAspectRatio="xMidYMid slice">{@render art()}</svg>
+  {/if}
+  <svg class:fitted={wide} viewBox="0 0 400 860" preserveAspectRatio={wide ? "xMidYMax meet" : "xMidYMax slice"}>{@render art()}</svg>
+</div>
+
+{#snippet art()}
     {#if scene === "ocean"}
       <!-- Still on purpose: depth comes from haze (far shapes blurred and faded into the water). -->
       <defs>
@@ -361,8 +374,7 @@
         {/each}
       </g>
     {/if}
-  </svg>
-</div>
+{/snippet}
 
 <style>
   .scene {
@@ -372,8 +384,26 @@
     pointer-events: none;
   }
   svg {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
+  }
+  .backdrop {
+    filter: blur(32px) saturate(1.1);
+    transform: scale(1.15);
+  }
+  .backdrop :global(*) {
+    animation: none !important;
+  }
+  /* Soft edges where the scene meets its blurred sides. */
+  .fitted {
+    right: auto;
+    left: 50%;
+    width: auto;
+    aspect-ratio: 400 / 860;
+    translate: -50% 0;
+    mask-image: linear-gradient(90deg, transparent, black 30%, black 70%, transparent);
   }
   .bubble {
     animation: rise var(--d) linear infinite;

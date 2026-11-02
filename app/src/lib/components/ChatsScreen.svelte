@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trc } from "$lib/i18n/index.svelte";
   import Settings from "@lucide/svelte/icons/settings";
   import MessageCircle from "@lucide/svelte/icons/message-circle";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
@@ -44,6 +45,8 @@
   import { profiles } from "$lib/stores/profiles.svelte";
   import { call } from "$lib/stores/call.svelte";
   import CallView from "./CallView.svelte";
+  import PersonMenu from "./PersonMenu.svelte";
+  import UserPage from "./UserPage.svelte";
   import IncomingCall from "./IncomingCall.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { encryption } from "$lib/stores/encryption.svelte";
@@ -75,12 +78,12 @@
 
   type Filter = "all" | "unread" | "people" | "groups" | "pinned" | "archived";
   const filters: { id: Filter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "unread", label: "Unread" },
-    { id: "people", label: "People" },
-    { id: "groups", label: "Groups" },
-    { id: "pinned", label: "Pinned" },
-    { id: "archived", label: "Archived" },
+    { id: "all", label: tr("All") },
+    { id: "unread", label: tr("Unread") },
+    { id: "people", label: tr("People") },
+    { id: "groups", label: tr("Groups") },
+    { id: "pinned", label: tr("Pinned") },
+    { id: "archived", label: tr("Archived") },
   ];
 
   /** A built-in filter, or `folder:<id>`. */
@@ -271,31 +274,32 @@
 
   function closeChat() {
     selectedId = null;
+    call.chatOpen = false;
     chat.close();
   }
 </script>
 
-<div class="shell" class:has-selection={selected}>
+<div class="shell" class:has-selection={selected} class:call-side={call.sideChat}>
   <aside class="list-pane">
     <header>
-      <button class="me" onclick={() => (settingsOpen = true)} aria-label="Settings" title="Settings">
+      <button class="me" onclick={() => (settingsOpen = true)} aria-label={tr("Settings")} title={tr("Settings")}>
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
-      <h1>{tab === "chats" ? "Chats" : "Spaces"}</h1>
-      <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label="New chat" title="New chat"><SquarePen size={21} /></button>
+      <h1>{tab === "chats" ? tr("Chats") : tr("Spaces")}</h1>
+      <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label={tr("New chat")} title={tr("New chat")}><SquarePen size={21} /></button>
     </header>
 
     {#if connection.shown}
       <div class="connection" class:offline={connection.shown !== "connecting"} transition:fly={{ y: -8, duration: 160 }}>
-        {#if connection.shown === "connecting"}<LoaderCircle size={15} class="spin" /> Connecting…
-        {:else if connection.shown === "offline"}<WifiOff size={15} /> Waiting for network…
-        {:else}<WifiOff size={15} /> Can't reach the server, retrying…{/if}
+        {#if connection.shown === "connecting"}<LoaderCircle size={15} class="spin" /> {tr("Connecting…")}
+        {:else if connection.shown === "offline"}<WifiOff size={15} /> {tr("Waiting for network…")}
+        {:else}<WifiOff size={15} /> {tr("Can't reach the server, retrying…")}{/if}
       </div>
     {/if}
     {#if encryption.locked}
       <button class="unlock-banner" onclick={() => (encryption.sheetOpen = true)} transition:fade>
         <span>🔒</span>
-        <span><strong>Unlock your messages</strong><small>Verify this device to read encrypted history</small></span>
+        <span><strong>{tr("Unlock your messages")}</strong><small>{tr("Verify this device to read encrypted history")}</small></span>
       </button>
     {/if}
 
@@ -304,7 +308,7 @@
         <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} />
       </div>
     {:else}
-    <input class="search" type="search" placeholder="Search" bind:value={query} />
+    <input class="search" type="search" placeholder={tr("Search")} bind:value={query} />
 
     <nav class="chips">
       {#each filters as f (f.id)}
@@ -319,12 +323,12 @@
           onpointerdown={() => chipDown(f)}
           onpointerup={() => clearTimeout(chipTimer)}
           onpointerleave={() => clearTimeout(chipTimer)}
-          title="Right-click or long-press to edit"
+          title={tr("Right-click or long-press to edit")}
         >
           {f.name}{#if unread}<span class="chip-count">{unread}</span>{/if}
         </button>
       {/each}
-      <button class="add-folder" onclick={() => (folderEdit = "new")} aria-label="New folder" title="New folder">
+      <button class="add-folder" onclick={() => (folderEdit = "new")} aria-label={tr("New folder")} title={tr("New folder")}>
         <Plus size={16} />
       </button>
     </nav>
@@ -339,7 +343,7 @@
           <div class="skeleton" style:animation-delay="{i * 60}ms"></div>
         {/each}
       {:else if visible.length === 0 && !messageSearch.active}
-        <p class="state">{query ? "No chats match your search" : "Nothing here yet"}</p>
+        <p class="state">{query ? tr("No chats match your search") : tr("Nothing here yet")}</p>
       {:else}
         {#each visible as room (room.id)}
           <div animate:flip={{ duration: 220 }}>
@@ -353,13 +357,13 @@
         {/each}
         {#if messageSearch.active}
           <h4 class="results-title">
-            Messages
-            {#if messageSearch.status?.indexing}<small>· reading older history ({messageSearch.status.chats_done}/{messageSearch.status.chats} chats)</small>{/if}
+            {tr("Messages")}
+            {#if messageSearch.status?.indexing}<small>{tr("· reading older history ({chats_done}/{chats} chats)", { chats_done: messageSearch.status.chats_done, chats: messageSearch.status.chats })}</small>{/if}
           </h4>
           {#if messageSearch.hits.length}
             <SearchResults hits={messageSearch.hits} onPick={(h) => openHit(h.room_id, h.event_id)} onMore={() => messageSearch.more()} />
           {:else if !messageSearch.loading}
-            <p class="state small">No messages found</p>
+            <p class="state small">{tr("No messages found")}</p>
           {/if}
         {/if}
       {/if}
@@ -369,11 +373,11 @@
     <nav class="tabbar">
       <button class:active={tab === "chats"} onclick={() => (tab = "chats")}>
         <span class="tab-icon"><MessageCircle size={22} />{#if chatsUnread}<span class="dot">{chatsUnread}</span>{/if}</span>
-        Chats
+        {tr("Chats")}
       </button>
       <button class:active={tab === "spaces"} onclick={() => (tab = "spaces")}>
         <span class="tab-icon"><LayoutGrid size={22} />{#if spacesUnread}<span class="dot">{spacesUnread}</span>{/if}</span>
-        Spaces
+        {tr("Spaces")}
       </button>
     </nav>
   </aside>
@@ -402,7 +406,7 @@
     {:else if selected}
       <ChatView room={selected} onBack={closeChat} />
     {:else}
-      <div class="placeholder">Select a chat to start messaging</div>
+      <div class="placeholder">{tr("Select a chat to start messaging")}</div>
     {/if}
   </section>
 </div>
@@ -414,7 +418,7 @@
 {#if share.incoming}
   {@const s = share.incoming}
   <ForwardPage
-    title="Share to…"
+    title={tr("Share to…")}
     onClose={() => share.cancel()}
     onPick={(r) => {
       share.deliver(r.id);
@@ -448,10 +452,10 @@
   <div class="menu-catcher" onclick={() => (rowMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (rowMenu = null))}></div>
   <div class="row-menu" style:left="{rowMenu.x}px" style:top="{rowMenu.y}px" transition:fade={{ duration: 100 }}>
     <button onclick={() => rowAction((c) => setPinned(c.id, !c.is_favourite), (c) => ({ is_favourite: !c.is_favourite, is_archived: false }))}>
-      {#if r.is_favourite}<PinOff size={16} />Unpin{:else}<Pin size={16} />Pin{/if}
+      {#if r.is_favourite}<PinOff size={16} />{tr("Unpin")}{:else}<Pin size={16} />{tr("Pin")}{/if}
     </button>
     <button onclick={() => rowAction((c) => setMuted(c.id, !c.is_muted), (c) => ({ is_muted: !c.is_muted }))}>
-      {#if r.is_muted}<Bell size={16} />Unmute{:else}<BellOff size={16} />Mute{/if}
+      {#if r.is_muted}<Bell size={16} />{trc("chat", "Unmute")}{:else}<BellOff size={16} />{trc("chat", "Mute")}{/if}
     </button>
     <button
       onclick={() =>
@@ -460,15 +464,15 @@
           (c) => ({ marked_unread: !(c.marked_unread || c.unread_messages > 0) }),
         )}
     >
-      {#if r.marked_unread || r.unread_messages > 0}<MailOpen size={16} />Mark as read{:else}<Mail size={16} />Mark as unread{/if}
+      {#if r.marked_unread || r.unread_messages > 0}<MailOpen size={16} />{tr("Mark as read")}{:else}<Mail size={16} />{tr("Mark as unread")}{/if}
     </button>
     <button onclick={() => rowAction((c) => setArchived(c.id, !c.is_archived), (c) => ({ is_archived: !c.is_archived, is_favourite: false }))}>
-      {#if r.is_archived}<ArchiveRestore size={16} />Unarchive{:else}<Archive size={16} />Archive{/if}
+      {#if r.is_archived}<ArchiveRestore size={16} />{tr("Unarchive")}{:else}<Archive size={16} />{tr("Archive")}{/if}
     </button>
     {#each spaces.prefs.folders as f (f.id)}
       {@const inside = inFolder({ ...f, unread_only: false, hide_muted: false }, r)}
       <button onclick={() => folderToggle(f.id, r.id, !inside)}>
-        {#if inside}<FolderMinus size={16} />Remove from {f.name}{:else}<FolderPlus size={16} />Add to {f.name}{/if}
+        {#if inside}<FolderMinus size={16} />{tr("Remove from {name}", { name: f.name })}{:else}<FolderPlus size={16} />{tr("Add to {name}", { name: f.name })}{/if}
       </button>
     {/each}
   </div>
@@ -479,6 +483,14 @@
 {/if}
 
 <CallView />
+{#if call.menu}<PersonMenu />{/if}
+{#if call.profile}
+  <UserPage
+    userId={call.profile}
+    onClose={() => (call.profile = null)}
+    onOpenChat={(id) => ((call.profile = null), nav.openChat(id))}
+  />
+{/if}
 <IncomingCall />
 
 <style>
@@ -791,6 +803,17 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+  }
+  /* In a call with its chat open (computer): the chat pane sits on the right of the call. */
+  .shell.call-side .chat-pane {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 61;
+    width: var(--side-chat);
+    border-left: 1px solid var(--border);
+    background: var(--bg);
   }
   .unlock-banner {
     display: flex;

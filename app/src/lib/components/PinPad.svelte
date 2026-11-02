@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Delete from "@lucide/svelte/icons/delete";
   import Fingerprint from "@lucide/svelte/icons/fingerprint";
   import ScanFace from "@lucide/svelte/icons/scan-face";
@@ -68,7 +69,7 @@
 <div class="pad">
   <h2>{title}</h2>
   <p class="hint" class:error={!!error}>{error ?? hint ?? " "}</p>
-  <div class="dots" class:shake aria-label="{pin.length} digits entered">
+  <div class="dots" class:shake aria-label={tr("{length} digits entered", { length: pin.length })}>
     {#each Array(Math.max(4, pin.length)) as _, i (i)}
       <span class:on={i < pin.length}></span>
     {/each}
@@ -78,17 +79,17 @@
       <button onclick={() => press(d)}>{d}</button>
     {/each}
     {#if biometry && onBiometric}
-      <button class="icon" onclick={onBiometric} aria-label="Use {biometry}">
+      <button class="icon" onclick={onBiometric} aria-label={tr("Use {biometry}", { biometry: biometry })}>
         {#if biometry === "face"}<ScanFace size={26} />{:else}<Fingerprint size={26} />{/if}
       </button>
     {:else}
-      <button class="icon" onclick={() => (pin = pin.slice(0, -1))} aria-label="Delete" disabled={!pin}><Delete size={24} /></button>
+      <button class="icon" onclick={() => (pin = pin.slice(0, -1))} aria-label={tr("Delete")} disabled={!pin}><Delete size={24} /></button>
     {/if}
     <button onclick={() => press("0")}>0</button>
     {#if pin.length >= 4}
-      <button class="icon go" onclick={submit} aria-label="OK" disabled={busy}><ArrowRight size={24} /></button>
+      <button class="icon go" onclick={submit} aria-label={tr("OK")} disabled={busy}><ArrowRight size={24} /></button>
     {:else if biometry && onBiometric}
-      <button class="icon" onclick={() => (pin = pin.slice(0, -1))} aria-label="Delete" disabled={!pin}><Delete size={24} /></button>
+      <button class="icon" onclick={() => (pin = pin.slice(0, -1))} aria-label={tr("Delete")} disabled={!pin}><Delete size={24} /></button>
     {:else}
       <span></span>
     {/if}

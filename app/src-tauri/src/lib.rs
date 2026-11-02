@@ -20,6 +20,8 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
+mod native_call;
+
 #[tauri::command]
 async fn discover_server(server: String) -> alwy_core::Result<ServerInfo> {
     discovery::discover(&server).await
@@ -1830,6 +1832,16 @@ pub fn run() {
             set_typing,
             join_call,
             leave_call,
+            native_call::native_calls,
+            native_call::native_call_join,
+            native_call::native_call_leave,
+            native_call::native_call_set_mic,
+            native_call::native_call_set_deafened,
+            native_call::native_call_set_muted_for_me,
+            native_call::native_call_set_setup,
+            native_call::native_devices,
+            native_call::native_call_set_camera,
+            native_call::native_call_set_screen,
             call_participants,
             presence,
             report_activity,

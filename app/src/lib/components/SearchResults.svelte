@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Image from "@lucide/svelte/icons/image";
   import FileText from "@lucide/svelte/icons/file-text";
   import Mic from "@lucide/svelte/icons/mic";
@@ -42,11 +43,11 @@
         {/if}
         <span class="body">
           <span class="line">
-            <strong>{showChat ? hit.room_name : hit.is_own ? "You" : hit.sender_name}</strong>
+            <strong>{showChat ? hit.room_name : hit.is_own ? tr("You") : hit.sender_name}</strong>
             <span class="time">{shortTime(hit.timestamp)}</span>
           </span>
           <span class="snippet">
-            {#if showChat && hit.room_name !== hit.sender_name}<span class="who">{hit.is_own ? "You" : hit.sender_name}:</span>{/if}
+            {#if showChat && hit.room_name !== hit.sender_name}<span class="who">{hit.is_own ? tr("You") : hit.sender_name}:</span>{/if}
             {#if hit.kind === "image" || hit.kind === "video"}<Image size={14} />
             {:else if hit.kind === "file" || hit.kind === "audio"}<FileText size={14} />
             {:else if hit.kind === "voice"}<Mic size={14} />

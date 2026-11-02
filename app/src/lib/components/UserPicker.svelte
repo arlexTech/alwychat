@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Check from "@lucide/svelte/icons/check";
   import X from "@lucide/svelte/icons/x";
   import { searchUsers, type UserResult } from "$lib/backend";
@@ -68,28 +69,28 @@
 {#if multiple && picked.length}
   <div class="m-chips">
     {#each picked as p (p.user_id)}
-      <button class="m-chip" onclick={() => tap(p)} aria-label="Remove {p.name}">
+      <button class="m-chip" onclick={() => tap(p)} aria-label={tr("Remove {name}", { name: p.name })}>
         <Avatar name={p.name} mxc={p.avatar} size={22} />{p.name}<X size={14} />
       </button>
     {/each}
   </div>
 {/if}
-<input class="m-input" type="search" placeholder="Name or @user:server" bind:value={query} autocapitalize="off" autocomplete="off" spellcheck="false" />
-{#if !query.trim() && recent.length}<h3 class="m-section">People you talk to</h3>{/if}
+<input class="m-input" type="search" placeholder={tr("Name or @user:server")} bind:value={query} autocapitalize="off" autocomplete="off" spellcheck="false" />
+{#if !query.trim() && recent.length}<h3 class="m-section">{tr("People you talk to")}</h3>{/if}
 <ul>
   {#each shown as u (u.user_id)}
     {@const already = exclude.includes(u.user_id)}
     <li>
       <button class="m-row" onclick={() => tap(u)} disabled={already}>
         <Avatar name={u.name} mxc={u.avatar} size={40} />
-        <span class="m-text"><strong>{u.name}</strong><small>{already ? "Already here" : u.user_id}</small></span>
+        <span class="m-text"><strong>{u.name}</strong><small>{already ? tr("Already here") : u.user_id}</small></span>
         {#if multiple}<span class="mark" class:on={isPicked(u)}>{#if isPicked(u)}<Check size={15} />{/if}</span>{/if}
       </button>
     </li>
   {/each}
 </ul>
 {#if query.trim() && !searching && !results.length && !error}
-  <p class="m-hint">Nobody found. Type the full address, like @name:server.</p>
+  <p class="m-hint">{tr("Nobody found. Type the full address, like @name:server.")}</p>
 {/if}
 {#if error}<p class="m-error">{error}</p>{/if}
 

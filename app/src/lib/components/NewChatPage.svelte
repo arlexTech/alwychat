@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Bookmark from "@lucide/svelte/icons/bookmark";
   import Hash from "@lucide/svelte/icons/hash";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
@@ -39,7 +40,7 @@
       await waitFor(id);
       onOpen(id);
     } catch (e) {
-      error = `Couldn't start the chat: ${e}`;
+      error = tr("Couldn't start the chat: {e}", { e: e });
     } finally {
       busy = false;
     }
@@ -53,7 +54,7 @@
       await waitFor(id);
       onOpen(id);
     } catch (e) {
-      error = `Couldn't open Saved messages: ${e}`;
+      error = tr("Couldn't open Saved messages: {e}", { e: e });
     } finally {
       busy = false;
     }
@@ -68,37 +69,37 @@
       await waitFor(id);
       onOpen(id, !chatList.rooms.some((r) => r.id === id));
     } catch (e) {
-      error = `Couldn't join: ${e}`;
+      error = tr("Couldn't join: {e}", { e: e });
     } finally {
       busy = false;
     }
   }
 </script>
 
-<Page title="New chat" {onClose}>
+<Page title={tr("New chat")} {onClose}>
   <button class="m-row" onclick={() => (creating = "group")}>
-    <span class="m-icon"><Users size={20} /></span><span class="m-text"><strong>New group</strong></span>
+    <span class="m-icon"><Users size={20} /></span><span class="m-text"><strong>{tr("New group")}</strong></span>
   </button>
   <button class="m-row" onclick={() => (creating = "space")}>
     <span class="m-icon"><LayoutGrid size={20} /></span
-    ><span class="m-text"><strong>New space</strong><small>Group chats and voice channels together</small></span>
+    ><span class="m-text"><strong>{tr("New space")}</strong><small>{tr("Group chats and voice channels together")}</small></span>
   </button>
   <button class="m-row" onclick={openSaved} disabled={busy}>
     <span class="m-icon"><Bookmark size={20} /></span
-    ><span class="m-text"><strong>Saved messages</strong><small>Notes and things to keep, only you see them</small></span>
+    ><span class="m-text"><strong>{tr("Saved messages")}</strong><small>{tr("Notes and things to keep, only you see them")}</small></span>
   </button>
   <button class="m-row" onclick={() => (joining = !joining)}>
     <span class="m-icon"><Hash size={20} /></span
-    ><span class="m-text"><strong>Join with an address</strong><small>#name:server, or a matrix.to link</small></span>
+    ><span class="m-text"><strong>{tr("Join with an address")}</strong><small>{tr("#name:server, or a matrix.to link")}</small></span>
   </button>
   {#if joining}
     <form class="join" onsubmit={(e) => (e.preventDefault(), join())}>
-      <input class="m-input" bind:value={address} placeholder="#room:server or https://matrix.to/#/…" autocapitalize="off" spellcheck="false" />
-      <button class="m-btn" disabled={!address.trim() || busy}>Join</button>
+      <input class="m-input" bind:value={address} placeholder={tr("#room:server or https://matrix.to/#/…")} autocapitalize="off" spellcheck="false" />
+      <button class="m-btn" disabled={!address.trim() || busy}>{tr("Join")}</button>
     </form>
   {/if}
 
-  <h3 class="m-section">Message someone</h3>
+  <h3 class="m-section">{tr("Message someone")}</h3>
   <UserPicker onPick={(u) => !busy && message(u)} />
   {#if error}<p class="m-error">{error}</p>{/if}
 </Page>

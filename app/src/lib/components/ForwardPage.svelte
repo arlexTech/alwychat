@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Send from "@lucide/svelte/icons/send-horizontal";
   import type { RoomSummary } from "$lib/backend";
   import type { Snippet } from "svelte";
@@ -8,7 +9,7 @@
   import Page from "./Page.svelte";
 
   let {
-    title = "Forward to…",
+    title = tr("Forward to…"),
     onPick,
     onClose,
     children,
@@ -32,7 +33,7 @@
 
 <Page {title} {onClose}>
   {@render children?.()}
-  <input class="search" bind:value={query} placeholder="Search chats" />
+  <input class="search" bind:value={query} placeholder={tr("Search chats")} />
   <ul>
     {#each rooms as r (r.id)}
       <li>

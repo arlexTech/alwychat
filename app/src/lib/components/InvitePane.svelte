@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import { acceptInvite, inviteInfo, leaveRoom, setIgnored, type InviteInfo, type RoomSummary } from "$lib/backend";
   import Avatar from "./Avatar.svelte";
@@ -28,7 +29,7 @@
       .catch(() => {});
   });
 
-  const inviter = $derived(info?.inviter_name ?? info?.inviter_id ?? "Someone");
+  const inviter = $derived(info?.inviter_name ?? info?.inviter_id ?? tr("Someone"));
   const what = $derived(room.is_space || info?.is_space ? "space" : room.is_dm ? "chat" : "group");
 
   async function run(kind: "accept" | "decline" | "block") {
@@ -52,23 +53,23 @@
 </script>
 
 <div class="invite">
-  {#if onBack}<button class="back" onclick={onBack} aria-label="Back"><ArrowLeft size={22} /></button>{/if}
+  {#if onBack}<button class="back" onclick={onBack} aria-label={tr("Back")}><ArrowLeft size={22} /></button>{/if}
   <div class="card">
     <Avatar name={room.name} mxc={room.avatar} size={96} square={room.is_space} />
     <h2>{room.name}</h2>
     {#if info?.topic}<p class="topic">{info.topic}</p>{/if}
     <p class="who">
       {#if info?.inviter_avatar !== undefined}<Avatar name={inviter} mxc={info?.inviter_avatar ?? null} size={22} />{/if}
-      <span><strong>{inviter}</strong> invited you to {room.is_dm ? "chat" : `this ${what}`}</span>
+      <span><strong>{inviter}</strong> {tr("invited you to {value}", { value: room.is_dm ? "chat" : `this ${what}` })}</span>
     </p>
-    {#if info && !room.is_dm && info.members}<p class="members">{info.members} {info.members === 1 ? "member" : "members"}</p>{/if}
+    {#if info && !room.is_dm && info.members}<p class="members">{trn(info.members, "{n} member", "{n} members")}</p>{/if}
     {#if error}<p class="m-error">{error}</p>{/if}
     <div class="m-buttons">
-      <button class="m-btn plain" disabled={!!busy} onclick={() => run("decline")}>{busy === "decline" ? "Declining…" : "Decline"}</button>
-      <button class="m-btn" disabled={!!busy} onclick={() => run("accept")}>{busy === "accept" ? "Joining…" : "Accept"}</button>
+      <button class="m-btn plain" disabled={!!busy} onclick={() => run("decline")}>{busy === "decline" ? tr("Declining…") : tr("Decline")}</button>
+      <button class="m-btn" disabled={!!busy} onclick={() => run("accept")}>{busy === "accept" ? tr("Joining…") : tr("Accept")}</button>
     </div>
     {#if info}
-      <button class="block" disabled={!!busy} onclick={() => run("block")}>Decline and block {inviter}</button>
+      <button class="block" disabled={!!busy} onclick={() => run("block")}>{tr("Decline and block {inviter}", { inviter: inviter })}</button>
     {/if}
   </div>
 </div>

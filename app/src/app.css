@@ -1,5 +1,9 @@
 /* Design tokens — Element X calm × Messenger warmth. Dark by default; [data-theme] switches. */
 :root {
+  /* Width of the settings list beside the open section (wide screens). */
+  --settings-list: 360px;
+  /* Width of a call's chat docked beside it. */
+  --side-chat: 400px;
   --bg: #0e1014;
   --surface: #15181f;
   --surface-2: #1c2029;
@@ -139,6 +143,10 @@ input[type="checkbox"][role="switch"]:checked::after {
 }
 button.m-row:hover,
 label.m-row:hover {
+  background: var(--surface-hover);
+}
+/* The section open on the right of the settings list (wide screens). */
+button.m-row.active {
   background: var(--surface-hover);
 }
 .m-row > .m-icon {

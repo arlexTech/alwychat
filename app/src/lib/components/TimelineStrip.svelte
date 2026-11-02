@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import X from "@lucide/svelte/icons/x";
   import { tick } from "svelte";
   import { fly } from "svelte/transition";
@@ -130,18 +131,18 @@
         <strong>{dateLabel(current.start)}</strong>
         <small>
           {current.mine + current.others
-            ? `${current.mine + current.others} messages · you ${current.mine}`
-            : "No messages this day"}{following ? " · …" : ""}
+            ? tr("{value} messages · you {mine}", { value: current.mine + current.others, mine: current.mine })
+            : tr("No messages this day")}{following ? " · …" : ""}
         </small>
       {:else if activity && !activity.days.length}
-        <strong>No history yet</strong>
-        <small>{activity.complete ? "Nothing to show" : "Messages are still being read…"}</small>
+        <strong>{tr("No history yet")}</strong>
+        <small>{activity.complete ? tr("Nothing to show") : tr("Messages are still being read…")}</small>
       {:else}
-        <strong>Loading the history…</strong>
+        <strong>{tr("Loading the history…")}</strong>
       {/if}
     </div>
-    {#if activity && !activity.complete}<span class="reading" title="Older messages are still being read">reading older…</span>{/if}
-    <button class="close" onclick={onClose} aria-label="Close the timeline"><X size={18} /></button>
+    {#if activity && !activity.complete}<span class="reading" title={tr("Older messages are still being read")}>{tr("reading older…")}</span>{/if}
+    <button class="close" onclick={onClose} aria-label={tr("Close the timeline")}><X size={18} /></button>
   </div>
 
   <div class="viewport">
@@ -154,7 +155,7 @@
       onwheel={() => (touched = true)}
       role="slider"
       tabindex="0"
-      aria-label="Chat history by day"
+      aria-label={tr("Chat history by day")}
       aria-valuemin={0}
       aria-valuemax={Math.max(0, days.length - 1)}
       aria-valuenow={centre}

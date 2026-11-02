@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { setPermission, type RoomDetails } from "$lib/backend";
   import { PERMISSION_LABELS, can } from "$lib/roles";
   import Page from "./Page.svelte";
@@ -20,13 +21,13 @@
   const options = (key: string) =>
     key === "users_default"
       ? [
-          { power: 0, label: "Member" },
-          { power: 50, label: "Moderator" },
+          { power: 0, label: tr("Member") },
+          { power: 50, label: tr("Moderator") },
         ]
       : [
-          { power: 0, label: "Everyone" },
-          { power: 50, label: "Moderators" },
-          { power: 100, label: "Admins" },
+          { power: 0, label: tr("Everyone") },
+          { power: 50, label: tr("Moderators") },
+          { power: 100, label: tr("Admins") },
         ];
 
   async function change(key: string, power: number) {
@@ -46,9 +47,9 @@
   }
 </script>
 
-<Page title="Roles & permissions" {onClose}>
+<Page title={tr("Roles & permissions")} {onClose}>
   <p class="m-hint">
-    {editable ? "Admins can always do everything. Moderators have what you allow them below." : "Only admins can change these."}
+    {editable ? tr("Admins can always do everything. Moderators have what you allow them below.") : tr("Only admins can change these.")}
   </p>
   {#each shown as [key, label] (key)}
     {@const value = levels[key] ?? 50}
@@ -57,7 +58,7 @@
       <span class="m-text"><span>{label}</span></span>
       <select class="m-select" disabled={!editable || busy === key || value > room.my_power} value={value} onchange={(e) => change(key, Number(e.currentTarget.value))}>
         {#each opts as o (o.power)}<option value={o.power} disabled={o.power > room.my_power}>{o.label}</option>{/each}
-        {#if !opts.some((o) => o.power === value)}<option value={value}>Level {value}</option>{/if}
+        {#if !opts.some((o) => o.power === value)}<option value={value}>{tr("Level {value}", { value: value })}</option>{/if}
       </select>
     </div>
   {/each}

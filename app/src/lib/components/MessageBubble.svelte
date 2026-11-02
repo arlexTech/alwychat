@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import FileText from "@lucide/svelte/icons/file-text";
   import Download from "@lucide/svelte/icons/download";
   import Pin from "@lucide/svelte/icons/pin";
@@ -13,11 +14,11 @@
   import Reply from "@lucide/svelte/icons/reply";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
-  import { fade, scale } from "svelte/transition";
+  import { fade, scale, slide } from "svelte/transition";
   import { isAndroid, openExternal, retrySend, type MessageEntry } from "$lib/backend";
   import MapPin from "@lucide/svelte/icons/map-pin";
   import { liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
-  import { clockTime } from "$lib/format";
+  import { clockTime, messageStamp } from "$lib/format";
   import { eventMediaUrl } from "$lib/media";
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
@@ -49,6 +50,7 @@
     onThread,
     onForward,
     album = null,
+    wide = false,
   }: {
     msg: MessageEntry;
     /** First / last of a run of messages from the same sender: drives corners, name and avatar. */
@@ -81,7 +83,11 @@
     onPin?: (pin: boolean) => void;
     /** Several photos drawn as one grid; `msg` is the first. */
     album?: MessageEntry[] | null;
+    /** Wide chat (computer): Discord layout, everyone on the left under avatar, name and time,
+     * no bubbles, so our messages aren't far from the others'. */
+    wide?: boolean;
   } = $props();
+  const own = $derived(msg.is_own && !wide);
 
   /** Grid cells: up to 4 photos, the last one showing "+N" when there are more. */
   const ALBUM_CELLS = 4;
@@ -129,11 +135,11 @@
       case "poll":
         return "";
       case "redacted":
-        return "Message deleted";
+        return tr("Message deleted");
       case "unable_to_decrypt":
-        return "🔒 Can't read this message yet";
+        return tr("🔒 Can't read this message yet");
       case "unsupported":
-        return "Unsupported message";
+        return tr("Unsupported message");
     }
   });
 
@@ -241,6 +247,14 @@
     tapTimer = setTimeout(action, 260);
   }
 
+  // A tap (or click) on the bubble itself shows the message's date and time under it.
+  let timeShown = $state(false);
+  function toggleTime(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    if (swiping || target.closest("a, button, input, video, audio, [data-mx-spoiler]:not(.revealed)")) return;
+    afterTap(() => (timeShown = !timeShown));
+  }
+
   /** Opens below the bubble when there's no room above it. */
   let anyBelow = $state(false);
   function openAnyEmoji(event: MouseEvent) {
@@ -280,15 +294,28 @@
   }
 </script>
 
-<div class="row" class:own={msg.is_own} class:first class:last>
-  {#if showSender && !msg.is_own}
+<div class="row" class:own class:wide class:mine={msg.is_own} class:first class:last>
+  {#if wide}
+    <div class="avatar-slot">
+      {#if first}
+        <Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={36} />
+      {:else}
+        <time class="gutter-time">{clockTime(msg.timestamp)}</time>
+      {/if}
+    </div>
+  {:else if showSender && !msg.is_own}
     <div class="avatar-slot">
       {#if last}<Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={28} />{/if}
     </div>
   {/if}
 
   <div class="stack">
-    {#if showSender && !msg.is_own && first}
+    {#if wide && first}
+      <div class="head">
+        <strong>{msg.sender_name}</strong>
+        <time title={messageStamp(msg.timestamp)}>{messageStamp(msg.timestamp)}</time>
+      </div>
+    {:else if showSender && !msg.is_own && first}
       <span class="sender">{msg.sender_name}</span>
     {/if}
 
@@ -296,7 +323,7 @@
       {#if swipeX > 0}
         <span class="swipe-reply" style:opacity={Math.min(1, swipeX / SWIPE_REPLY)} style:scale={swipeX >= SWIPE_REPLY ? 1.15 : 0.8 + (swipeX / SWIPE_REPLY) * 0.2}><Reply size={16} /></span>
       {/if}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
       <div
         class="bubble"
         class:big
@@ -307,6 +334,7 @@
         class:sending={msg.send_state === "sending"}
         class:failed={msg.send_state === "failed"}
         title={clockTime(msg.timestamp)}
+        onclick={toggleTime}
         ondblclick={() => (clearTimeout(tapTimer), canReact && react(quickReaction))}
         class:swiping
         style:transform={swipeX ? `translateX(${swipeX}px)` : undefined}
@@ -319,14 +347,14 @@
         {#if msg.reply_to}
           <button class="quote" onclick={() => onJumpTo(msg.reply_to!.event_id)}>
             <strong>{msg.reply_to.sender_name ?? "…"}</strong>
-            <span>{msg.reply_to.text ?? "Loading…"}</span>
+            <span>{msg.reply_to.text ?? tr("Loading…")}</span>
           </button>
         {/if}
 
         {#if album && album.length > 1}
           <div class="album" class:two={albumMedia.length === 2} class:three={albumMedia.length === 3} style:width="{box?.w}px" style:aspect-ratio="{box?.w} / {box?.h}">
             {#each albumMedia.slice(0, ALBUM_CELLS) as media, i (media)}
-              <button class="cell" onclick={() => afterTap(() => onOpenMedia(i))} aria-label="Open photo {i + 1} of {albumMedia.length}">
+              <button class="cell" onclick={() => afterTap(() => onOpenMedia(i))} aria-label={tr("Open photo {value} of {length}", { value: i + 1, length: albumMedia.length })}>
                 <img src={eventMediaUrl(media, true)} alt="" decoding="async" loading="lazy" />
                 {#if i === ALBUM_CELLS - 1 && albumMedia.length > ALBUM_CELLS}
                   <span class="more">+{albumMedia.length - ALBUM_CELLS}</span>
@@ -341,10 +369,10 @@
             style:width="{box.w}px"
             style:aspect-ratio="{box.w} / {box.h}"
             onclick={() => c.kind !== "sticker" && afterTap(() => onOpenMedia(0))}
-            aria-label={c.kind === "video" ? "Play video" : c.kind === "image" ? "Open photo" : c.body}
+            aria-label={c.kind === "video" ? tr("Play video") : c.kind === "image" ? tr("Open photo") : c.body}
           >
             {#if mediaFailed}
-              <span class="media-error">{c.kind === "video" ? "🎬" : "📷"} Couldn't load</span>
+              <span class="media-error">{tr("{value} Couldn't load", { value: c.kind === "video" ? "🎬" : "📷" })}</span>
             {:else if c.kind !== "video" || c.has_thumbnail}
               <img
                 src={eventMediaUrl(c.media, true)}
@@ -361,30 +389,30 @@
           </button>
         {:else if c.kind === "location"}
           {@const at = geoPoint(c.geo_uri)}
-          <button class="location" onclick={() => at && afterTap(() => openMap(at))} title="Open in maps">
+          <button class="location" onclick={() => at && afterTap(() => openMap(at))} title={tr("Open in maps")}>
             <span class="file-icon"><MapPin size={26} /></span>
             <span class="file-meta">
-              <strong>{c.description && !c.description.startsWith("Location: geo:") && !c.description.startsWith("geo:") ? c.description : "Location"}</strong>
-              <small>{at ? `${at.lat.toFixed(5)}, ${at.lon.toFixed(5)} · Open in maps` : c.geo_uri}</small>
+              <strong>{c.description && !c.description.startsWith("Location: geo:") && !c.description.startsWith("geo:") ? c.description : tr("Location")}</strong>
+              <small>{at ? tr("{value}, {value2} · Open in maps", { value: at.lat.toFixed(5), value2: at.lon.toFixed(5) }) : c.geo_uri}</small>
             </span>
           </button>
         {:else if c.kind === "live_location"}
           {@const at = c.geo_uri ? geoPoint(c.geo_uri) : null}
           {@const live = c.is_live && c.ends_at > Date.now()}
           <div class="live-location">
-            <button class="location" disabled={!at} onclick={() => at && afterTap(() => openMap(at))} title="Open in maps">
+            <button class="location" disabled={!at} onclick={() => at && afterTap(() => openMap(at))} title={tr("Open in maps")}>
               <span class="file-icon" class:live><MapPin size={26} /></span>
               <span class="file-meta">
-                <strong>{live ? "Live location" : "Live location ended"}</strong>
+                <strong>{live ? tr("Live location") : tr("Live location ended")}</strong>
                 <small>
-                  {#if !at}Waiting for the first position…
-                  {:else if live}{c.ends_at - Date.now() > 20 * 3600_000 ? "Until stopped" : `Until ${untilTime(c.ends_at)}`}{c.updated ? ` · updated ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps
-                  {:else}Last position{c.updated ? ` at ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""} · Open in maps{/if}
+                  {#if !at}{tr("Waiting for the first position…")}
+                  {:else if live}{tr("{value}{value2} · Open in maps", { value: c.ends_at - Date.now() > 20 * 3600_000 ? "Until stopped" : `Until ${untilTime(c.ends_at)}`, value2: c.updated ? ` · updated ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "" })}
+                  {:else}{tr("Last position{value} · Open in maps", { value: c.updated ? ` at ${new Date(c.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "" })}{/if}
                 </small>
               </span>
             </button>
             {#if live && msg.is_own}
-              <button class="stop-live" onclick={() => liveLocation.stop(roomId)}>Stop sharing</button>
+              <button class="stop-live" onclick={() => liveLocation.stop(roomId)}>{tr("Stop sharing")}</button>
             {/if}
           </div>
         {:else if c.kind === "poll"}
@@ -392,11 +420,11 @@
         {:else if c.kind === "audio"}
           <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} />
         {:else if c.kind === "file"}
-          <button class="file" onclick={() => afterTap(onSaveFile)} title="Open or save">
+          <button class="file" onclick={() => afterTap(onSaveFile)} title={tr("Open or save")}>
             <span class="file-icon"><FileText size={26} /></span>
             <span class="file-meta">
               <strong>{c.filename}</strong>
-              <small>{c.size != null ? `${formatSize(c.size)} · ` : ""}Tap to open or save</small>
+              <small>{tr("{value}Tap to open or save", { value: c.size != null ? `${formatSize(c.size)} · ` : "" })}</small>
             </span>
           </button>
         {/if}
@@ -411,23 +439,23 @@
           <LinkPreview url={c.link} />
         {/if}
         {#if c.kind === "unable_to_decrypt"}
-          <button class="unlock" onclick={onUnlock}>Unlock</button>
+          <button class="unlock" onclick={onUnlock}>{tr("Unlock")}</button>
         {/if}
         {#if msg.is_edited}
-          <button class="edited" onclick={onHistory} disabled={!remote}>(edited)</button>
+          <button class="edited" onclick={onHistory} disabled={!remote}>{tr("(edited)")}</button>
         {/if}
       </div>
 
       {#if canReact || msg.can_reply || hasMenu}
         <div class="actions" class:open={menuOpen || pickerOpen}>
           {#if canReact}
-            <button onclick={() => ((pickerOpen = !pickerOpen), (menuOpen = false), (anyEmoji = false))} aria-label="React"><SmilePlus size={18} /></button>
+            <button onclick={() => ((pickerOpen = !pickerOpen), (menuOpen = false), (anyEmoji = false))} aria-label={tr("React")}><SmilePlus size={18} /></button>
           {/if}
           {#if msg.can_reply}
-            <button onclick={onReply} aria-label="Reply"><Reply size={18} /></button>
+            <button onclick={onReply} aria-label={tr("Reply")}><Reply size={18} /></button>
           {/if}
           {#if hasMenu}
-            <button onclick={() => ((menuOpen = !menuOpen), (pickerOpen = false))} aria-label="More"><Ellipsis size={18} /></button>
+            <button onclick={() => ((menuOpen = !menuOpen), (pickerOpen = false))} aria-label={tr("More")}><Ellipsis size={18} /></button>
           {/if}
         </div>
       {/if}
@@ -442,7 +470,7 @@
           {#each QUICK as key (key)}
             <button onclick={() => react(key)}>{key}</button>
           {/each}
-          <button class="more" class:on={anyEmoji} onclick={openAnyEmoji} aria-label="Other reaction"><Plus size={20} /></button>
+          <button class="more" class:on={anyEmoji} onclick={openAnyEmoji} aria-label={tr("Other reaction")}><Plus size={20} /></button>
         </div>
         {#if anyEmoji}
           <div class="any-emoji" class:below={anyBelow} transition:scale={{ duration: 140, start: 0.9 }}><EmojiPicker onPick={react} /></div>
@@ -451,20 +479,20 @@
       {#if menuOpen}
         <div class="menu" transition:fade={{ duration: 100 }}>
           {#if canSaveToGallery}
-            <button onclick={() => pick(onSaveToGallery)}><Download size={16} />{albumSize ? `Save all (${albumSize})` : "Save"}</button>
+            <button onclick={() => pick(onSaveToGallery)}><Download size={16} />{albumSize ? tr("Save all ({albumSize})", { albumSize: albumSize }) : tr("Save")}</button>
           {/if}
           {#if pinned !== null && remote && onPin}
             <button onclick={() => pick(() => onPin(!pinned))}>
-              {#if pinned}<PinOff size={16} />Unpin{:else}<Pin size={16} />Pin{/if}
+              {#if pinned}<PinOff size={16} />{tr("Unpin")}{:else}<Pin size={16} />{tr("Pin")}{/if}
             </button>
           {/if}
           {#if onThread && remote && msg.can_reply}
-            <button onclick={() => pick(onThread)}><MessagesSquare size={16} />Reply in thread</button>
+            <button onclick={() => pick(onThread)}><MessagesSquare size={16} />{tr("Reply in thread")}</button>
           {/if}
-          {#if onForward}<button onclick={() => pick(onForward)}><Forward size={16} />Forward</button>{/if}
-          {#if msg.can_edit}<button onclick={() => pick(onEdit)}><Pencil size={16} />Edit</button>{/if}
-          {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}><History size={16} />Edit history</button>{/if}
-          {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}><Trash2 size={16} />Delete</button>{/if}
+          {#if onForward}<button onclick={() => pick(onForward)}><Forward size={16} />{tr("Forward")}</button>{/if}
+          {#if msg.can_edit}<button onclick={() => pick(onEdit)}><Pencil size={16} />{tr("Edit")}</button>{/if}
+          {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}><History size={16} />{tr("Edit history")}</button>{/if}
+          {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}><Trash2 size={16} />{tr("Delete")}</button>{/if}
         </div>
       {/if}
     </div>
@@ -483,7 +511,7 @@
       {@const t = msg.thread}
       <button class="thread" onclick={onThread}>
         <MessagesSquare size={15} />
-        <strong>{t.replies} {t.replies === 1 ? "reply" : "replies"}</strong>
+        <strong>{trn(t.replies, "{n} reply", "{n} replies")}</strong>
         {#if t.latest_sender}
           <Avatar name={t.latest_sender} mxc={t.latest_avatar} size={16} />
           <span>{t.latest_text}</span>
@@ -491,16 +519,20 @@
       </button>
     {/if}
 
+    {#if timeShown}
+      <span class="when" transition:slide={{ duration: 140 }}>{messageStamp(msg.timestamp)}</span>
+    {/if}
+
     {#if msg.send_state === "failed"}
       <span class="status error">
-        Not sent ·
-        <button class="status-action" disabled={retrying} onclick={retry}>{retrying ? "Retrying…" : "Retry"}</button> ·
-        <button class="status-action" onclick={onDelete}>Delete</button>
+        {tr("Not sent ·")}
+        <button class="status-action" disabled={retrying} onclick={retry}>{retrying ? tr("Retrying…") : tr("Retry")}</button> ·
+        <button class="status-action" onclick={onDelete}>{tr("Delete")}</button>
       </span>
     {/if}
 
     {#if seenBy.length}
-      <div class="seen" title="Seen by {seenBy.map((r) => r.name).join(', ')}">
+      <div class="seen" title={tr("Seen by {value}", { value: seenBy.map((r) => r.name).join(', ') })}>
         {#each seenBy.slice(0, 5) as r (r.name)}
           <span in:scale={{ duration: 200, start: 0.4 }}><Avatar name={r.name} mxc={r.avatar} size={14} /></span>
         {/each}
@@ -1055,6 +1087,81 @@
   }
   .menu .danger {
     color: var(--danger);
+  }
+  .when {
+    padding: 2px 6px 4px;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .row.own .when {
+    align-self: flex-end;
+  }
+
+  /* Wide (Discord) layout. */
+  .row.wide {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 1px 20px;
+  }
+  .row.wide.first {
+    margin-top: 14px;
+  }
+  .row.wide:hover {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+  }
+  .wide .avatar-slot {
+    width: 36px;
+  }
+  .wide.first .avatar-slot {
+    padding-top: 2px;
+  }
+  .gutter-time {
+    display: block;
+    padding-top: 2px;
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    opacity: 0;
+  }
+  .row.wide:hover .gutter-time {
+    opacity: 1;
+  }
+  .wide .stack {
+    flex: 1;
+    max-width: min(860px, 100%);
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 1px;
+  }
+  .head strong {
+    font-size: 0.95rem;
+  }
+  .mine .head strong {
+    color: var(--accent);
+  }
+  .head time {
+    color: var(--muted);
+    font-size: 0.72rem;
+  }
+  .wide .bubble {
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+  }
+  .wide .bubble.has-media {
+    border-radius: 12px;
+  }
+  .wide .bubble.muted {
+    border: none;
+  }
+  .wide .bubble.big {
+    padding: 0;
   }
   .seen {
     display: flex;

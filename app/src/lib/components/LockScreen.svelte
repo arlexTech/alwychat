@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { unlockApp, unlockBiometric } from "$lib/backend";
@@ -19,8 +20,8 @@
       appLock.unlock();
       return null;
     }
-    if (r.result === "wait") return `Too many tries. Wait ${r.seconds} s`;
-    return "Wrong PIN";
+    if (r.result === "wait") return tr("Too many tries. Wait {seconds} s", { seconds: r.seconds });
+    return tr("Wrong PIN");
   }
 
   onMount(() => {
@@ -29,7 +30,7 @@
 </script>
 
 <div class="lock" out:fade={{ duration: 160 }}>
-  <PinPad title="AlwyChat is locked" hint="Enter your PIN" {biometry} onBiometric={biometric} onSubmit={submit} />
+  <PinPad title={tr("AlwyChat is locked")} hint="Enter your PIN" {biometry} onBiometric={biometric} onSubmit={submit} />
 </div>
 
 <style>

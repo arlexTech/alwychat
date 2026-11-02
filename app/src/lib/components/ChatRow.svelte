@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import BellOff from "@lucide/svelte/icons/bell-off";
   import Phone from "@lucide/svelte/icons/phone";
   import Pin from "@lucide/svelte/icons/pin";
@@ -30,8 +31,8 @@
   const draft = $derived(selected ? undefined : drafts.get(room.id));
   const preview = $derived.by(() => {
     const l = room.latest;
-    if (!l) return room.is_invite ? "Invitation" : "";
-    const who = l.is_own ? "You: " : l.sender_name ? `${l.sender_name}: ` : "";
+    if (!l) return room.is_invite ? tr("Invitation") : "";
+    const who = l.is_own ? tr("You: ") : l.sender_name ? `${l.sender_name}: ` : "";
     return who + l.text;
   });
 </script>
@@ -39,24 +40,24 @@
 <button class="row" class:selected class:unread class:muted={room.is_muted} data-room={room.id} {onclick} {oncontextmenu}>
   <span class="avatar">
     <Avatar name={room.name} mxc={room.avatar} size={52} saved={saved.is(room.id)} />
-    {#if room.is_dm && presence.online(room.dm_user)}<span class="online" title="Online"></span>{/if}
+    {#if room.is_dm && presence.online(room.dm_user)}<span class="online" title={tr("Online")}></span>{/if}
   </span>
   <div class="body">
     <div class="line">
-      {#if room.is_voice}<span class="icon" title="Voice channel"><Volume2 size={14} /></span>{/if}
+      {#if room.is_voice}<span class="icon" title={tr("Voice channel")}><Volume2 size={14} /></span>{/if}
       <span class="name">{room.name}</span>
       {#if room.is_dm && profiles.get(room.dm_user)?.status?.emoji}
         <span class="status-emoji" title={profiles.statusLabel(room.dm_user)}>{profiles.get(room.dm_user)?.status?.emoji}</span>
       {/if}
-      {#if room.in_call.length}<span class="icon in-call" title="{room.in_call.length} in the call"><Phone size={12} /> {room.in_call.length}</span>{/if}
-      {#if liveLocation.sharing(room.id)}<span class="icon live" title="You're sharing your live location here"><MapPin size={13} /></span>{/if}
-      {#if room.is_muted}<span class="icon" title="Muted"><BellOff size={13} /></span>{/if}
-      {#if room.is_favourite}<span class="icon" title="Pinned"><Pin size={13} /></span>{/if}
+      {#if room.in_call.length}<span class="icon in-call" title={tr("{length} in the call", { length: room.in_call.length })}><Phone size={12} /> {room.in_call.length}</span>{/if}
+      {#if liveLocation.sharing(room.id)}<span class="icon live" title={tr("You're sharing your live location here")}><MapPin size={13} /></span>{/if}
+      {#if room.is_muted}<span class="icon" title={tr("Muted")}><BellOff size={13} /></span>{/if}
+      {#if room.is_favourite}<span class="icon" title={tr("Pinned")}><Pin size={13} /></span>{/if}
       <span class="time">{shortTime(room.latest?.timestamp)}</span>
     </div>
     <div class="line">
       <span class="preview" class:sending={room.latest?.is_sending}
-        >{#if draft}<span class="draft">Draft:</span> {draft.text.replace(/\s+/g, " ")}{:else}{preview}{/if}</span
+        >{#if draft}<span class="draft">{tr("Draft:")}</span> {draft.text.replace(/\s+/g, " ")}{:else}{preview}{/if}</span
       >
       {#if room.unread_mentions > 0}
         <span class="badge mention">@</span>

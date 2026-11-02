@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cancelLogin, endSession, hasBackend, login, logout, onSessionEnded, restoreSession, type Account } from "$lib/backend";
@@ -21,7 +22,7 @@
       await endSession().catch(() => {});
       account = null;
       view = "signed-out";
-      error = "Your session ended. Please sign in again.";
+      error = tr("Your session ended. Please sign in again.");
     });
     try {
       account = await restoreSession();
@@ -65,34 +66,33 @@
   <ChatsScreen {account} onSignOut={signOut} />
 {:else}
 <main class:hidden={view === "loading" && !slow}>
-  <h1>AlwyChat</h1>
+  <h1>{tr("AlwyChat")}</h1>
 
   {#if !hasBackend}
     <p class="error">
-      This page is the app's interface only. Run <code>pnpm tauri dev</code> and use the AlwyChat
-      window (a web version comes later).
+      {tr("This page is the app's interface only. Run")} <code>pnpm tauri dev</code> {tr("and use the AlwyChat window (a web version comes later).")}
     </p>
   {/if}
 
   {#key view}
     <section in:fly={{ y: 12, duration: 250 }}>
       {#if view === "loading"}
-        {#if slow}<p class="muted" in:fade>Opening your chats…</p>{/if}
+        {#if slow}<p class="muted" in:fade>{tr("Opening your chats…")}</p>{/if}
       {:else if view === "signed-out"}
         <form onsubmit={signIn}>
-          <label for="server">Your server</label>
+          <label for="server">{tr("Your server")}</label>
           <div class="row">
             <input id="server" bind:value={server} autocapitalize="off" spellcheck="false" />
-            <button disabled={!hasBackend || !server.trim()}>Sign in</button>
+            <button disabled={!hasBackend || !server.trim()}>{tr("Sign in")}</button>
           </div>
-          <p class="muted">Your browser will open your server's sign-in page.</p>
+          <p class="muted">{tr("Your browser will open your server's sign-in page.")}</p>
         </form>
       {:else if view === "waiting"}
         <div class="waiting">
           <div class="spinner" aria-hidden="true"></div>
-          <p>Finish signing in in your browser…</p>
-          <p class="muted">This window will update by itself.</p>
-          <button class="ghost" onclick={cancelSignIn}>Cancel</button>
+          <p>{tr("Finish signing in in your browser…")}</p>
+          <p class="muted">{tr("This window will update by itself.")}</p>
+          <button class="ghost" onclick={cancelSignIn}>{tr("Cancel")}</button>
         </div>
       {/if}
     </section>

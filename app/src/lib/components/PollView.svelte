@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import Check from "@lucide/svelte/icons/check";
   import { endPoll, votePoll, type MessageContent } from "$lib/backend";
 
@@ -42,10 +43,10 @@
   }
 
   function footer() {
-    const people = `${poll.voters} ${poll.voters === 1 ? "vote" : "votes"}`;
-    if (poll.ended) return `Final results · ${people}`;
-    if (!poll.disclosed) return voted ? "Results will show when the poll ends" : "Results show when the poll ends";
-    return poll.max_selections > 1 ? `${people} · choose several` : people;
+    const people = trn(poll.voters, "{n} vote", "{n} votes");
+    if (poll.ended) return tr("Final results · {people}", { people: people });
+    if (!poll.disclosed) return voted ? tr("Results will show when the poll ends") : tr("Results show when the poll ends");
+    return poll.max_selections > 1 ? tr("{people} · choose several", { people: people }) : people;
   }
 </script>
 
@@ -71,7 +72,7 @@
   <div class="footer">
     <small>{footer()}</small>
     {#if poll.is_mine && !poll.ended && !pending}
-      <button class="end" onclick={end}>End poll</button>
+      <button class="end" onclick={end}>{tr("End poll")}</button>
     {/if}
   </div>
   {#if error}<small class="error">{error}</small>{/if}

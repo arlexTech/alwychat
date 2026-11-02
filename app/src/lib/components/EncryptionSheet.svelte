@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { fade, fly, scale } from "svelte/transition";
   import {
     acceptVerification,
@@ -54,25 +55,25 @@
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="backdrop" transition:fade={{ duration: 150 }} onclick={close}></div>
 <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="unlock-title" transition:fly={{ y: 24, duration: 220 }}>
-  <button class="close" onclick={close} aria-label="Close">×</button>
+  <button class="close" onclick={close} aria-label={tr("Close")}>×</button>
 
   {#if v?.state === "incoming"}
-    <h2 id="unlock-title">Verification request</h2>
-    <p><strong>{v.from}</strong> wants to verify this device.</p>
+    <h2 id="unlock-title">{tr("Verification request")}</h2>
+    <p><strong>{v.from}</strong> {tr("wants to verify this device.")}</p>
     <div class="buttons">
-      <button class="secondary" onclick={close}>Decline</button>
-      <button class="primary" disabled={busy} onclick={() => run(acceptVerification)}>Accept</button>
+      <button class="secondary" onclick={close}>{tr("Decline")}</button>
+      <button class="primary" disabled={busy} onclick={() => run(acceptVerification)}>{tr("Accept")}</button>
     </div>
   {:else if v?.state === "requested"}
-    <h2 id="unlock-title">Check your other device</h2>
-    <p>Open Element on a device where you're already signed in and accept the request.</p>
+    <h2 id="unlock-title">{tr("Check your other device")}</h2>
+    <p>{tr("Open Element on a device where you're already signed in and accept the request.")}</p>
     <div class="spinner"></div>
   {:else if v?.state === "ready"}
-    <h2 id="unlock-title">Getting the emoji ready…</h2>
+    <h2 id="unlock-title">{tr("Getting the emoji ready…")}</h2>
     <div class="spinner"></div>
   {:else if v?.state === "emojis"}
-    <h2 id="unlock-title">Do these emoji match?</h2>
-    <p>Compare them with the ones shown on your other device, in the same order.</p>
+    <h2 id="unlock-title">{tr("Do these emoji match?")}</h2>
+    <p>{tr("Compare them with the ones shown on your other device, in the same order.")}</p>
     <div class="emojis">
       {#each v.emojis as e, i (i)}
         <div class="emoji" in:scale={{ delay: i * 50, duration: 200, start: 0.5 }}>
@@ -82,21 +83,21 @@
       {/each}
     </div>
     <div class="buttons">
-      <button class="secondary" disabled={busy} onclick={() => run(() => confirmEmojis(false))}>They don't match</button>
-      <button class="primary" disabled={busy} onclick={() => run(() => confirmEmojis(true))}>They match</button>
+      <button class="secondary" disabled={busy} onclick={() => run(() => confirmEmojis(false))}>{tr("They don't match")}</button>
+      <button class="primary" disabled={busy} onclick={() => run(() => confirmEmojis(true))}>{tr("They match")}</button>
     </div>
   {:else if v?.state === "confirmed"}
-    <h2 id="unlock-title">Waiting for your other device…</h2>
+    <h2 id="unlock-title">{tr("Waiting for your other device…")}</h2>
     <div class="spinner"></div>
-  {:else if v?.state === "done" || (status && !encryption.locked)}
-    <h2 id="unlock-title">You're all set ✨</h2>
-    <p>This device is verified. Older messages will unlock as their keys arrive.</p>
+  {:else if v?.state === "done" || (status && !encryption.locked && !encryption.backupMissing)}
+    <h2 id="unlock-title">{tr("You're all set ✨")}</h2>
+    <p>{tr("This device is verified. Older messages will unlock as their keys arrive.")}</p>
     <div class="buttons">
-      <button class="primary" onclick={close}>Done</button>
+      <button class="primary" onclick={close}>{tr("Done")}</button>
     </div>
   {:else if mode === "key"}
-    <h2 id="unlock-title">Enter your recovery key</h2>
-    <p>The key (or passphrase) you saved when you set up recovery in Element.</p>
+    <h2 id="unlock-title">{tr("Enter your recovery key")}</h2>
+    <p>{tr("The key (or passphrase) you saved when you set up recovery in Element.")}</p>
     <form onsubmit={submitKey}>
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
@@ -109,16 +110,16 @@
         autofocus
       ></textarea>
       <div class="buttons">
-        <button type="button" class="secondary" onclick={() => (mode = "choose")}>Back</button>
-        <button class="primary" disabled={busy || !key.trim()}>{busy ? "Unlocking…" : "Unlock"}</button>
+        <button type="button" class="secondary" onclick={() => (mode = "choose")}>{tr("Back")}</button>
+        <button class="primary" disabled={busy || !key.trim()}>{busy ? tr("Unlocking…") : tr("Unlock")}</button>
       </div>
     </form>
   {:else}
-    <h2 id="unlock-title">Unlock your messages</h2>
+    <h2 id="unlock-title">{tr("Unlock your messages")}</h2>
     {#if v?.state === "cancelled"}
-      <p class="error">Verification stopped: {v.reason}</p>
+      <p class="error">{tr("Verification stopped: {reason}", { reason: v.reason })}</p>
     {/if}
-    <p>This device can't read older encrypted messages yet. Choose how to unlock it:</p>
+    <p>{tr("This device can't read older encrypted messages yet. Choose how to unlock it:")}</p>
     <div class="options">
       <button
         class="option"
@@ -126,12 +127,12 @@
         onclick={() => run(verifyThisDevice)}
       >
         <span class="icon">📱</span>
-        <span><strong>Use another device</strong><small>Compare emoji with Element</small></span>
+        <span><strong>{tr("Use another device")}</strong><small>{tr("Compare emoji with Element")}</small></span>
       </button>
       {#if status?.recovery !== "disabled"}
         <button class="option" disabled={busy} onclick={() => (mode = "key")}>
           <span class="icon">🔑</span>
-          <span><strong>Enter recovery key</strong><small>The key you saved when setting up recovery</small></span>
+          <span><strong>{tr("Enter recovery key")}</strong><small>{tr("The key you saved when setting up recovery")}</small></span>
         </button>
       {/if}
     </div>

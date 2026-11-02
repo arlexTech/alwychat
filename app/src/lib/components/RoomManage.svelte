@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import Bell from "@lucide/svelte/icons/bell";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Flag from "@lucide/svelte/icons/flag";
@@ -89,7 +90,7 @@
 
   // Spaces this chat could be open to: its parents we know of, or the one it already allows.
   const accessSpaces = $derived(room.allow_spaces.length ? room.allow_spaces : room.parent_spaces);
-  const spaceName = (id: string) => spaces.list.find((s) => s.id === id)?.name ?? "the space";
+  const spaceName = (id: string) => spaces.list.find((s) => s.id === id)?.name ?? tr("the space");
 
   async function startLeave() {
     leaveAlso = [];
@@ -115,10 +116,10 @@
     `https://matrix.to/#/${encodeURIComponent(room.alias ?? room.id)}${room.alias ? "" : `?via=${room.id.split(":")[1]}`}`,
   );
   const historyLabels: Record<string, string> = {
-    shared: "Members (all of it)",
-    invited: "Members, since they were invited",
-    joined: "Members, since they joined",
-    world_readable: "Anyone",
+    shared: tr("Members (all of it)"),
+    invited: tr("Members, since they were invited"),
+    joined: tr("Members, since they joined"),
+    world_readable: tr("Anyone"),
   };
   const kind = $derived(room.is_space ? "space" : room.is_dm ? "chat" : "group");
 </script>
@@ -133,78 +134,78 @@
       onPicked={(data) => act(() => setRoomAvatar(room.id, data))}
     />
     {#if editing}
-      <input class="m-input" bind:value={editing.name} placeholder="Name" maxlength="80" disabled={!may("m.room.name")} />
+      <input class="m-input" bind:value={editing.name} placeholder={tr("Name")} maxlength="80" disabled={!may("m.room.name")} />
       <textarea class="m-input" bind:value={editing.topic} placeholder="Topic" maxlength="500" disabled={!may("m.room.topic")}></textarea>
       <div class="m-buttons">
-        <button class="m-btn plain" onclick={() => (editing = null)}>Cancel</button>
-        <button class="m-btn" disabled={busy} onclick={saveText}>Save</button>
+        <button class="m-btn plain" onclick={() => (editing = null)}>{tr("Cancel")}</button>
+        <button class="m-btn" disabled={busy} onclick={saveText}>{tr("Save")}</button>
       </div>
     {:else}
       <h2>{room.name}</h2>
       {#if room.topic}<p class="topic">{room.topic}</p>{/if}
       <p class="meta">
-        {#if room.encrypted}<Lock size={13} /> Encrypted ·{/if}
-        {room.members} {room.members === 1 ? "member" : "members"}
+        {#if room.encrypted}<Lock size={13} /> {tr("Encrypted ·")}{/if}
+        {trn(room.members, "{n} member", "{n} members")}
       </p>
       {#if !room.is_dm && (may("m.room.name") || may("m.room.topic"))}
-        <button class="edit" onclick={() => (editing = { name: room.name, topic: room.topic ?? "" })}><Pencil size={14} /> Edit name and topic</button>
+        <button class="edit" onclick={() => (editing = { name: room.name, topic: room.topic ?? "" })}><Pencil size={14} /> {tr("Edit name and topic")}</button>
       {/if}
     {/if}
   </div>
 {:else}
   {@const all = part === "body"}
   {#if (all || part === "people") && !room.is_dm}
-    {#if all}<h3 class="m-section">People</h3>{/if}
+    {#if all}<h3 class="m-section">{tr("People")}</h3>{/if}
     <button class="m-row" onclick={() => (page = "members")}>
-      <span class="m-icon"><Users size={20} /></span><span class="m-text"><strong>Members</strong></span>
+      <span class="m-icon"><Users size={20} /></span><span class="m-text"><strong>{tr("Members")}</strong></span>
       <span class="m-end">{room.members}</span><ChevronRight size={18} />
     </button>
     {#if may("invite")}
       <button class="m-row" onclick={() => (page = "invite")}>
-        <span class="m-icon"><UserPlus size={20} /></span><span class="m-text"><strong>Invite people</strong></span>
+        <span class="m-icon"><UserPlus size={20} /></span><span class="m-text"><strong>{tr("Invite people")}</strong></span>
       </button>
     {/if}
     {#if room.join_rule === "public" || room.alias}
       <button class="m-row" onclick={() => navigator.clipboard?.writeText(link).then(() => (notice = "Link copied"))}>
-        <span class="m-icon"><Link size={20} /></span><span class="m-text"><strong>Copy link</strong><small>{link}</small></span>
+        <span class="m-icon"><Link size={20} /></span><span class="m-text"><strong>{tr("Copy link")}</strong><small>{link}</small></span>
       </button>
     {/if}
   {/if}
 
   {#if (all || part === "notify") && !room.is_space}
-    {#if all}<h3 class="m-section">Notifications</h3>{/if}
+    {#if all}<h3 class="m-section">{tr("Notifications")}</h3>{/if}
     <div class="m-seg">
-      <button class:on={!room.notify_custom} onclick={() => act(() => setNotifyMode(room.id, "default"))}>Default</button>
-      <button class:on={room.notify_custom && room.notify === "all"} onclick={() => act(() => setNotifyMode(room.id, "all"))}>All</button>
-      <button class:on={room.notify_custom && room.notify === "mentions"} onclick={() => act(() => setNotifyMode(room.id, "mentions"))}>Mentions</button>
-      <button class:on={room.notify_custom && room.notify === "mute"} onclick={() => act(() => setNotifyMode(room.id, "mute"))}>Off</button>
+      <button class:on={!room.notify_custom} onclick={() => act(() => setNotifyMode(room.id, "default"))}>{tr("Default")}</button>
+      <button class:on={room.notify_custom && room.notify === "all"} onclick={() => act(() => setNotifyMode(room.id, "all"))}>{tr("All")}</button>
+      <button class:on={room.notify_custom && room.notify === "mentions"} onclick={() => act(() => setNotifyMode(room.id, "mentions"))}>{tr("Mentions")}</button>
+      <button class:on={room.notify_custom && room.notify === "mute"} onclick={() => act(() => setNotifyMode(room.id, "mute"))}>{tr("Off")}</button>
     </div>
     <p class="m-hint"><Bell size={12} />
-      {room.notify === "all" ? "Every message notifies you." : room.notify === "mentions" ? "Only mentions and your keywords notify you." : "No notifications or unread badge."}
-      {#if !room.notify_custom}(Your default for {room.is_dm ? "1:1 chats" : "groups"}.){/if}
+      {room.notify === "all" ? tr("Every message notifies you.") : room.notify === "mentions" ? tr("Only mentions and your keywords notify you.") : tr("No notifications or unread badge.")}
+      {#if !room.notify_custom}{tr("(Your default for {value}.)", { value: room.is_dm ? "1:1 chats" : "groups" })}{/if}
     </p>
   {/if}
 
   {#if (all || part === "privacy") && !room.is_dm}
-    <h3 class="m-section">Privacy</h3>
+    <h3 class="m-section">{tr("Privacy")}</h3>
     <div class="m-row">
-      <span class="m-text"><span>Who can join</span></span>
+      <span class="m-text"><span>{tr("Who can join")}</span></span>
       <select
         class="m-select"
         disabled={busy || !may("m.room.join_rules")}
         value={room.join_rule}
         onchange={(e) => act(() => setJoinRule(room.id, e.currentTarget.value, accessSpaces))}
       >
-        <option value="invite">Invited only</option>
-        {#if accessSpaces.length}<option value="restricted">Members of {spaceName(accessSpaces[0])}</option>{/if}
-        <option value="knock">Ask to join</option>
-        <option value="public">Anyone with the link</option>
+        <option value="invite">{tr("Invited only")}</option>
+        {#if accessSpaces.length}<option value="restricted">{tr("Members of {spaceName}", { spaceName: spaceName(accessSpaces[0]) })}</option>{/if}
+        <option value="knock">{tr("Ask to join")}</option>
+        <option value="public">{tr("Anyone with the link")}</option>
         {#if !["invite", "restricted", "knock", "public"].includes(room.join_rule)}<option value={room.join_rule}>{room.join_rule}</option>{/if}
       </select>
     </div>
     {#if !room.is_space}
       <div class="m-row">
-        <span class="m-text"><span>Who can read the history</span></span>
+        <span class="m-text"><span>{tr("Who can read the history")}</span></span>
         <select
           class="m-select"
           disabled={busy || !may("m.room.history_visibility")}
@@ -218,16 +219,16 @@
   {/if}
 
   {#if (all || part === "privacy") && !room.is_space}
-    <h3 class="m-section">Security</h3>
+    <h3 class="m-section">{tr("Security")}</h3>
     {#if room.encrypted}
       <div class="m-row">
         <span class="m-icon"><ShieldCheck size={20} /></span>
-        <span class="m-text"><strong>End-to-end encrypted</strong><small>Messages can only be read by the people in this {kind}.</small></span>
+        <span class="m-text"><strong>{tr("End-to-end encrypted")}</strong><small>{tr("Messages can only be read by the people in this {kind}.", { kind: kind })}</small></span>
       </div>
     {:else}
       <button class="m-row" disabled={!may("m.room.encryption")} onclick={() => (confirm = "encrypt")}>
         <span class="m-icon"><Lock size={20} /></span>
-        <span class="m-text"><strong>Turn on encryption</strong><small>Not encrypted. Once on, it can't be turned off.</small></span>
+        <span class="m-text"><strong>{tr("Turn on encryption")}</strong><small>{tr("Not encrypted. Once on, it can't be turned off.")}</small></span>
       </button>
     {/if}
   {/if}
@@ -235,49 +236,49 @@
   {#if (all || part === "privacy") && !room.is_dm}
     <button class="m-row" onclick={() => (page = "roles")}>
       <span class="m-icon"><ShieldCheck size={20} /></span>
-      <span class="m-text"><strong>Roles & permissions</strong><small>{may("m.room.power_levels") ? "Who can invite, remove, change settings…" : "See who can do what"}</small></span>
+      <span class="m-text"><strong>{tr("Roles & permissions")}</strong><small>{may("m.room.power_levels") ? tr("Who can invite, remove, change settings…") : tr("See who can do what")}</small></span>
       <ChevronRight size={18} />
     </button>
   {/if}
 
   {#if all || part === "leave"}
-  {#if all}<h3 class="m-section">Leave</h3>{/if}
+  {#if all}<h3 class="m-section">{tr("Leave")}</h3>{/if}
   <button class="m-row danger" onclick={startLeave}>
-    <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>Leave {kind}</strong></span>
+    <span class="m-icon"><LogOut size={20} /></span><span class="m-text"><strong>{tr("Leave {kind}", { kind: kind })}</strong></span>
   </button>
   <button class="m-row danger" onclick={() => (confirm = "report")}>
-    <span class="m-icon"><Flag size={20} /></span><span class="m-text"><strong>Report {kind}</strong><small>To your server's admins</small></span>
+    <span class="m-icon"><Flag size={20} /></span><span class="m-text"><strong>{tr("Report {kind}", { kind: kind })}</strong><small>{tr("To your server's admins")}</small></span>
   </button>
   {/if}
 
   {#if confirm}
     <div class="confirm">
       {#if confirm === "leave"}
-        <p><strong>Leave {room.name}?</strong></p>
+        <p><strong>{tr("Leave {name}?", { name: room.name })}</strong></p>
         <p class="m-hint">
-          {room.join_rule === "public" ? "You can join again later." : "You'll need a new invite to come back."}
+          {room.join_rule === "public" ? tr("You can join again later.") : tr("You'll need a new invite to come back.")}
         </p>
         {#if leaveAlso.length}
-          <p class="m-hint">Also leave its chats:</p>
+          <p class="m-hint">{tr("Also leave its chats:")}</p>
           {#each leaveAlso as r (r.id)}
             <label class="m-row"><span class="m-text"><span>{r.name}</span></span><input type="checkbox" bind:checked={r.on} /></label>
           {/each}
         {/if}
       {:else if confirm === "encrypt"}
-        <p><strong>Turn on encryption?</strong></p>
-        <p class="m-hint">It can't be turned off. Bots, bridges and people who join later may not be able to read older messages.</p>
+        <p><strong>{tr("Turn on encryption?")}</strong></p>
+        <p class="m-hint">{tr("It can't be turned off. Bots, bridges and people who join later may not be able to read older messages.")}</p>
       {:else}
-        <p><strong>Report {room.name}?</strong></p>
-        <input class="m-input" bind:value={reason} placeholder="What's wrong?" />
+        <p><strong>{tr("Report {name}?", { name: room.name })}</strong></p>
+        <input class="m-input" bind:value={reason} placeholder={tr("What's wrong?")} />
       {/if}
       <div class="m-buttons">
-        <button class="m-btn plain" onclick={() => (confirm = null)}>Cancel</button>
+        <button class="m-btn plain" onclick={() => (confirm = null)}>{tr("Cancel")}</button>
         {#if confirm === "leave"}
-          <button class="m-btn danger" disabled={busy} onclick={leave}>Leave</button>
+          <button class="m-btn danger" disabled={busy} onclick={leave}>{tr("Leave")}</button>
         {:else if confirm === "encrypt"}
-          <button class="m-btn" disabled={busy} onclick={() => act(() => enableRoomEncryption(room.id), "Encryption is on").then(() => (confirm = null))}>Turn on</button>
+          <button class="m-btn" disabled={busy} onclick={() => act(() => enableRoomEncryption(room.id), "Encryption is on").then(() => (confirm = null))}>{tr("Turn on")}</button>
         {:else}
-          <button class="m-btn danger" disabled={busy || !reason.trim()} onclick={() => act(() => reportRoom(room.id, reason), "Reported, thanks").then(() => ((confirm = null), (reason = "")))}>Report</button>
+          <button class="m-btn danger" disabled={busy || !reason.trim()} onclick={() => act(() => reportRoom(room.id, reason), "Reported, thanks").then(() => ((confirm = null), (reason = "")))}>{tr("Report")}</button>
         {/if}
       </div>
     </div>

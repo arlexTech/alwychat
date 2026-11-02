@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import FileSheet from "./FileSheet.svelte";
   import MessageActions, { type Actions } from "./MessageActions.svelte";
   import ForwardPage from "./ForwardPage.svelte";
@@ -134,8 +135,8 @@
       await recorder.start();
     } catch (e) {
       sendError = e instanceof DOMException && e.name === "NotAllowedError"
-        ? "AlwyChat isn't allowed to use the microphone"
-        : `Couldn't start recording: ${e}`;
+        ? tr("AlwyChat isn't allowed to use the microphone")
+        : tr("Couldn't start recording: {e}", { e: e });
     }
   }
 
@@ -143,7 +144,7 @@
     const recording = await recorder.stop();
     if (!recording) return;
     if (recording.durationMs < 800) {
-      sendError = "Too short: tap the microphone, speak, then send";
+      sendError = tr("Too short: tap the microphone, speak, then send");
       return;
     }
     sendingFiles = true;
@@ -236,6 +237,19 @@
     if (replyTo) return closeOnBack(() => (replyTo = null));
   });
   let scroller: HTMLDivElement;
+  // Discord layout when the chat is wide on a landscape screen (computer): bubbles left and
+  // right would be far apart.
+  let chatWidth = $state(0);
+  let landscape = $state(true);
+  const wide = $derived(chatWidth >= 760 && landscape);
+  $effect(() => {
+    const observer = new ResizeObserver(([entry]) => {
+      chatWidth = entry.contentRect.width;
+      landscape = innerWidth > innerHeight;
+    });
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  });
   // The composer is swapped out while recording a voice message, so this can change.
   let input = $state<HTMLTextAreaElement>() as HTMLTextAreaElement;
 
@@ -557,7 +571,7 @@
   }
 
   function onDragOver(event: DragEvent) {
-    if (!event.dataTransfer?.types.includes("Files")) return;
+    if (!event.dataTransfer?.types.includes(tr("Files"))) return;
     event.preventDefault();
     dragging = true;
   }
@@ -575,7 +589,7 @@
       await setChatMediaHd(room.id, hd);
     } catch (e) {
       chatHd = previous;
-      flash(`Couldn't save: ${e}`);
+      flash(tr("Couldn't save: {e}", { e: e }));
     }
   }
 
@@ -648,7 +662,7 @@
     const media = msgs.flatMap((m) =>
       m.content.kind === "image" || m.content.kind === "video" ? [m.content.media] : [],
     );
-    flash(media.length > 1 ? `Saving ${media.length} items…` : "Saving…");
+    flash(media.length > 1 ? trn(media.length, "Saving {n} item…", "Saving {n} items…") : tr("Saving…"));
     flash(await saveToGallery(media));
   }
 
@@ -657,9 +671,9 @@
     if (c.kind !== "file") return;
     try {
       const path = await saveMedia(c.media, false);
-      flash(`Saved to ${path.replace(/^\/home\/[^/]+/, "~")}`);
+      flash(tr("Saved to {value}", { value: path.replace(/^\/home\/[^/]+/, "~") }));
     } catch (e) {
-      flash(`Couldn't save: ${e}`);
+      flash(tr("Couldn't save: {e}", { e: e }));
     }
   }
 
@@ -672,12 +686,12 @@
   async function onFileAction(msg: MessageEntry, action: "open" | "save_as" | "downloads") {
     const c = msg.content;
     if (c.kind !== "file") return;
-    if (action === "open") flash("Opening…");
+    if (action === "open") flash(tr("Opening…"));
     try {
       const done = await fileAction(c.media, action);
       if (done) flash(done.replace(/^Saved to \/home\/[^/]+/, "Saved to ~"));
     } catch (e) {
-      flash(`Couldn't ${action === "open" ? "open" : "save"}: ${e}`);
+      flash(tr("Couldn't {value}: {e}", { value: action === "open" ? "open" : "save", e: e }));
     }
   }
 
@@ -787,7 +801,7 @@
       document.execCommand("copy");
       area.remove();
     }
-    flash("Copied");
+    flash(tr("Copied"));
   }
 
   function actionsFor(msg: MessageEntry, album: MessageEntry[] | null): Actions {
@@ -808,9 +822,9 @@
       thread: !thread && remote && msg.can_reply ? () => (threadRoot = msg.item_id) : undefined,
       pin: chat.pins.can_pin && remote ? { pinned, toggle: () => setPin(msg.item_id, !pinned) } : undefined,
       save: visual
-        ? { label: items.length > 1 ? `Save all (${items.length})` : "Save to gallery", run: () => saveVisualMedia(items) }
+        ? { label: items.length > 1 ? tr("Save all ({count})", { count: items.length }) : tr("Save to gallery"), run: () => saveVisualMedia(items) }
         : c.kind === "file"
-          ? { label: "Save", run: () => saveFile(msg) }
+          ? { label: tr("Save"), run: () => saveFile(msg) }
           : undefined,
       edit: msg.can_edit ? () => startEdit(msg) : undefined,
       history: msg.is_edited && remote ? () => showHistory(msg) : undefined,
@@ -824,9 +838,9 @@
     if (!ids) return;
     try {
       const sent = await forwardMessages(target, ids, to.id);
-      flash(sent ? `Forwarded to ${to.name}` : "Couldn't forward that message");
+      flash(sent ? tr("Forwarded to {name}", { name: to.name }) : tr("Couldn't forward that message"));
     } catch (e) {
-      flash(`Couldn't forward: ${e}`);
+      flash(tr("Couldn't forward: {e}", { e: e }));
     }
   }
 
@@ -921,14 +935,14 @@
     | { status: "error"; error: string }
     | { status: "ready"; coords: GeolocationCoordinates };
   const LIVE_DURATIONS = [
-    { ms: 15 * 60_000, label: "15 min" },
-    { ms: 3600_000, label: "1 hour" },
-    { ms: 8 * 3600_000, label: "8 hours" },
+    { ms: 15 * 60_000, label: tr("15 min") },
+    { ms: 3600_000, label: tr("1 hour") },
+    { ms: 8 * 3600_000, label: tr("8 hours") },
     // "Until I stop": a day at most, so a forgotten share ends on its own.
-    { ms: 24 * 3600_000, label: "Until I stop" },
+    { ms: 24 * 3600_000, label: tr("Until I stop") },
   ];
   const mySharing = $derived(liveLocation.sharing(target));
-  const untilLabel = (endsAt: number, open: boolean) => (open ? "until you stop" : `until ${untilTime(endsAt)}`);
+  const untilLabel = (endsAt: number, open: boolean) => (open ? tr("until you stop") : `until ${untilTime(endsAt)}`);
 
   async function shareLive(ms: number) {
     const d = locationDraft;
@@ -940,7 +954,7 @@
 
   function startLocation() {
     if (!navigator.geolocation) {
-      locationDraft = { status: "error", error: "Location isn't available on this device" };
+      locationDraft = { status: "error", error: tr("Location isn't available on this device") };
       return;
     }
     locationDraft = { status: "locating" };
@@ -949,7 +963,7 @@
       (e) =>
         (locationDraft = {
           status: "error",
-          error: e.code === e.PERMISSION_DENIED ? "AlwyChat isn't allowed to use your location" : `Couldn't find your location (${e.message})`,
+          error: e.code === e.PERMISSION_DENIED ? tr("AlwyChat isn't allowed to use your location") : tr("Couldn't find your location ({message})", { message: e.message }),
         }),
       { enableHighAccuracy: true, timeout: 20_000 },
     );
@@ -982,7 +996,7 @@
 
   async function showPin(eventId: string) {
     if (!(await tl.reveal(eventId))) {
-      sendError = "That message is too far back to show";
+      sendError = tr("That message is too far back to show");
       return;
     }
     await tick();
@@ -1046,11 +1060,11 @@
     const c = msg.content;
     if ("body" in c && c.body) return c.body;
     if ("label" in c) return c.label;
-    if (c.kind === "image") return "📷 Photo";
-    if (c.kind === "video") return "🎬 Video";
+    if (c.kind === "image") return tr("📷 Photo");
+    if (c.kind === "video") return tr("🎬 Video");
     if (c.kind === "file") return `📄 ${c.filename}`;
-    if (c.kind === "audio") return c.is_voice ? "🎤 Voice message" : `🎵 ${c.filename}`;
-    return "Message";
+    if (c.kind === "audio") return c.is_voice ? tr("🎤 Voice message") : `🎵 ${c.filename}`;
+    return tr("Message");
   }
 
   /** "14:32" today, "Tue 14:32" / "12 Mar 14:32" before. */
@@ -1064,33 +1078,33 @@
     const t = chat.typing;
     if (t.length === 0 || thread) return null;
     if (room.is_dm) return "typing";
-    if (t.length === 1) return `${t[0]} is typing`;
-    if (t.length === 2) return `${t[0]} and ${t[1]} are typing`;
-    return "Several people are typing";
+    if (t.length === 1) return tr("{value} is typing", { value: t[0] });
+    if (t.length === 2) return tr("{value} and {value2} are typing", { value: t[0], value2: t[1] });
+    return tr("Several people are typing");
   });
 </script>
 
 <header class="chat-header">
-  <button class="back" onclick={onBack} aria-label="Back"><ChevronLeft size={26} /></button>
+  <button class="back" onclick={onBack} aria-label={tr("Back")}><ChevronLeft size={26} /></button>
   {#if thread}
   <span class="title thread-title">
-    <strong>Thread</strong>
+    <strong>{tr("Thread")}</strong>
     <span class="sub">{title}</span>
   </span>
   {:else}
-  <button class="who" onclick={() => (chatMenuOpen = true)} aria-label="Chat settings">
+  <button class="who" onclick={() => (chatMenuOpen = true)} aria-label={tr("Chat settings")}>
     <Avatar name={room.name} mxc={room.avatar} size={40} saved={saved.is(room.id)} />
     <span class="title">
       <strong>{title}</strong>
       {#if status}
         <span class="sub" class:online={presence.online(room.dm_user)}>{status}</span>
       {:else if room.is_encrypted}
-        <span class="sub"><Lock size={12} /> End-to-end encrypted</span>
+        <span class="sub"><Lock size={12} /> {tr("End-to-end encrypted")}</span>
       {/if}
     </span>
   </button>
-  <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label="Voice call"><Phone size={20} /></button>
-  <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label="Video call"><Video size={22} /></button>
+  <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label={tr("Voice call")}><Phone size={20} /></button>
+  <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label={tr("Video call")}><Video size={22} /></button>
   {/if}
 </header>
 {#if historyOpen && !thread}
@@ -1099,8 +1113,8 @@
 {#if mySharing && !thread}
   <div class="live-bar" transition:fly={{ y: -6, duration: 140 }}>
     <span class="live-dot"></span>
-    <span>Sharing your live location · {untilLabel(mySharing.endsAt, mySharing.endsAt - Date.now() > 20 * 3600_000)}</span>
-    <button type="button" onclick={() => liveLocation.stop(target)}>Stop</button>
+    <span>{tr("Sharing your live location · {untilLabel}", { untilLabel: untilLabel(mySharing.endsAt, mySharing.endsAt - Date.now() > 20 * 3600_000) })}</span>
+    <button type="button" onclick={() => liveLocation.stop(target)}>{tr("Stop")}</button>
   </div>
 {/if}
 {#if shownPin && !thread}
@@ -1108,11 +1122,11 @@
     <button class="pin-main" onclick={onPinBanner}>
       <Pin size={16} />
       <span class="pin-text">
-        <small>Pinned{chat.pins.messages.length > 1 ? ` · ${(pinIndex % chat.pins.messages.length) + 1}/${chat.pins.messages.length}` : ""}</small>
+        <small>{tr("Pinned{value}", { value: chat.pins.messages.length > 1 ? ` · ${(pinIndex % chat.pins.messages.length) + 1}/${chat.pins.messages.length}` : "" })}</small>
         <span><strong>{shownPin.sender_name}:</strong> {shownPin.preview}</span>
       </span>
     </button>
-    <button class="pin-list" onclick={() => (pinsOpen = true)} aria-label="All pinned messages"><List size={18} /></button>
+    <button class="pin-list" onclick={() => (pinsOpen = true)} aria-label={tr("All pinned messages")}><List size={18} /></button>
   </div>
 {/if}
 {#if fileFor && fileFor.content.kind === "file"}
@@ -1138,7 +1152,7 @@
   <PollCreator roomId={target} onClose={() => (pollOpen = false)} />
 {/if}
 {#if pinsOpen}
-  <Page title="Pinned messages" onClose={() => (pinsOpen = false)}>
+  <Page title={tr("Pinned messages")} onClose={() => (pinsOpen = false)}>
     <ul class="pins">
       {#each chat.pins.messages as p (p.event_id)}
         <li>
@@ -1147,7 +1161,7 @@
             <span>{p.preview}</span>
           </button>
           {#if chat.pins.can_pin}
-            <button class="unpin" onclick={() => setPin(p.event_id, false)} aria-label="Unpin"><PinOff size={18} /></button>
+            <button class="unpin" onclick={() => setPin(p.event_id, false)} aria-label={tr("Unpin")}><PinOff size={18} /></button>
           {/if}
         </li>
       {/each}
@@ -1157,8 +1171,8 @@
 {#if room.in_call.length && call.roomId !== room.id && !thread}
   <button class="call-banner" onclick={() => call.join(room, false)} transition:fade={{ duration: 150 }}>
     <span class="call-dot"></span>
-    <span>{room.in_call.length} in the call</span>
-    <strong>Join</strong>
+    <span>{tr("{length} in the call", { length: room.in_call.length })}</span>
+    <strong>{tr("Join")}</strong>
   </button>
 {/if}
 {#if customizeOpen}
@@ -1187,14 +1201,14 @@
   ondrop={onDrop}
 >
   {#if dragging}
-    <div class="drop-hint" transition:fade={{ duration: 120 }}>Drop to send</div>
+    <div class="drop-hint" transition:fade={{ duration: 120 }}>{tr("Drop to send")}</div>
   {/if}
   <div class="timeline">
     {#if tl.error}
       <p class="center error">{tl.error}</p>
     {/if}
     {#if tl.loadingOlder}
-      <div class="spinner" aria-label="Loading older messages"></div>
+      <div class="spinner" aria-label={tr("Loading older messages")}></div>
     {/if}
 
     {#each rows as row (row.key)}
@@ -1205,6 +1219,7 @@
             first={row.first}
             last={row.last}
             showSender={!room.is_dm}
+            {wide}
             quickReaction={QUICK_REACTION}
             onReact={(key) => react(row.msg, key)}
             onReply={() => startReply(row.msg)}
@@ -1230,17 +1245,17 @@
       {:else if row.kind === "notice"}
         <p class="center notice">
           {row.text}{#if row.action === "theme" && !thread}
-            · <button class="notice-link" onclick={() => (customizeOpen = true)}>Change</button>{/if}
+            · <button class="notice-link" onclick={() => (customizeOpen = true)}>{tr("Change")}</button>{/if}
         </p>
       {:else if row.kind === "unread"}
-        <div class="unread"><span>New messages</span></div>
+        <div class="unread"><span>{tr("New messages")}</span></div>
       {:else if row.kind === "start" && !thread}
-        <p class="center notice">This is the beginning of {room.name} ✨</p>
+        <p class="center notice">{tr("This is the beginning of {name} ✨", { name: room.name })}</p>
       {/if}
     {/each}
 
     {#if tl.loaded && rows.length === 0 && tl.atStart}
-      <p class="center notice">No messages yet. Say hi 👋</p>
+      <p class="center notice">{tr("No messages yet. Say hi 👋")}</p>
     {/if}
 
     {#if typingText}
@@ -1256,18 +1271,18 @@
   {#if editing}
     <div class="replying editing" transition:fly={{ y: 8, duration: 160 }}>
       <div>
-        <strong>Editing message</strong>
+        <strong>{tr("Editing message")}</strong>
         <span>{editableText(editing)}</span>
       </div>
-      <button type="button" onclick={cancelEdit} aria-label="Cancel edit">×</button>
+      <button type="button" onclick={cancelEdit} aria-label={tr("Cancel edit")}>×</button>
     </div>
   {:else if replyTo}
     <div class="replying" transition:fly={{ y: 8, duration: 160 }}>
       <div>
-        <strong>Replying to {replyTo.is_own ? "yourself" : replyTo.sender_name}</strong>
+        <strong>{tr("Replying to {value}", { value: replyTo.is_own ? "yourself" : replyTo.sender_name })}</strong>
         <span>{replyText(replyTo)}</span>
       </div>
-      <button type="button" onclick={() => (replyTo = null)} aria-label="Cancel reply">×</button>
+      <button type="button" onclick={() => (replyTo = null)} aria-label={tr("Cancel reply")}>×</button>
     </div>
   {/if}
   {#if pending.length}
@@ -1275,7 +1290,7 @@
       {#each pending as p, i (p)}
         <div class="pending-item">
           {#if p.url}<img src={p.url} alt="" />{:else}<span class="pending-file">{p.mime.startsWith("video/") ? "🎬" : "📄"}<small>{p.name}</small></span>{/if}
-          <button type="button" onclick={() => removePending(i)} aria-label="Remove {p.name}">×</button>
+          <button type="button" onclick={() => removePending(i)} aria-label={tr("Remove {name}", { name: p.name })}>×</button>
         </div>
       {/each}
     </div>
@@ -1283,11 +1298,11 @@
   {#if mention.open}
     <MentionSuggestions suggestions={mention.suggestions} index={mention.index} onPick={pickMention} />
   {/if}
-  {#if sendingFiles}<p class="send-status">Sending…</p>{/if}
+  {#if sendingFiles}<p class="send-status">{tr("Sending…")}</p>{/if}
   {#if sendError}<p class="send-error">{sendError}</p>{/if}
   {#if recorder.recording}
     <div class="bar recording" transition:fade={{ duration: 120 }}>
-      <button type="button" class="attach" onclick={() => recorder.cancel()} aria-label="Delete recording"><Trash2 size={22} /></button>
+      <button type="button" class="attach" onclick={() => recorder.cancel()} aria-label={tr("Delete recording")}><Trash2 size={22} /></button>
       <div class="rec">
         <span class="rec-dot"></span>
         <span class="rec-time">{recordClock}</span>
@@ -1297,21 +1312,21 @@
           {/each}
         </div>
       </div>
-      <button type="button" class="send" onclick={finishVoice} aria-label="Send voice message"><SendHorizontal size={20} /></button>
+      <button type="button" class="send" onclick={finishVoice} aria-label={tr("Send voice message")}><SendHorizontal size={20} /></button>
     </div>
   {:else}
   {#if formatting}
     <div class="format-bar" transition:fly={{ y: 6, duration: 140 }}>
-      <button type="button" onclick={() => wrap("**", "**")} aria-label="Bold"><Bold size={18} /></button>
-      <button type="button" onclick={() => wrap("*", "*")} aria-label="Italic"><Italic size={18} /></button>
-      <button type="button" onclick={() => wrap("~~", "~~")} aria-label="Strikethrough"><Strikethrough size={18} /></button>
-      <button type="button" onclick={() => wrap("`", "`")} aria-label="Code"><Code size={18} /></button>
-      <button type="button" onclick={() => wrap("```\n", "\n```")} aria-label="Code block"><SquareCode size={18} /></button>
-      <button type="button" onclick={() => linePrefix("> ")} aria-label="Quote"><TextQuote size={18} /></button>
-      <button type="button" onclick={() => linePrefix("- ")} aria-label="Bulleted list"><List size={18} /></button>
-      <button type="button" onclick={() => linePrefix("1. ")} aria-label="Numbered list"><ListOrdered size={18} /></button>
-      <button type="button" onclick={() => wrap("[", "](https://)")} aria-label="Link"><LinkIcon size={18} /></button>
-      <button type="button" class="close" onclick={() => (formatting = false)} aria-label="Close formatting"><X size={18} /></button>
+      <button type="button" onclick={() => wrap("**", "**")} aria-label={tr("Bold")}><Bold size={18} /></button>
+      <button type="button" onclick={() => wrap("*", "*")} aria-label={tr("Italic")}><Italic size={18} /></button>
+      <button type="button" onclick={() => wrap("~~", "~~")} aria-label={tr("Strikethrough")}><Strikethrough size={18} /></button>
+      <button type="button" onclick={() => wrap("`", "`")} aria-label={tr("Code")}><Code size={18} /></button>
+      <button type="button" onclick={() => wrap("```\n", "\n```")} aria-label={tr("Code block")}><SquareCode size={18} /></button>
+      <button type="button" onclick={() => linePrefix("> ")} aria-label={tr("Quote")}><TextQuote size={18} /></button>
+      <button type="button" onclick={() => linePrefix("- ")} aria-label={tr("Bulleted list")}><List size={18} /></button>
+      <button type="button" onclick={() => linePrefix("1. ")} aria-label={tr("Numbered list")}><ListOrdered size={18} /></button>
+      <button type="button" onclick={() => wrap("[", "](https://)")} aria-label={tr("Link")}><LinkIcon size={18} /></button>
+      <button type="button" class="close" onclick={() => (formatting = false)} aria-label={tr("Close formatting")}><X size={18} /></button>
     </div>
   {/if}
   {#if locationDraft}
@@ -1319,36 +1334,36 @@
       <div class="loc-head">
         <MapPin size={22} />
         <span>
-          {#if locationDraft.status === "locating"}Finding your location…
+          {#if locationDraft.status === "locating"}{tr("Finding your location…")}
           {:else if locationDraft.status === "error"}{locationDraft.error}
-          {:else}Your location<small>{locationDraft.coords.latitude.toFixed(5)}, {locationDraft.coords.longitude.toFixed(5)}{locationDraft.coords.accuracy ? ` · ±${Math.round(locationDraft.coords.accuracy)} m` : ""}</small>{/if}
+          {:else}{tr("Your location")}<small>{locationDraft.coords.latitude.toFixed(5)}, {locationDraft.coords.longitude.toFixed(5)}{locationDraft.coords.accuracy ? ` · ±${Math.round(locationDraft.coords.accuracy)} m` : ""}</small>{/if}
         </span>
-        <button type="button" class="plain" onclick={() => (locationDraft = null)}>Cancel</button>
+        <button type="button" class="plain" onclick={() => (locationDraft = null)}>{tr("Cancel")}</button>
       </div>
       {#if locationDraft.status === "ready"}
-        <button type="button" class="loc-option" onclick={sendLocationDraft}><MapPin size={18} /> Send my current location</button>
-        <p class="loc-label">Share live location</p>
+        <button type="button" class="loc-option" onclick={sendLocationDraft}><MapPin size={18} /> {tr("Send my current location")}</button>
+        <p class="loc-label">{tr("Share live location")}</p>
         <div class="loc-durations">
           {#each LIVE_DURATIONS as d (d.ms)}
             <button type="button" onclick={() => shareLive(d.ms)}>{d.label}</button>
           {/each}
         </div>
-        <small class="loc-note">Live: your position updates while AlwyChat is open, until the time is up or you tap Stop.</small>
+        <small class="loc-note">{tr("Live: your position updates while AlwyChat is open, until the time is up or you tap Stop.")}</small>
       {/if}
     </div>
   {/if}
   <div class="bar">
     {#if typingMode && !toolsShown}
-      <button type="button" class="attach" onclick={() => (toolsShown = true)} aria-label="Show more"><ChevronRight size={26} /></button>
+      <button type="button" class="attach" onclick={() => (toolsShown = true)} aria-label={tr("Show more")}><ChevronRight size={26} /></button>
     {:else}
-      <button type="button" class="attach plus" class:open={attachOpen} onclick={() => (attachOpen = !attachOpen)} aria-label="More" aria-expanded={attachOpen}>
+      <button type="button" class="attach plus" class:open={attachOpen} onclick={() => (attachOpen = !attachOpen)} aria-label={tr("More")} aria-expanded={attachOpen}>
         <CirclePlus size={26} />
       </button>
       {#if isAndroid}
-        <button type="button" class="attach" onclick={() => takePhoto("photo")} aria-label="Take a photo"><Camera size={24} /></button>
+        <button type="button" class="attach" onclick={() => takePhoto("photo")} aria-label={tr("Take a photo")}><Camera size={24} /></button>
       {/if}
-      <button type="button" class="attach" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label="Photos and videos"><Image size={24} /></button>
-      <button type="button" class="attach mic" onclick={startVoice} aria-label="Record a voice message"><Mic size={24} /></button>
+      <button type="button" class="attach" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
+      <button type="button" class="attach mic" onclick={startVoice} aria-label={tr("Record a voice message")}><Mic size={24} /></button>
     {/if}
     <input
       bind:this={fileInput}
@@ -1373,18 +1388,18 @@
         rows="1"
         placeholder={pending.length ? "Add a caption" : "Message"}
       ></textarea>
-      <button type="button" class="emoji-toggle" class:on={emojiOpen} onclick={toggleEmoji} aria-label="Emoji"><SmilePlus size={22} /></button>
+      <button type="button" class="emoji-toggle" class:on={emojiOpen} onclick={toggleEmoji} aria-label={tr("Emoji")}><SmilePlus size={22} /></button>
     </div>
     {#if draft.trim() || editing || pending.length}
       <!-- Never takes the focus: the keyboard stays open for the next message. -->
-      <button class="send" aria-label={editing ? "Save edit" : "Send"} onmousedown={keepFocus} transition:fly={{ x: 8, duration: 140 }}
+      <button class="send" aria-label={editing ? tr("Save edit") : tr("Send")} onmousedown={keepFocus} transition:fly={{ x: 8, duration: 140 }}
         >{#if editing}<Check size={20} />{:else}<SendHorizontal size={20} />{/if}</button
       >
     {:else}
       <button
         type="button"
         class="quick"
-        aria-label="Send {QUICK_REACTION}"
+        aria-label={tr("Send {QUICK_REACTION}", { QUICK_REACTION: QUICK_REACTION })}
         onmousedown={keepFocus}
         onclick={() => sendMessage(target, QUICK_REACTION, null).catch((e) => (sendError = String(e)))}
       >{QUICK_REACTION}</button>
@@ -1402,14 +1417,14 @@
   <div class="attach-sheet" role="menu" transition:fly={{ y: 40, duration: 200 }}>
     <span class="grabber"></span>
     {#if isAndroid}
-      <button type="button" onclick={() => sheet(() => takePhoto("photo"))}><Camera size={22} />Take photo</button>
-      <button type="button" onclick={() => sheet(() => takePhoto("video"))}><Video size={22} />Record video</button>
+      <button type="button" onclick={() => sheet(() => takePhoto("photo"))}><Camera size={22} />{tr("Take photo")}</button>
+      <button type="button" onclick={() => sheet(() => takePhoto("video"))}><Video size={22} />{tr("Record video")}</button>
     {/if}
-    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />Photo & video library</button>
-    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("files") : openFileInput("")))}><Paperclip size={22} />File</button>
-    <button type="button" onclick={() => sheet(startLocation)}><MapPin size={22} />Share location</button>
-    <button type="button" onclick={() => sheet(() => (pollOpen = true))}><ChartBar size={22} />Poll</button>
-    <button type="button" onclick={() => sheet(() => (formatting = !formatting))}><Type size={22} />{formatting ? "Hide text formatting" : "Text formatting"}</button>
+    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />{tr("Photo & video library")}</button>
+    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("files") : openFileInput("")))}><Paperclip size={22} />{tr("File")}</button>
+    <button type="button" onclick={() => sheet(startLocation)}><MapPin size={22} />{tr("Share location")}</button>
+    <button type="button" onclick={() => sheet(() => (pollOpen = true))}><ChartBar size={22} />{tr("Poll")}</button>
+    <button type="button" onclick={() => sheet(() => (formatting = !formatting))}><Type size={22} />{formatting ? tr("Hide text formatting") : tr("Text formatting")}</button>
   </div>
 {/if}
 
@@ -1432,14 +1447,14 @@
   {/key}
 {/if}
 {#if scrolledUp && !tl.focused && !thread}
-  <button class="to-bottom" class:fresh={newBelow} onclick={toBottom} aria-label={newBelow ? "New messages below" : "Back to the newest messages"} transition:fade={{ duration: 150 }}>
+  <button class="to-bottom" class:fresh={newBelow} onclick={toBottom} aria-label={newBelow ? tr("New messages below") : tr("Back to the newest messages")} transition:fade={{ duration: 150 }}>
     <ArrowDown size={20} />
     {#if newBelow}<span class="fresh-dot"></span>{/if}
   </button>
 {/if}
 {#if tl.focused}
   <button class="latest" onclick={() => tl.latest()} transition:fade={{ duration: 150 }}>
-    <ArrowDown size={16} /> Latest
+    <ArrowDown size={16} /> {tr("Latest")}
   </button>
 {/if}
 
@@ -1447,11 +1462,11 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="backdrop" transition:fade={{ duration: 120 }} onclick={() => (confirmDelete = null)}></div>
   <div class="dialog" role="alertdialog" aria-labelledby="del-title" transition:fly={{ y: 16, duration: 180 }}>
-    <h3 id="del-title">Delete this message?</h3>
-    <p>It will be removed for everyone in this chat.</p>
+    <h3 id="del-title">{tr("Delete this message?")}</h3>
+    <p>{tr("It will be removed for everyone in this chat.")}</p>
     <div class="dialog-buttons">
-      <button onclick={() => (confirmDelete = null)}>Cancel</button>
-      <button class="danger" onclick={() => doDelete(confirmDelete!)}>Delete</button>
+      <button onclick={() => (confirmDelete = null)}>{tr("Cancel")}</button>
+      <button class="danger" onclick={() => doDelete(confirmDelete!)}>{tr("Delete")}</button>
     </div>
   </div>
 {/if}
@@ -1460,23 +1475,23 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="backdrop" transition:fade={{ duration: 120 }} onclick={() => (history = null)}></div>
   <div class="dialog" role="dialog" aria-labelledby="hist-title" transition:fly={{ y: 16, duration: 180 }}>
-    <h3 id="hist-title">Edit history</h3>
+    <h3 id="hist-title">{tr("Edit history")}</h3>
     {#if history.error}
       <p class="error">{history.error}</p>
     {:else if !history.revisions}
-      <p>Loading…</p>
+      <p>{tr("Loading…")}</p>
     {:else}
       <ol class="revisions">
         {#each history.revisions as rev, i (i)}
           <li class:current={i === history.revisions.length - 1}>
-            <small>{i === 0 ? "Original" : `Edit ${i}`}{rev.timestamp ? ` · ${revisionTime(rev.timestamp)}` : ""}</small>
+            <small>{i === 0 ? tr("Original") : tr("Edit {i}", { i: i })}{rev.timestamp ? ` · ${revisionTime(rev.timestamp)}` : ""}</small>
             <span>{rev.text}</span>
           </li>
         {/each}
       </ol>
     {/if}
     <div class="dialog-buttons">
-      <button onclick={() => (history = null)}>Close</button>
+      <button onclick={() => (history = null)}>{tr("Close")}</button>
     </div>
   </div>
 {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { fade, fly } from "svelte/transition";
   import Download from "@lucide/svelte/icons/download";
   import ExternalLink from "@lucide/svelte/icons/external-link";
@@ -21,11 +22,11 @@
 <div class="sheet" role="dialog" aria-label={filename} transition:fly={{ y: 40, duration: 200 }}>
   <div class="grip"></div>
   <strong class="name">{filename}</strong>
-  <button onclick={() => pick("open")}><ExternalLink size={20} />Open</button>
+  <button onclick={() => pick("open")}><ExternalLink size={20} />{tr("Open")}</button>
   {#if isAndroid}
-    <button onclick={() => pick("save_as")}><FolderDown size={20} />Save to…</button>
+    <button onclick={() => pick("save_as")}><FolderDown size={20} />{tr("Save to…")}</button>
   {/if}
-  <button onclick={() => pick("downloads")}><Download size={20} />Save to Downloads</button>
+  <button onclick={() => pick("downloads")}><Download size={20} />{tr("Save to Downloads")}</button>
 </div>
 
 <style>

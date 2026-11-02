@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { ignoredUsers, setIgnored, type UserResult } from "$lib/backend";
   import Avatar from "./Avatar.svelte";
   import Page from "./Page.svelte";
@@ -34,22 +35,22 @@
   }
 </script>
 
-<Page title="Blocked people" {onClose}>
-  <p class="m-hint">You won't see their messages or invites. They aren't told.</p>
+<Page title={tr("Blocked people")} {onClose}>
+  <p class="m-hint">{tr("You won't see their messages or invites. They aren't told.")}</p>
   {#each list as u (u.user_id)}
     <div class="m-row">
       <Avatar name={u.name} mxc={u.avatar} size={40} />
       <span class="m-text"><strong>{u.name}</strong><small>{u.user_id}</small></span>
-      <button class="m-btn plain" disabled={busy === u.user_id} onclick={() => set(u, false)}>Unblock</button>
+      <button class="m-btn plain" disabled={busy === u.user_id} onclick={() => set(u, false)}>{tr("Unblock")}</button>
     </div>
   {:else}
-    {#if loaded}<p class="m-hint">Nobody is blocked.</p>{/if}
+    {#if loaded}<p class="m-hint">{tr("Nobody is blocked.")}</p>{/if}
   {/each}
   {#if adding}
-    <h3 class="m-section">Block someone</h3>
+    <h3 class="m-section">{tr("Block someone")}</h3>
     <UserPicker exclude={list.map((u) => u.user_id)} onPick={(u) => set(u, true)} />
   {:else}
-    <button class="m-btn plain wide" onclick={() => (adding = true)}>Block someone</button>
+    <button class="m-btn plain wide" onclick={() => (adding = true)}>{tr("Block someone")}</button>
   {/if}
   {#if error}<p class="m-error">{error}</p>{/if}
 </Page>

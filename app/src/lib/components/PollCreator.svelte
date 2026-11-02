@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import X from "@lucide/svelte/icons/x";
   import { createPoll } from "$lib/backend";
@@ -31,45 +32,45 @@
   }
 </script>
 
-<Page title="New poll" {onClose}>
+<Page title={tr("New poll")} {onClose}>
   <form onsubmit={send}>
     <label class="field">
-      <span>Question</span>
+      <span>{tr("Question")}</span>
       <!-- svelte-ignore a11y_autofocus -->
-      <input bind:value={question} placeholder="Ask something" maxlength="300" autofocus />
+      <input bind:value={question} placeholder={tr("Ask something")} maxlength="300" autofocus />
     </label>
 
-    <span class="caption">Answers</span>
+    <span class="caption">{tr("Answers")}</span>
     {#each answers as _, i (i)}
       <div class="answer">
-        <input bind:value={answers[i]} placeholder="Answer {i + 1}" maxlength="200" />
+        <input bind:value={answers[i]} placeholder={tr("Answer {value}", { value: i + 1 })} maxlength="200" />
         {#if answers.length > 2}
-          <button type="button" class="icon" onclick={() => answers.splice(i, 1)} aria-label="Remove answer {i + 1}">
+          <button type="button" class="icon" onclick={() => answers.splice(i, 1)} aria-label={tr("Remove answer {value}", { value: i + 1 })}>
             <X size={18} />
           </button>
         {/if}
       </div>
     {/each}
     {#if answers.length < 20}
-      <button type="button" class="add" onclick={() => answers.push("")}><Plus size={18} /> Add an answer</button>
+      <button type="button" class="add" onclick={() => answers.push("")}><Plus size={18} /> {tr("Add an answer")}</button>
     {/if}
 
     <label class="toggle">
       <span>
-        <strong>Show results while voting</strong>
-        <small>Off: results appear only when you end the poll.</small>
+        <strong>{tr("Show results while voting")}</strong>
+        <small>{tr("Off: results appear only when you end the poll.")}</small>
       </span>
       <input type="checkbox" role="switch" bind:checked={disclosed} />
     </label>
     <label class="toggle">
       <span>
-        <strong>Allow several answers</strong>
+        <strong>{tr("Allow several answers")}</strong>
       </span>
       <input type="checkbox" role="switch" bind:checked={multiple} />
     </label>
 
     {#if error}<p class="error">{error}</p>{/if}
-    <button class="send" disabled={!ready}>{sending ? "Sending…" : "Send poll"}</button>
+    <button class="send" disabled={!ready}>{sending ? tr("Sending…") : tr("Send poll")}</button>
   </form>
 </Page>
 

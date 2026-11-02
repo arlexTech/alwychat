@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Clock from "@lucide/svelte/icons/clock";
   import Smile from "@lucide/svelte/icons/smile";
   import Hand from "@lucide/svelte/icons/hand";
@@ -27,7 +28,7 @@
 
   const RECENT_KEY = "alwychat.recentEmoji";
   let recent = $state<string[]>(JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"));
-  let tab = $state(untrack(() => (recent.length ? "Recent" : "Smileys")));
+  let tab = $state(untrack(() => (recent.length ? tr("Recent") : tr("Smileys"))));
 
   const shown = $derived(tab === "Recent" ? recent : (CATEGORIES.find((c) => c.id === tab)?.emoji ?? []));
 
@@ -40,7 +41,7 @@
 
 <div class="picker">
   <div class="tabs">
-    <button type="button" class:on={tab === "Recent"} onclick={() => (tab = "Recent")} aria-label="Recent" disabled={!recent.length}><Clock size={18} /></button>
+    <button type="button" class:on={tab === "Recent"} onclick={() => (tab = "Recent")} aria-label={tr("Recent")} disabled={!recent.length}><Clock size={18} /></button>
     {#each CATEGORIES as c (c.id)}
       <button type="button" class:on={tab === c.id} onclick={() => (tab = c.id)} aria-label={c.id}><c.icon size={18} /></button>
     {/each}

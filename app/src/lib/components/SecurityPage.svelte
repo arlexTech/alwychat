@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Copy from "@lucide/svelte/icons/copy";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import KeyRound from "@lucide/svelte/icons/key-round";
@@ -51,54 +52,59 @@
   const recoveryOn = $derived(status?.recovery === "enabled");
 </script>
 
-<Page title="Security & recovery" {onClose}>
-  <h3 class="m-section">This device</h3>
+<Page title={tr("Security & recovery")} {onClose}>
+  <h3 class="m-section">{tr("This device")}</h3>
   <div class="m-row">
     <span class="m-icon" class:ok={status?.cross_signed}><ShieldCheck size={20} /></span>
     <span class="m-text">
-      <strong>{status?.cross_signed ? "Verified" : "Not verified"}</strong>
-      <small>{status?.cross_signed ? "Your other sessions trust this one: it can read your encrypted history." : "Verify it with another session or your recovery key to read encrypted history."}</small>
+      <strong>{status?.cross_signed ? tr("Verified") : tr("Not verified")}</strong>
+      <small>{status?.cross_signed ? tr("Your other sessions trust this one: it can read your encrypted history.") : tr("Verify it with another session or your recovery key to read encrypted history.")}</small>
     </span>
   </div>
   {#if status && !status.cross_signed}
-    <button class="m-btn wide" onclick={() => ((encryption.sheetOpen = true), onClose())}>Verify this device</button>
+    <button class="m-btn wide" onclick={() => ((encryption.sheetOpen = true), onClose())}>{tr("Verify this device")}</button>
   {/if}
 
-  <h3 class="m-section">Key backup</h3>
+  <h3 class="m-section">{tr("Key backup")}</h3>
   <div class="m-row">
     <span class="m-icon"><KeyRound size={20} /></span>
     <span class="m-text">
-      <strong>{status?.backup === "enabled" ? "On" : status?.backup ?? "…"}</strong>
-      <small>Your message keys are stored on the server, encrypted with your recovery key, so a new device can read old messages.</small>
+      <strong>{status?.backup === "enabled" ? tr("On") : status?.backup ?? "…"}</strong>
+      <small>{tr("Your message keys are stored on the server, encrypted with your recovery key, so a new device can read old messages.")}</small>
     </span>
   </div>
 
-  <h3 class="m-section">Recovery key</h3>
+  {#if encryption.backupMissing}
+    <p class="m-hint">{tr("This device doesn't have the key to your backup yet, so some older messages may stay locked. Enter your recovery key to get it.")}</p>
+    <button class="m-btn wide" onclick={() => ((encryption.sheetOpen = true), onClose())}>{tr("Enter recovery key")}</button>
+  {/if}
+
+  <h3 class="m-section">{tr("Recovery key")}</h3>
   {#if key}
-    <p class="m-hint">Your new recovery key. Save it somewhere safe (a password manager): it's the only way back into your encrypted history if you lose all your devices. The old key no longer works.</p>
+    <p class="m-hint">{tr("Your new recovery key. Save it somewhere safe (a password manager): it's the only way back into your encrypted history if you lose all your devices. The old key no longer works.")}</p>
     <div class="key">{key}</div>
-    <button class="m-btn plain wide" onclick={() => navigator.clipboard?.writeText(key!).then(() => (copied = true))}><Copy size={16} /> {copied ? "Copied" : "Copy"}</button>
+    <button class="m-btn plain wide" onclick={() => navigator.clipboard?.writeText(key!).then(() => (copied = true))}><Copy size={16} /> {copied ? tr("Copied") : tr("Copy")}</button>
   {:else}
     <p class="m-hint">
-      {recoveryOn ? "Recovery is set up. If you lost your recovery key, make a new one (this device must be verified)." : "Recovery isn't set up: without it, losing your devices means losing your encrypted history."}
+      {recoveryOn ? tr("Recovery is set up. If you lost your recovery key, make a new one (this device must be verified).") : tr("Recovery isn't set up: without it, losing your devices means losing your encrypted history.")}
     </p>
     {#if confirm}
-      <p class="m-hint">{recoveryOn ? "The old key will stop working." : ""} Continue?</p>
+      <p class="m-hint">{tr("{value} Continue?", { value: recoveryOn ? "The old key will stop working." : "" })}</p>
       <div class="m-buttons">
-        <button class="m-btn plain" onclick={() => (confirm = false)}>Cancel</button>
-        <button class="m-btn" disabled={busy} onclick={makeKey}>{busy ? "Working…" : "Continue"}</button>
+        <button class="m-btn plain" onclick={() => (confirm = false)}>{tr("Cancel")}</button>
+        <button class="m-btn" disabled={busy} onclick={makeKey}>{busy ? tr("Working…") : tr("Continue")}</button>
       </div>
     {:else}
       <button class="m-btn wide" disabled={busy || !status?.cross_signed} onclick={() => (confirm = true)}>
-        {recoveryOn ? "Make a new recovery key" : "Set up recovery"}
+        {recoveryOn ? tr("Make a new recovery key") : tr("Set up recovery")}
       </button>
     {/if}
   {/if}
 
-  <h3 class="m-section">Lost everything?</h3>
+  <h3 class="m-section">{tr("Lost everything?")}</h3>
   <button class="m-row danger" onclick={resetIdentity}>
     <span class="m-icon"><ExternalLink size={20} /></span>
-    <span class="m-text"><strong>Reset your identity</strong><small>Last resort, on your account page: you lose your encrypted history and must verify again.</small></span>
+    <span class="m-text"><strong>{tr("Reset your identity")}</strong><small>{tr("Last resort, on your account page: you lose your encrypted history and must verify again.")}</small></span>
   </button>
   {#if error}<p class="m-error">{error}</p>{/if}
 </Page>

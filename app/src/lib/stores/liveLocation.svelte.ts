@@ -1,6 +1,7 @@
 // Our live location shares: follow the position while AlwyChat runs and send it to each chat
 // (Element-compatible beacons), until the chosen time is up or "Stop".
 import { startLiveLocation, stopLiveLocation, updateLiveLocation } from "$lib/backend";
+import { tr } from "$lib/i18n/index.svelte";
 
 /** Don't send more often than this, unless we moved a lot. */
 const MIN_INTERVAL_MS = 15_000;
@@ -12,7 +13,7 @@ export function untilTime(at: number) {
   const time = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((day(new Date(at)) - day(new Date())) / 86_400_000);
-  return days === 0 ? time : days === 1 ? `tomorrow ${time}` : `${new Date(at).toLocaleDateString()} ${time}`;
+  return days === 0 ? time : days === 1 ? tr("tomorrow {time}", { time }) : `${new Date(at).toLocaleDateString()} ${time}`;
 }
 
 type Share = { roomId: string; shareId: string; endsAt: number };
@@ -69,7 +70,7 @@ class LiveLocation {
     if (this.#watch !== null || !navigator.geolocation) return;
     this.#watch = navigator.geolocation.watchPosition(
       (pos) => void this.#moved(pos.coords),
-      (e) => (this.error = e.code === e.PERMISSION_DENIED ? "Location access was turned off" : e.message),
+      (e) => (this.error = e.code === e.PERMISSION_DENIED ? tr("Location access was turned off") : e.message),
       { enableHighAccuracy: true, maximumAge: 10_000 },
     );
     clearInterval(this.#endTimer);

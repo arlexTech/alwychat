@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { fly } from "svelte/transition";
   import type { Suggestion } from "$lib/mentions.svelte";
   import Avatar from "./Avatar.svelte";
@@ -17,8 +18,8 @@
       <button type="button" class:active={i === index} onmousedown={(e) => (e.preventDefault(), onPick(s))}>
         {#if s.user_id === "@room"}
           <span class="room">📣</span>
-          <span class="name">@room</span>
-          <span class="id">Notify everyone in this chat</span>
+          <span class="name">{tr("@room")}</span>
+          <span class="id">{tr("Notify everyone in this chat")}</span>
         {:else}
           <Avatar name={s.name} mxc={s.avatar} size={28} />
           <span class="name">{s.name}</span>

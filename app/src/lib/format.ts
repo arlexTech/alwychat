@@ -1,7 +1,8 @@
-const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
-const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" });
-const date = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
-const fullDate = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+import { locale, tr } from "$lib/i18n/index.svelte";
+const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
+const weekday = new Intl.DateTimeFormat(locale, { weekday: "short" });
+const date = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" });
+const fullDate = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" });
 
 /** Chat-list style timestamp: 14:32 · Tue · 12 Mar · 12 Mar 2024. */
 export function shortTime(ms: number | null | undefined, now = Date.now()): string {
@@ -27,16 +28,16 @@ export function clockTime(ms: number): string {
   return time.format(new Date(ms));
 }
 
-const longDate = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" });
-const longDateYear = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" });
+const longDate = new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "long" });
+const longDateYear = new Intl.DateTimeFormat(locale, { day: "numeric", month: "long", year: "numeric" });
 
 /** Date divider label: Today · Yesterday · Tuesday 12 March · 12 March 2024. */
 export function dayLabel(ms: number, now = Date.now()): string {
   const d = new Date(ms);
   const today = new Date(now);
-  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === today.toDateString()) return tr("Today");
   const yesterday = new Date(now - 86_400_000);
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (d.toDateString() === yesterday.toDateString()) return tr("Yesterday");
   return d.getFullYear() === today.getFullYear() ? longDate.format(d) : longDateYear.format(d);
 }
 
@@ -53,4 +54,9 @@ export function formatDuration(ms: number | null | undefined): string {
   if (ms == null) return "";
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Full time of a message (tap on it): Today, 14:03 · Tuesday 12 March, 14:03 · 12 March 2024, 14:03. */
+export function messageStamp(ms: number, now = Date.now()): string {
+  return `${dayLabel(ms, now)}, ${clockTime(ms)}`;
 }

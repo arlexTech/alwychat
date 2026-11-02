@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { untrack } from "svelte";
   import { createRoom, setRoomAvatar, type UserResult } from "$lib/backend";
   import { chatList } from "$lib/stores/chatList.svelte";
@@ -64,46 +65,46 @@
   }
 </script>
 
-<Page title={kind === "space" ? "New space" : parent ? `New chat in ${parentName}` : "New group"} {onClose}>
+<Page title={kind === "space" ? tr("New space") : parent ? tr("New chat in {parentName}", { parentName: parentName }) : tr("New group")} {onClose}>
   <AvatarEdit name={name || "?"} mxc={null} square={kind === "space"} onPicked={(data) => void (photo = data)} />
-  <h3 class="m-section">Name</h3>
-  <input class="m-input" bind:value={name} maxlength="80" placeholder={kind === "space" ? "My space" : "Group name"} />
-  <h3 class="m-section">Topic <small>(optional)</small></h3>
+  <h3 class="m-section">{tr("Name")}</h3>
+  <input class="m-input" bind:value={name} maxlength="80" placeholder={kind === "space" ? tr("My space") : tr("Group name")} />
+  <h3 class="m-section">{tr("Topic")} <small>{tr("(optional)")}</small></h3>
   <textarea class="m-input" bind:value={topic} maxlength="500" placeholder="What is it about?"></textarea>
 
-  <h3 class="m-section">Who can join</h3>
+  <h3 class="m-section">{tr("Who can join")}</h3>
   <div class="m-seg">
-    <button class:on={access === "private"} onclick={() => (access = "private")}>Invited only</button>
-    {#if parent}<button class:on={access === "space"} onclick={() => (access = "space")}>Space members</button>{/if}
-    <button class:on={access === "public"} onclick={() => (access = "public")}>Anyone with the link</button>
+    <button class:on={access === "private"} onclick={() => (access = "private")}>{tr("Invited only")}</button>
+    {#if parent}<button class:on={access === "space"} onclick={() => (access = "space")}>{tr("Space members")}</button>{/if}
+    <button class:on={access === "public"} onclick={() => (access = "public")}>{tr("Anyone with the link")}</button>
   </div>
   <p class="m-hint">
-    {#if access === "private"}Only people you invite can join.
-    {:else if access === "space"}Everyone in {parentName} can find and join it.
-    {:else}Anyone who has the link (or finds the address) can join.{/if}
+    {#if access === "private"}{tr("Only people you invite can join.")}
+    {:else if access === "space"}{tr("Everyone in {parentName} can find and join it.", { parentName: parentName })}
+    {:else}{tr("Anyone who has the link (or finds the address) can join.")}{/if}
   </p>
 
   {#if kind === "group"}
     <label class="m-row">
       <span class="m-text"
-        ><strong>End-to-end encrypted</strong><small
+        ><strong>{tr("End-to-end encrypted")}</strong><small
           >{access === "public"
-            ? "Not for chats anyone can join: new members couldn't read the history."
-            : "Only members can read messages. It can't be turned off later."}</small
+            ? tr("Not for chats anyone can join: new members couldn't read the history.")
+            : tr("Only members can read messages. It can't be turned off later.")}</small
         ></span
       >
       <input type="checkbox" role="switch" bind:checked={encrypted} disabled={access === "public"} />
     </label>
   {:else}
-    <p class="m-hint">A space groups chats together, like a Discord server. You can add chats and voice channels once it's created.</p>
+    <p class="m-hint">{tr("A space groups chats together, like a Discord server. You can add chats and voice channels once it's created.")}</p>
   {/if}
 
-  <h3 class="m-section">Invite people <small>(optional)</small></h3>
+  <h3 class="m-section">{tr("Invite people")} <small>{tr("(optional)")}</small></h3>
   <UserPicker multiple bind:picked={invite} />
 
   {#if error}<p class="m-error">{error}</p>{/if}
   <div class="m-buttons sticky">
-    <button class="m-btn" disabled={!name.trim() || busy} onclick={create}>{busy ? "Creating…" : `Create ${what}`}</button>
+    <button class="m-btn" disabled={!name.trim() || busy} onclick={create}>{busy ? tr("Creating…") : tr("Create {what}", { what: what })}</button>
   </div>
 </Page>
 

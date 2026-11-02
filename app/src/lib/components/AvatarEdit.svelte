@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import Camera from "@lucide/svelte/icons/camera";
   import { pickImage } from "$lib/pickImage";
   import Avatar from "./Avatar.svelte";
@@ -43,7 +44,7 @@
 </script>
 
 <div class="wrap">
-  <button class="avatar" class:square class:busy onclick={pick} {disabled} aria-label="Change photo">
+  <button class="avatar" class:square class:busy onclick={pick} {disabled} aria-label={tr("Change photo")}>
     {#if preview}
       <img src={preview} alt="" />
     {:else}

@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { eventMediaUrl, playableUrl } from "$lib/media";
 
   let {
@@ -81,7 +82,7 @@
 </script>
 
 <div class="voice" class:own>
-  <button class="play" onclick={toggle} aria-label={paused ? "Play voice message" : "Pause"}>
+  <button class="play" onclick={toggle} aria-label={paused ? tr("Play voice message") : tr("Pause")}>
     {#if failed}⚠{:else if paused}▶{:else}❚❚{/if}
   </button>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -91,7 +92,7 @@
     {/each}
   </div>
   <span class="time">{clock(paused && current === 0 ? total : current)}</span>
-  <button class="speed" onclick={cycleSpeed} aria-label="Playback speed">{speed}×</button>
+  <button class="speed" onclick={cycleSpeed} aria-label={tr("Playback speed")}>{speed}×</button>
   <audio
     bind:this={audio}
     {src}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import {
     roomDetails,
@@ -29,7 +30,7 @@
   import { spaces } from "$lib/stores/spaces.svelte";
   import { DEFAULT_QUICK_REACTION, themeById } from "$lib/themes";
   import Avatar from "./Avatar.svelte";
-  import Page from "./Page.svelte";
+  import Page, { setPageLayout } from "./Page.svelte";
   import Images from "@lucide/svelte/icons/images";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
@@ -119,6 +120,10 @@
   function shownName(member: Member) {
     return member.is_me ? member.name : (style?.nicknames[member.user_id] ?? member.name);
   }
+
+  // Wide screens: a column on the right (Messenger), the chat stays visible; pages opened
+  // from here stay in it.
+  setPageLayout("panel");
 </script>
 
 <Page title="" {onClose}>
@@ -126,60 +131,60 @@
 
   <div class="actions">
     {#if summary?.is_dm && summary.dm_user}
-      <button onclick={() => (sub = "profile")}><span class="circle"><UserRound size={22} /></span>Profile</button>
+      <button onclick={() => (sub = "profile")}><span class="circle"><UserRound size={22} /></span>{tr("Profile")}</button>
     {:else if details}
-      <button onclick={() => (sub = "members")}><span class="circle"><Users size={22} /></span>Members</button>
+      <button onclick={() => (sub = "members")}><span class="circle"><Users size={22} /></span>{tr("Members")}</button>
     {/if}
-    <button onclick={() => (sub = "nicknames")}><span class="circle"><CaseSensitive size={24} /></span>Nicknames</button>
-    <button onclick={onSearch}><span class="circle"><Search size={22} /></span>Search</button>
+    <button onclick={() => (sub = "nicknames")}><span class="circle"><CaseSensitive size={24} /></span>{tr("Nicknames")}</button>
+    <button onclick={onSearch}><span class="circle"><Search size={22} /></span>{tr("Search")}</button>
     <button onclick={() => (sub = "customize")}>
-      <span class="circle themed" style:--a={currentTheme.a} style:--b={currentTheme.b}><Palette size={22} /></span>Customize
+      <span class="circle themed" style:--a={currentTheme.a} style:--b={currentTheme.b}><Palette size={22} /></span>{tr("Customize")}
     </button>
   </div>
 
-  <h3 class="m-section">Chat info</h3>
+  <h3 class="m-section">{tr("Chat info")}</h3>
   <button class="m-row" onclick={onSharedMedia}>
-    <span class="m-icon"><Images size={20} /></span><span class="m-text"><strong>Media, files & links</strong></span><ChevronRight size={18} />
+    <span class="m-icon"><Images size={20} /></span><span class="m-text"><strong>{tr("Media, files & links")}</strong></span><ChevronRight size={18} />
   </button>
   <button class="m-row" onclick={onHistory}>
     <span class="m-icon"><ChartColumn size={20} /></span>
-    <span class="m-text"><strong>Timeline</strong><small>Swipe through the chat's history and jump to any moment</small></span><ChevronRight size={18} />
+    <span class="m-text"><strong>{tr("Timeline")}</strong><small>{tr("Swipe through the chat's history and jump to any moment")}</small></span><ChevronRight size={18} />
   </button>
   <button class="m-row" onclick={() => (sub = "customize")}>
     <span class="m-icon"><Palette size={20} /></span>
-    <span class="m-text"><strong>Theme</strong><small>{style?.wallpaper ? "Your photo" : `${currentTheme.name} ${currentTheme.emoji}`}</small></span>
+    <span class="m-text"><strong>{tr("Theme")}</strong><small>{style?.wallpaper ? tr("Your photo") : `${currentTheme.name} ${currentTheme.emoji}`}</small></span>
     <span class="m-end quick">{quick}</span><ChevronRight size={18} />
   </button>
   <div class="m-row">
     <span class="m-icon"><ImageUp size={20} /></span>
-    <span class="m-text"><strong>Photos you send here</strong></span>
+    <span class="m-text"><strong>{tr("Photos you send here")}</strong></span>
     <select class="m-select" value={hd === null ? "default" : hd ? "hd" : "compressed"} onchange={(e) => onChooseHd(e.currentTarget.value === "default" ? null : e.currentTarget.value === "hd")}>
-      <option value="default">App default</option>
-      <option value="hd">Always HD</option>
-      <option value="compressed">Compressed</option>
+      <option value="default">{tr("App default")}</option>
+      <option value="hd">{tr("Always HD")}</option>
+      <option value="compressed">{tr("Compressed")}</option>
     </select>
   </div>
   {#if summary && !summary.is_dm && spaces.spacesOf(roomId).length}
     <label class="m-row">
       <span class="m-icon"><LayoutGrid size={20} /></span>
-      <span class="m-text"><strong>Show in Chats</strong><small>It's in a space; on: also listed in the Chats tab</small></span>
+      <span class="m-text"><strong>{tr("Show in Chats")}</strong><small>{tr("It's in a space; on: also listed in the Chats tab")}</small></span>
       <input type="checkbox" role="switch" checked={spaces.inChats(summary)} onchange={(e) => spaces.setRoom(roomId, e.currentTarget.checked).catch(() => {})} />
     </label>
   {/if}
 
   {#if details && !details.is_dm}
-    <h3 class="m-section">People</h3>
+    <h3 class="m-section">{tr("People")}</h3>
     <RoomManage room={details} part="people" reload={loadDetails} />
   {/if}
 
   {#if details}
-    <h3 class="m-section">Notifications</h3>
+    <h3 class="m-section">{tr("Notifications")}</h3>
     <RoomManage room={details} part="notify" reload={loadDetails} />
 
-    <h3 class="m-section">Privacy & support</h3>
+    <h3 class="m-section">{tr("Privacy & support")}</h3>
     <button class="m-row" onclick={() => (sub = "privacy")}>
       <span class="m-icon"><ShieldCheck size={20} /></span>
-      <span class="m-text"><strong>Privacy & security</strong><small>{details.encrypted ? "End-to-end encrypted" : "Not encrypted"}{details.is_dm ? "" : " · who can join, roles"}</small></span>
+      <span class="m-text"><strong>{tr("Privacy & security")}</strong><small>{details.encrypted ? tr("End-to-end encrypted") : tr("Not encrypted")}{details.is_dm ? "" : tr(" · who can join, roles")}</small></span>
       <ChevronRight size={18} />
     </button>
     <RoomManage room={details} part="leave" reload={loadDetails} {onLeft} />
@@ -190,14 +195,14 @@
 {#if sub === "customize"}
   <CustomizePage {roomId} onClose={() => (sub = null)} />
 {:else if sub === "privacy" && details}
-  <Page title="Privacy & security" onClose={() => (sub = null)}>
+  <Page title={tr("Privacy & security")} onClose={() => (sub = null)}>
     <RoomManage room={details} part="privacy" reload={loadDetails} />
   </Page>
 {:else if sub === "members" && details}
   <MembersPage room={details} onClose={() => (sub = null)} onOpenChat={(id) => ((sub = null), onClose(), nav.openChat(id))} onChanged={loadDetails} />
 {:else if sub === "nicknames"}
-  <Page title="Nicknames" onClose={() => (sub = null)}>
-    {#if style && !canEdit}<p class="m-hint">Only the chat's admins can give nicknames to others. Yours is yours to change.</p>{/if}
+  <Page title={tr("Nicknames")} onClose={() => (sub = null)}>
+    {#if style && !canEdit}<p class="m-hint">{tr("Only the chat's admins can give nicknames to others. Yours is yours to change.")}</p>{/if}
     <ul class="members">
       {#each members as m (m.user_id)}
         <li>
@@ -221,8 +226,8 @@
               disabled={!canEdit && !m.is_me}
               onclick={() => (editing = { userId: m.user_id, value: m.is_me ? "" : (style?.nicknames[m.user_id] ?? "") })}
             >
-              <strong>{shownName(m)}{m.is_me ? " (you)" : ""}</strong>
-              <small>{style?.nicknames[m.user_id] || m.is_me ? m.user_id : "Set a nickname"}</small>
+              <strong>{shownName(m)}{m.is_me ? tr(" (you)") : ""}</strong>
+              <small>{style?.nicknames[m.user_id] || m.is_me ? m.user_id : tr("Set a nickname")}</small>
             </button>
           {/if}
         </li>

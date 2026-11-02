@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import { fade, fly } from "svelte/transition";
   import Copy from "@lucide/svelte/icons/copy";
   import Download from "@lucide/svelte/icons/download";
@@ -49,35 +50,35 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="backdrop" transition:fade={{ duration: 140 }} onclick={onClose}></div>
-<div class="sheet" role="dialog" aria-label="Message actions" transition:fly={{ y: 40, duration: 200 }}>
+<div class="sheet" role="dialog" aria-label={tr("Message actions")} transition:fly={{ y: 40, duration: 200 }}>
   <div class="grip"></div>
   <div class="reactions">
     {#each reactions as key (key)}
       <button class:mine={mine.has(key)} onclick={() => run(() => actions.react(key))}>{key}</button>
     {/each}
-    <button class="more" class:on={anyEmoji} onclick={() => (anyEmoji = !anyEmoji)} aria-label="Other reaction"><Plus size={22} /></button>
+    <button class="more" class:on={anyEmoji} onclick={() => (anyEmoji = !anyEmoji)} aria-label={tr("Other reaction")}><Plus size={22} /></button>
   </div>
   {#if anyEmoji}
     <div class="any"><EmojiPicker onPick={(e) => run(() => actions.react(e))} /></div>
   {:else}
   <div class="list">
-    {#if actions.reply}<button onclick={() => run(actions.reply!)}><Reply size={20} />Reply</button>{/if}
-    {#if actions.thread}<button onclick={() => run(actions.thread!)}><MessagesSquare size={20} />Reply in thread</button>{/if}
-    {#if actions.copy}<button onclick={() => run(actions.copy!)}><Copy size={20} />Copy text</button>{/if}
-    {#if actions.forward}<button onclick={() => run(actions.forward!)}><Forward size={20} />Forward</button>{/if}
+    {#if actions.reply}<button onclick={() => run(actions.reply!)}><Reply size={20} />{tr("Reply")}</button>{/if}
+    {#if actions.thread}<button onclick={() => run(actions.thread!)}><MessagesSquare size={20} />{tr("Reply in thread")}</button>{/if}
+    {#if actions.copy}<button onclick={() => run(actions.copy!)}><Copy size={20} />{tr("Copy text")}</button>{/if}
+    {#if actions.forward}<button onclick={() => run(actions.forward!)}><Forward size={20} />{tr("Forward")}</button>{/if}
     {#if actions.pin}
       {@const pin = actions.pin}
       <button onclick={() => run(pin.toggle)}>
-        {#if pin.pinned}<PinOff size={20} />Unpin{:else}<Pin size={20} />Pin{/if}
+        {#if pin.pinned}<PinOff size={20} />{tr("Unpin")}{:else}<Pin size={20} />{tr("Pin")}{/if}
       </button>
     {/if}
     {#if actions.save}
       {@const save = actions.save}
       <button onclick={() => run(save.run)}><Download size={20} />{save.label}</button>
     {/if}
-    {#if actions.edit}<button onclick={() => run(actions.edit!)}><Pencil size={20} />Edit</button>{/if}
-    {#if actions.history}<button onclick={() => run(actions.history!)}><History size={20} />Edit history</button>{/if}
-    {#if actions.delete}<button class="danger" onclick={() => run(actions.delete!)}><Trash2 size={20} />Delete</button>{/if}
+    {#if actions.edit}<button onclick={() => run(actions.edit!)}><Pencil size={20} />{tr("Edit")}</button>{/if}
+    {#if actions.history}<button onclick={() => run(actions.history!)}><History size={20} />{tr("Edit history")}</button>{/if}
+    {#if actions.delete}<button class="danger" onclick={() => run(actions.delete!)}><Trash2 size={20} />{tr("Delete")}</button>{/if}
   </div>
   {/if}
 </div>

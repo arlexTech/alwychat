@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "$lib/i18n/index.svelte";
   import ImageIcon from "@lucide/svelte/icons/image";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { setQuickReaction, setTheme, uploadWallpaper } from "$lib/backend";
@@ -81,23 +82,23 @@
   }
 </script>
 
-<Page title="Customize" {onClose}>
+<Page title={tr("Customize")} {onClose}>
   <div class="m-seg tabs">
-    <button class:on={tab === "themes"} onclick={() => (tab = "themes")}>Themes</button>
-    <button class:on={tab === "reaction"} onclick={() => (tab = "reaction")}>Quick reaction</button>
+    <button class:on={tab === "themes"} onclick={() => (tab = "themes")}>{tr("Themes")}</button>
+    <button class:on={tab === "reaction"} onclick={() => (tab = "reaction")}>{tr("Quick reaction")}</button>
   </div>
-  {#if !canEdit && style}<p class="m-hint">Only the chat's admins can change these.</p>{/if}
+  {#if !canEdit && style}<p class="m-hint">{tr("Only the chat's admins can change these.")}</p>{/if}
 
   {#if tab === "themes"}
     <div class="grid">
       <button class="card upload" disabled={!canEdit} onclick={pickPhoto}>
         <ImageIcon size={26} />
-        <span>Use a photo</span>
+        <span>{tr("Use a photo")}</span>
       </button>
       {#if style?.wallpaper}
         <button class="card upload" disabled={!canEdit} onclick={removePhoto}>
           <Trash2 size={24} />
-          <span>Remove photo</span>
+          <span>{tr("Remove photo")}</span>
         </button>
       {/if}
       {#each THEMES as t (t.id)}
@@ -113,7 +114,7 @@
       {/each}
     </div>
   {:else}
-    <p class="m-hint">Sent when you tap the button next to the message field, and with a double tap on a message.</p>
+    <p class="m-hint">{tr("Sent when you tap the button next to the message field, and with a double tap on a message.")}</p>
     <div class="emojis">
       {#each QUICK_REACTIONS as e (e)}
         <button class:on={e === quick} disabled={!canEdit} onclick={() => chooseQuick(e)}>{e}</button>
@@ -129,8 +130,8 @@
         customEmoji = "";
       }}
     >
-      <input class="m-input" bind:value={customEmoji} placeholder="Any emoji" maxlength="16" disabled={!canEdit} />
-      <button class="m-btn plain" disabled={!canEdit || !customEmoji.trim()}>Use</button>
+      <input class="m-input" bind:value={customEmoji} placeholder={tr("Any emoji")} maxlength="16" disabled={!canEdit} />
+      <button class="m-btn plain" disabled={!canEdit || !customEmoji.trim()}>{tr("Use")}</button>
     </form>
   {/if}
   {#if error}<p class="m-error">{error}</p>{/if}
@@ -147,23 +148,23 @@
       <div class="bg plain"></div>
     {/if}
     <header>
-      <button class="back" onclick={() => (preview = null)} aria-label="Back">←</button>
-      <h2>Previewing {preview.photo ? "your photo" : t.name}</h2>
+      <button class="back" onclick={() => (preview = null)} aria-label={tr("Back")}>←</button>
+      <h2>{tr("Previewing {value}", { value: preview.photo ? "your photo" : t.name })}</h2>
     </header>
     <div class="messages">
-      <p class="msg out">There are many themes to choose from, and each one is a little different.</p>
-      <p class="msg out">Your messages in this chat look like this, for everyone.</p>
-      <p class="msg in" style:background={t.incoming ?? (preview.photo ? "rgb(20 22 30 / 0.82)" : "var(--surface-2)")}>And the others' messages look like this.</p>
-      <p class="msg out">Tap Select to choose it, or Cancel to look at others. {t.emoji}</p>
+      <p class="msg out">{tr("There are many themes to choose from, and each one is a little different.")}</p>
+      <p class="msg out">{tr("Your messages in this chat look like this, for everyone.")}</p>
+      <p class="msg in" style:background={t.incoming ?? (preview.photo ? "rgb(20 22 30 / 0.82)" : "var(--surface-2)")}>{tr("And the others' messages look like this.")}</p>
+      <p class="msg out">{tr("Tap Select to choose it, or Cancel to look at others. {emoji}", { emoji: t.emoji })}</p>
     </div>
     <div class="actions">
       {#if !preview.photo && t.emoji !== quick}
-        <label class="emoji-opt"><input type="checkbox" bind:checked={alsoEmoji} /> Also use {t.emoji} as the quick reaction</label>
+        <label class="emoji-opt"><input type="checkbox" bind:checked={alsoEmoji} /> {tr("Also use {emoji} as the quick reaction", { emoji: t.emoji })}</label>
       {/if}
       {#if error}<p class="m-error">{error}</p>{/if}
       <div class="m-buttons">
-        <button class="m-btn plain" onclick={() => (preview = null)}>Cancel</button>
-        <button class="m-btn select" disabled={busy} onclick={select}>{busy ? "Saving…" : "Select"}</button>
+        <button class="m-btn plain" onclick={() => (preview = null)}>{tr("Cancel")}</button>
+        <button class="m-btn select" disabled={busy} onclick={select}>{busy ? tr("Saving…") : tr("Select")}</button>
       </div>
     </div>
   </div>
