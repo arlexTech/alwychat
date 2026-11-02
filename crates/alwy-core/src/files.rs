@@ -4,6 +4,28 @@
 #[cfg(not(target_family = "wasm"))]
 pub use tokio::fs::{create_dir_all, read, remove_file, rename, write};
 
+/// Read a small file now (outside async code).
+#[cfg(not(target_family = "wasm"))]
+pub fn read_now(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    std::fs::read(path)
+}
+
+/// Atomic write, readable by the current user only (sessions hold tokens).
+#[cfg(not(target_family = "wasm"))]
+pub fn write_private_now(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("tmp");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(&tmp)?.write_all(bytes)?;
+    std::fs::rename(tmp, path)
+}
+
 #[cfg(target_family = "wasm")]
 mod web {
     use std::{io, path::Path};
@@ -23,18 +45,27 @@ mod web {
     }
 
     pub async fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
+        read_now(path.as_ref())
+    }
+
+    pub fn read_now(path: &Path) -> io::Result<Vec<u8>> {
         storage()?
-            .get_item(&key(path.as_ref()))
+            .get_item(&key(path))
             .map_err(js)?
             .map(String::into_bytes)
             .ok_or_else(|| io::ErrorKind::NotFound.into())
     }
 
     pub async fn write(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) -> io::Result<()> {
-        let text = std::str::from_utf8(bytes.as_ref()).map_err(|_| {
+        write_private_now(path.as_ref(), bytes.as_ref())
+    }
+
+    /// localStorage belongs to this site only; writes are atomic.
+    pub fn write_private_now(path: &Path, bytes: &[u8]) -> io::Result<()> {
+        let text = std::str::from_utf8(bytes).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "only text files in a browser")
         })?;
-        storage()?.set_item(&key(path.as_ref()), text).map_err(js)
+        storage()?.set_item(&key(path), text).map_err(js)
     }
 
     pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {

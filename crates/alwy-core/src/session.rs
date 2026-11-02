@@ -771,22 +771,8 @@ fn persist(path: &Path, client: &Client, passphrase: &str, store_dir: &str) -> s
             refresh_token: None,
         };
     }
-    write_private(path, &serde_json::to_vec(&stored).expect("serializable")).inspect_err(|e| {
-        warn!("couldn't save session: {e}");
-    })
-}
-
-/// Atomic write, readable by the current user only.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("tmp");
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(&tmp)?.write_all(bytes)?;
-    std::fs::rename(tmp, path)
+    crate::files::write_private_now(path, &serde_json::to_vec(&stored).expect("serializable"))
+        .inspect_err(|e| {
+            warn!("couldn't save session: {e}");
+        })
 }

@@ -60,7 +60,7 @@ impl Default for Settings {
 
 impl Settings {
     pub(crate) fn load(data_dir: &Path) -> Self {
-        match std::fs::read(data_dir.join(SETTINGS_FILE)) {
+        match crate::files::read_now(&data_dir.join(SETTINGS_FILE)) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
                 warn!("ignoring unreadable settings: {e}");
                 Self::default()

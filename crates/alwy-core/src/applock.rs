@@ -55,7 +55,7 @@ fn valid_pin(pin: &str) -> bool {
 
 impl crate::Core {
     pub fn app_lock_enabled(&self) -> bool {
-        self.data_dir.join(LOCK_FILE).exists()
+        crate::files::read_now(&self.data_dir.join(LOCK_FILE)).is_ok()
     }
 
     /// Turn the lock on with `pin` (4–12 digits), change it, or turn it off with `None`.

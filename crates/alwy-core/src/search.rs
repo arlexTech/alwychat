@@ -41,6 +41,7 @@ use crate::{
     media::{EventMedia, MediaRegistry},
 };
 
+#[cfg(not(target_family = "wasm"))]
 const DB_FILE: &str = "search.sqlite3";
 /// Events per `/messages` request while backfilling.
 const PAGE: u32 = 100;
@@ -303,9 +304,17 @@ struct Row {
 }
 
 impl SearchIndex {
+    #[cfg_attr(target_family = "wasm", allow(unused_variables))]
     pub(crate) fn open(store_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(store_dir)?;
-        let db = Connection::open(store_dir.join(DB_FILE)).map_err(sql)?;
+        // In a browser there are no files: the index lives in memory for now (rebuilt by the
+        // backfill on each visit).
+        #[cfg(target_family = "wasm")]
+        let db = Connection::open_in_memory().map_err(sql)?;
+        #[cfg(not(target_family = "wasm"))]
+        let db = {
+            std::fs::create_dir_all(store_dir)?;
+            Connection::open(store_dir.join(DB_FILE)).map_err(sql)?
+        };
         db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
             .map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
