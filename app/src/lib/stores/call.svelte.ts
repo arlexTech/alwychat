@@ -69,6 +69,8 @@ export interface CallPrefs {
   pushToTalk: boolean;
   /** Push-to-talk key on a keyboard (`KeyboardEvent.code`). */
   pttKey: string;
+  /** What that key prints with the user's layout ("A" on AZERTY where QWERTY has Q). */
+  pttKeyLabel: string | null;
   /** Chosen devices (null: the system default). Browser device IDs, or the native engine's
    * on the Linux desktop app (the two lists differ). */
   inputDevice: string | null;
@@ -97,6 +99,7 @@ function loadPrefs(): CallPrefs {
     autoGain: true,
     pushToTalk: false,
     pttKey: "Space",
+    pttKeyLabel: null,
     inputDevice: null,
     outputDevice: null,
     cameraDevice: null,

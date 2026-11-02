@@ -5,7 +5,9 @@
   import Mic from "@lucide/svelte/icons/mic";
   import Video from "@lucide/svelte/icons/video";
   import { onDestroy } from "svelte";
-  import { isAndroid, nativeDevices, type NativeDevice } from "$lib/backend";
+  import { isAndroid, nativeCameraPreview, nativeDevices, type NativeDevice } from "$lib/backend";
+  import { nativeVideo } from "$lib/stores/nativeVideo.svelte";
+  import NativeVideo from "./NativeVideo.svelte";
   import { keyName } from "$lib/keys";
   import { call, type CallPrefs } from "$lib/stores/call.svelte";
 
@@ -101,9 +103,20 @@
 
   // ── Camera preview ──
   let preview = $state<MediaStream | null>(null);
+  // Linux app: through the native capture (the webview's camera access isn't the one calls use).
+  let nativePreview = $state(false);
   async function togglePreview() {
-    if (preview) return endPreview();
+    if (preview || nativePreview) return endPreview();
     error = null;
+    if (call.native) {
+      try {
+        await nativeCameraPreview(true, call.prefs.cameraDevice, (key, jpeg) => nativeVideo.push(key, jpeg));
+        nativePreview = true;
+      } catch (e) {
+        error = tr("Camera: {e}", { e });
+      }
+      return;
+    }
     try {
       const id = call.prefs.cameraDevice;
       preview = await navigator.mediaDevices.getUserMedia({
@@ -116,6 +129,8 @@
   function endPreview() {
     preview?.getTracks().forEach((t) => t.stop());
     preview = null;
+    if (nativePreview) void nativeCameraPreview(false, null, () => {}).catch(() => {});
+    nativePreview = false;
   }
   function stream(el: HTMLVideoElement, s: MediaStream) {
     el.srcObject = s;
@@ -127,7 +142,7 @@
     if (!listening) return;
     e.preventDefault();
     e.stopPropagation();
-    if (e.code !== "Escape") set({ pttKey: e.code });
+    if (e.code !== "Escape") set({ pttKey: e.code, pttKeyLabel: e.key });
     listening = false;
   }
 
@@ -190,7 +205,7 @@
   <div class="m-row">
     <span class="m-text"><strong>{tr("Key")}</strong><small>{tr("Works while AlwyChat is the active window")}</small></span>
     <button class="m-btn key" class:on={listening} onclick={() => (listening = !listening)}>
-      {listening ? tr("Press a key… (Esc to cancel)") : keyName(call.prefs.pttKey)}
+      {listening ? tr("Press a key… (Esc to cancel)") : keyName(call.prefs.pttKey, call.prefs.pttKeyLabel)}
     </button>
   </div>
 {/if}
@@ -204,14 +219,16 @@
   </select>
 </label>
 <div class="preview">
-  {#if preview}
+  {#if nativePreview}
+    <NativeVideo frames="local:preview" mirror />
+  {:else if preview}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video use:stream={preview} autoplay playsinline muted></video>
   {:else}
     <button class="m-btn" onclick={togglePreview}><Video size={16} />{tr("Preview camera")}</button>
   {/if}
 </div>
-{#if preview}<button class="m-btn" onclick={endPreview}>{tr("Stop preview")}</button>{/if}
+{#if preview || nativePreview}<button class="m-btn" onclick={endPreview}>{tr("Stop preview")}</button>{/if}
 
 {#if error}<p class="m-error">{error}</p>{/if}
 

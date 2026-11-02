@@ -186,3 +186,42 @@ pub async fn native_call_set_screen(on: bool) -> Result<(), String> {
         unsupported()
     }
 }
+
+#[cfg(target_os = "linux")]
+static PREVIEW: std::sync::Mutex<Option<alwy_call::CameraPreview>> = std::sync::Mutex::new(None);
+
+/// Settings' camera preview through the native capture (the one calls use): frames under
+/// `alwy_call::CAMERA_PREVIEW` on `on_frame`, until called again with `on: false`.
+#[tauri::command]
+pub async fn native_camera_preview(
+    on: bool,
+    camera: Option<String>,
+    on_frame: Channel<InvokeResponseBody>,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        // Stop the previous one first: a camera opens once at a time.
+        drop(PREVIEW.lock().unwrap().take());
+        if on {
+            let index = camera.and_then(|c| c.parse().ok()).unwrap_or(0);
+            let preview = alwy_call::CameraPreview::start(
+                index,
+                std::sync::Arc::new(move |key: &str, jpeg: Vec<u8>| {
+                    let mut message = Vec::with_capacity(1 + key.len() + jpeg.len());
+                    message.push(key.len().min(255) as u8);
+                    message.extend_from_slice(&key.as_bytes()[..key.len().min(255)]);
+                    message.extend_from_slice(&jpeg);
+                    let _ = on_frame.send(InvokeResponseBody::Raw(message));
+                }),
+            )
+            .await?;
+            *PREVIEW.lock().unwrap() = Some(preview);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (on, camera, on_frame);
+        unsupported()
+    }
+}

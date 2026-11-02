@@ -1,5 +1,7 @@
 # Builds AlwyChat for every platform. A pushed `v*` tag also drafts a GitHub release with the
 # files under the stable names the README links to (releases/latest/download/<name>).
+# Every push to the `beta` branch replaces the rolling `beta` pre-release (the README's
+# "Test version" column, releases/download/beta/<name>) with the new build.
 #
 # Optional repository secrets:
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
@@ -11,7 +13,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -63,7 +65,18 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         working-directory: app
-        run: pnpm tauri build ${{ matrix.args }}
+        shell: bash
+        run: |
+          # Logs need a GitHub sign-in: the end of a failed build is shown as annotations too.
+          show_tail() {
+            tail -n 40 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-220 \
+              | awk 'BEGIN{ORS="%0A"} {print}' | sed "s/^/::warning title=$1 build tail::/"
+            echo
+          }
+          if ! pnpm tauri build ${{ matrix.args }} 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            show_tail "${{ matrix.name }}"
+            exit 1
+          fi
 
       - name: Collect
         shell: bash
@@ -186,7 +199,17 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         working-directory: app
-        run: pnpm build:web
+        run: |
+          # Logs need a GitHub sign-in: the end of a failed build is shown as annotations too.
+          show_tail() {
+            tail -n 40 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-220 \
+              | awk 'BEGIN{ORS="%0A"} {print}' | sed "s/^/::warning title=$1 build tail::/"
+            echo
+          }
+          if ! pnpm build:web 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            show_tail web
+            exit 1
+          fi
       - name: Collect
         run: |
           mkdir out
@@ -213,3 +236,26 @@ jobs:
         with:
           draft: true
           files: out/*
+
+  beta:
+    name: Test version (beta)
+    if: github.ref == 'refs/heads/beta'
+    needs: [desktop, android, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      # One rolling pre-release: the old one (and its tag) goes, the new one points at this commit.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete beta --cleanup-tag --yes || true
+          gh release create beta out/* --prerelease --target "$GITHUB_SHA" \
+            --title "Test version (beta)" \
+            --notes "Built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): the latest changes, not yet in a release. It may have bugs."

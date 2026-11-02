@@ -1,6 +1,8 @@
 import { tr } from "$lib/i18n/index.svelte";
-/** Readable name of a keyboard key (`KeyboardEvent.code`): "Space", "F", "Left Ctrl"… */
-export function keyName(code: string): string {
+/** Readable name of a keyboard key (`KeyboardEvent.code`): "Space", "F", "Left Ctrl"…
+ * `label`: what it printed when chosen (`KeyboardEvent.key`), which follows the layout. */
+export function keyName(code: string, label?: string | null): string {
+  if (label && label.length === 1 && label.trim()) return label.toLocaleUpperCase();
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
   if (code.startsWith("Numpad")) return tr("Num {value}", { value: code.slice(6) });

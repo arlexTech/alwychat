@@ -302,7 +302,17 @@ pub(crate) async fn start_camera(
         let stop = stop.clone();
         thread::Builder::new()
             .name("camera".into())
-            .spawn(move || camera_loop(index, W, H, &video, &stop, sink, ready_tx))
+            .spawn(move || {
+                camera_loop(
+                    index,
+                    (W, H),
+                    Some(&video),
+                    &stop,
+                    sink,
+                    LOCAL_CAMERA,
+                    ready_tx,
+                )
+            })
             .map_err(|e| format!("camera: {e}"))?;
     }
     ready_rx
@@ -319,11 +329,11 @@ pub(crate) async fn start_camera(
 
 fn camera_loop(
     index: usize,
-    width: u32,
-    height: u32,
-    video: &NativeVideoSource,
+    (width, height): (u32, u32),
+    video: Option<&NativeVideoSource>,
     stop: &AtomicBool,
     sink: FrameSink,
+    preview_key: &str,
     ready: tokio::sync::oneshot::Sender<Result<(u32, u32), String>>,
 ) {
     use v4l::{
@@ -358,7 +368,7 @@ fn camera_loop(
         }
     };
     let _ = ready.send(Ok((w, h)));
-    let mut preview = Preview::new(LOCAL_CAMERA, sink, 15, (640, 480));
+    let mut preview = Preview::new(preview_key, sink, 24, (640, 480));
     while !stop.load(Ordering::Relaxed) {
         let Ok((data, _meta)) = stream.next() else {
             warn!("camera frame lost");
@@ -366,7 +376,10 @@ fn camera_loop(
             continue;
         };
         let buffer = yuyv_to_i420(data, w, h);
-        let buffer = send(video, buffer);
+        let buffer = match video {
+            Some(video) => send(video, buffer),
+            None => buffer,
+        };
         preview.offer(&buffer);
     }
 }
@@ -391,4 +404,46 @@ fn yuyv_to_i420(data: &[u8], width: u32, height: u32) -> I420Buffer {
         }
     }
     buffer
+}
+
+/// Frames key of the settings' camera preview.
+pub const CAMERA_PREVIEW: &str = "local:preview";
+
+/// The camera shown in Settings without publishing it anywhere (same capture as calls).
+pub struct CameraPreview {
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for CameraPreview {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl CameraPreview {
+    pub async fn start(index: usize, sink: FrameSink) -> Result<Self, String> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        {
+            let stop = stop.clone();
+            thread::Builder::new()
+                .name("camera-preview".into())
+                .spawn(move || {
+                    camera_loop(
+                        index,
+                        (640, 480),
+                        None,
+                        &stop,
+                        sink,
+                        CAMERA_PREVIEW,
+                        ready_tx,
+                    )
+                })
+                .map_err(|e| format!("camera: {e}"))?;
+        }
+        ready_rx
+            .await
+            .map_err(|_| "the camera stopped".to_owned())??;
+        Ok(Self { stop })
+    }
 }

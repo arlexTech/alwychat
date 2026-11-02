@@ -2,21 +2,25 @@
 
 A chat app for [Matrix](https://matrix.org). Messages are end-to-end encrypted, and you can talk with people on Element, Element X, FluffyChat or any other Matrix app.
 
-> AlwyChat is in beta. The first release isn't out yet, so the download links below won't work until it is. Until then, you can [build it yourself](#build-it-yourself).
+> AlwyChat is in beta. The first release isn't out yet, so the **Download** links below won't work until it is. Until then, take the **Test version**.
 
 ## Which file do I download?
 
 Find your device in the table and click the file next to it.
 
-| Your device | Download |
-|---|---|
-| 📱 **Android** phone or tablet (Android 7 or newer) | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-android.apk) |
-| 🐧 **Linux**, any distribution | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.AppImage) |
-| 🐧 **Linux**, Debian / Ubuntu / Mint | [AlwyChat-linux-amd64.deb](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-amd64.deb) |
-| 🐧 **Linux**, Fedora / openSUSE | [AlwyChat-linux-x86_64.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) |
-| 🍎 **iPhone / iPad** | Not available yet |
-| 🪟 **Windows** · 🍏 **macOS** | Not available yet |
-| 🌐 **Web browser**, on your own server | [AlwyChat-web.zip](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-web.zip) ([how to host it](#web-version)) |
+| Your device | Download | Test version |
+|---|---|---|
+| 📱 **Android** phone or tablet (Android 7 or newer) | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-android.apk) | [AlwyChat-android.apk](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-android.apk) |
+| 🐧 **Linux**, any distribution | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.AppImage) | [AlwyChat-linux-x86_64.AppImage](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64.AppImage) |
+| 🐧 **Linux**, Debian / Ubuntu / Mint | [AlwyChat-linux-amd64.deb](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-amd64.deb) | [AlwyChat-linux-amd64.deb](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-amd64.deb) |
+| 🐧 **Linux**, Fedora / openSUSE | [AlwyChat-linux-x86_64.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) | [AlwyChat-linux-x86_64.rpm](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64.rpm) |
+| 🪟 **Windows** 10 / 11 | Not available yet | [AlwyChat-windows-x64-setup.exe](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-windows-x64-setup.exe) |
+| 🍏 **macOS** | Not available yet | [AlwyChat-macos.dmg](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-macos.dmg) |
+| 🍎 **iPhone / iPad** | Not available yet | Not available yet |
+
+🌐 **Web browser**: AlwyChat also runs in a browser, hosted on your own server. See [how to host it](#web-version).
+
+The **Test version** has the newest changes as soon as they're made, so it may have bugs. To update it, download it again and install it over the old one.
 
 Not sure which Linux file to pick? Take the **AppImage**, it works on every distribution.
 

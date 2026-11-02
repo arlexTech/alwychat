@@ -153,7 +153,7 @@
           <input type="checkbox" role="switch" checked={call.prefs.noiseSuppression} onchange={(e) => call.setNoiseSuppression(e.currentTarget.checked)} />
         </label>
         <label>
-          <span><strong>{tr("Push to talk")}</strong><small>{tr("Your mic is open only while you hold the talk button{value}", { value: isAndroid ? "" : ` or ${keyName(call.prefs.pttKey)}` })}</small></span>
+          <span><strong>{tr("Push to talk")}</strong><small>{tr("Your mic is open only while you hold the talk button{value}", { value: isAndroid ? "" : ` or ${keyName(call.prefs.pttKey, call.prefs.pttKeyLabel)}` })}</small></span>
           <input type="checkbox" role="switch" checked={call.prefs.pushToTalk} onchange={(e) => call.setPushToTalk(e.currentTarget.checked)} />
         </label>
       </div>

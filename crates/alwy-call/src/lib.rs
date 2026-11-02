@@ -8,7 +8,7 @@
 
 mod video;
 
-pub use video::{FrameSink, LOCAL_CAMERA, LOCAL_SCREEN};
+pub use video::{CAMERA_PREVIEW, CameraPreview, FrameSink, LOCAL_CAMERA, LOCAL_SCREEN};
 
 use std::{
     collections::{HashMap, HashSet},
