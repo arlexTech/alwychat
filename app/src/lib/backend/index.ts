@@ -995,6 +995,8 @@ export interface IncomingShare {
   files: Picked[];
 }
 export const takeShare = () => invoke<IncomingShare>("take_share");
+/** Android: images, GIFs and stickers the keyboard inserted, copied like picked files. */
+export const takeKeyboardContent = () => invoke<IncomingShare>("take_keyboard_content");
 export const sendLocation = (roomId: string, geoUri: string, description = "") =>
   invoke<void>("send_location", { roomId, geoUri, description });
 

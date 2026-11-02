@@ -78,6 +78,9 @@ class PushService : FirebaseMessagingService() {
         .setSilent(!n.optBoolean("noisy", true))
         .setAutoCancel(true)
         .setContentIntent(pending)
+        // No suggested replies / emoji added by Android: AlwyChat doesn't handle them, so
+        // tapping one only opened the chat.
+        .setAllowSystemGeneratedContextualActions(false)
         .build()
       try {
         // Tag = chat: a newer message replaces the older one, and opening the chat clears it.

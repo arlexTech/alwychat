@@ -190,6 +190,14 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
       .put("size", target.length())
   }
 
+  /** Images, GIFs and stickers the keyboard inserted (KeyboardContent), once. */
+  @Command
+  fun takeKeyboard(invoke: Invoke) {
+    val files = JSArray()
+    KeyboardContent.take().forEach { files.put(it) }
+    invoke.resolve(JSObject().put("files", files))
+  }
+
   /**
    * What another app shared with us (text and/or files), once: the files are copied to `dir`
    * like picked ones, so the UI previews and sends them the same way. Empty when nothing waits.

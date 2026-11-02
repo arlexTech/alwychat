@@ -27,6 +27,7 @@ const HANDWRITTEN: &[&str] = &[
     "file_action",
     "send_file",
     "take_share",
+    "take_keyboard_content",
     "capture",
     "pick_files",
     "send_picked",
@@ -303,6 +304,7 @@ async fn handwritten(cmd: &str, args: &Args) -> Option<Reply> {
         }
         "setup_push" => infallible(false),
         "take_share" | "launch_room" => infallible(None::<()>),
+        "take_keyboard_content" => infallible(serde_json::json!({ "files": [] })),
         "log_ui_error" => {
             if let Ok(message) = args.get::<String>("message") {
                 web_sys::console::error_1(&JsValue::from_str(&format!("ui: {message}")));

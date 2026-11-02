@@ -45,6 +45,7 @@
     discardPicked,
     editHistory,
     isAndroid,
+    takeKeyboardContent,
     editMessage,
     markRead,
     pickFiles,
@@ -506,6 +507,22 @@
       pending.push({ name: picked.name, mime: picked.mime, url, picked });
     }
     if (shared.text) draft = draft.trim() ? `${draft}\n${shared.text}` : shared.text;
+  });
+
+  // Android: an image, GIF or sticker inserted from the keyboard (Gboard's clipboard or GIF
+  // panel) waits in this composer like a picked photo. Only the chat being typed in takes it.
+  $effect(() => {
+    if (!isAndroid) return;
+    const onContent = async () => {
+      if (document.activeElement !== input) return;
+      const content = await takeKeyboardContent().catch(() => null);
+      for (const picked of content?.files ?? []) {
+        const url = picked.mime.startsWith("image/") ? pickedMediaUrl(picked.path) : null;
+        pending.push({ name: picked.name, mime: picked.mime, url, picked });
+      }
+    };
+    window.addEventListener("alwychat-keyboard-content", onContent);
+    return () => window.removeEventListener("alwychat-keyboard-content", onContent);
   });
 
   /** Android: the system photo picker or document picker, several items at once. */

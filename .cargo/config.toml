@@ -1,0 +1,14 @@
+# Code wry adds to the Android WebView class it generates (RustWebView), which can't be edited:
+# the keyboard may insert images, GIFs and stickers (Gboard's clipboard and GIF panel). Without
+# it, Gboard says "AlwyChat does not support image pasting here". The content goes to
+# KeyboardContent.kt (gen/android/.../KeyboardContent.kt), which hands it to the open chat.
+[env]
+WRY_RUSTWEBVIEW_CLASS_EXTENSION = '''
+    override fun onCreateInputConnection(outAttrs: android.view.inputmethod.EditorInfo): android.view.inputmethod.InputConnection? {
+        val connection = super.onCreateInputConnection(outAttrs) ?: return null
+        androidx.core.view.inputmethod.EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("image/*", "video/*"))
+        return androidx.core.view.inputmethod.InputConnectionCompat.createWrapper(connection, outAttrs) { info, flags, _ ->
+            com.alwy.chat.KeyboardContent.receive(this, info, flags)
+        }
+    }
+'''

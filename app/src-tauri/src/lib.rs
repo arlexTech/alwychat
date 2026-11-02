@@ -1249,6 +1249,24 @@ async fn take_share(app: tauri::AppHandle) -> Result<Share, String> {
     }
 }
 
+/// Images, GIFs and stickers the keyboard inserted (Android), copied like picked files.
+#[tauri::command]
+async fn take_keyboard_content(app: tauri::AppHandle) -> Result<Share, String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::Gallery>()
+            .0
+            .run_mobile_plugin_async("takeKeyboard", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(Share::default())
+    }
+}
+
 /// Take a photo (`kind` = "photo") or record a video ("video") with the phone's camera app.
 /// Empty when cancelled. Android only.
 #[tauri::command]
@@ -1989,6 +2007,7 @@ pub fn run() {
             send_file,
             pick_files,
             take_share,
+            take_keyboard_content,
             capture,
             send_picked,
             send_voice,
