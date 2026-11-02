@@ -1222,7 +1222,7 @@
   {#if dragging}
     <div class="drop-hint" transition:fade={{ duration: 120 }}>{tr("Drop to send")}</div>
   {/if}
-  <div class="timeline">
+  <div class="timeline" class:wide>
     {#if tl.error}
       <p class="center error">{tl.error}</p>
     {/if}
@@ -1697,6 +1697,15 @@
   }
   .timeline {
     padding: 12px 0 8px;
+  }
+  /* Everyone on the left has no bubbles: over an illustrated theme or a photo, the text gets a
+     soft dark panel behind it to stay readable. */
+  :global(.chat-pane.scenic) .timeline.wide {
+    margin: 8px 8px 0;
+    border-radius: 18px;
+    background: rgb(8 10 18 / 0.5);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
   .center {
     margin: 10px 24px;

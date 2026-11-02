@@ -150,6 +150,8 @@ export interface Reaction {
   key: string;
   count: number;
   mine: boolean;
+  /** Who reacted with it (user IDs), first first. */
+  senders: string[];
 }
 
 export type MessageContent =

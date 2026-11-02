@@ -223,6 +223,8 @@ pub struct Reaction {
     pub count: usize,
     /// Whether we're one of the senders (clicking it removes ours).
     pub mine: bool,
+    /// Who reacted with it (user IDs), first first.
+    pub senders: Vec<String>,
 }
 
 /// One version of an edited message.
@@ -782,10 +784,15 @@ impl Mapper {
                 let reactions = msg
                     .reactions
                     .iter()
-                    .map(|(key, senders)| Reaction {
-                        key: key.clone(),
-                        count: senders.len(),
-                        mine: senders.contains_key(&own_id),
+                    .map(|(key, senders)| {
+                        let mut by_time: Vec<_> = senders.iter().collect();
+                        by_time.sort_by_key(|(_, info)| info.timestamp);
+                        Reaction {
+                            key: key.clone(),
+                            count: senders.len(),
+                            mine: senders.contains_key(&own_id),
+                            senders: by_time.into_iter().map(|(user, _)| user.to_string()).collect(),
+                        }
                     })
                     .collect();
                 let reply_to = msg.in_reply_to.as_ref().map(|r| {

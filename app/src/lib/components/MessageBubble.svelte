@@ -11,11 +11,13 @@
   import SmilePlus from "@lucide/svelte/icons/smile-plus";
   import Plus from "@lucide/svelte/icons/plus";
   import EmojiPicker from "./EmojiPicker.svelte";
+  import ReactionsSheet from "./ReactionsSheet.svelte";
+  import { members } from "$lib/stores/members.svelte";
   import Reply from "@lucide/svelte/icons/reply";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import { fade, scale, slide } from "svelte/transition";
-  import { isAndroid, openExternal, retrySend, type MessageEntry } from "$lib/backend";
+  import { isAndroid, openExternal, retrySend, type MessageEntry, type Reaction } from "$lib/backend";
   import MapPin from "@lucide/svelte/icons/map-pin";
   import { liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { clockTime, messageStamp } from "$lib/format";
@@ -253,6 +255,29 @@
     const target = event.target as HTMLElement;
     if (swiping || target.closest("a, button, input, video, audio, [data-mx-spoiler]:not(.revealed)")) return;
     afterTap(() => (timeShown = !timeShown));
+  }
+
+  // Who reacted: long-press a reaction (touch) or right-click it; hovering shows the names.
+  let reactionsFor = $state<string | null>(null);
+  let chipPressed = false;
+  let chipTimer: ReturnType<typeof setTimeout> | undefined;
+  function chipPressStart(e: PointerEvent, key: string) {
+    if (e.pointerType !== "touch") return;
+    e.stopPropagation();
+    chipTimer = setTimeout(() => {
+      chipPressed = true;
+      navigator.vibrate?.(10);
+      reactionsFor = key;
+    }, 450);
+  }
+  const chipPressEnd = () => clearTimeout(chipTimer);
+  function reactedBy(r: Reaction): string {
+    void members.load(roomId);
+    const names = r.senders.map((id) => {
+      const m = members.get(roomId, id);
+      return m.isMe ? tr("You") : m.name;
+    });
+    return names.length > 12 ? `${names.slice(0, 12).join(", ")}…` : names.join(", ");
   }
 
   /** Opens below the bubble when there's no room above it. */
@@ -500,11 +525,26 @@
     {#if msg.reactions.length}
       <div class="reactions">
         {#each msg.reactions as r (r.key)}
-          <button class="chip" class:mine={r.mine} onclick={() => react(r.key)} in:scale={{ duration: 180, start: 0.5 }}>
+          <button
+            class="chip"
+            class:mine={r.mine}
+            title={reactedBy(r)}
+            onclick={() => (chipPressed ? (chipPressed = false) : react(r.key))}
+            oncontextmenu={(e) => (e.preventDefault(), (reactionsFor = r.key))}
+            onpointerdown={(e) => chipPressStart(e, r.key)}
+            onpointerup={chipPressEnd}
+            onpointercancel={chipPressEnd}
+            onpointerleave={chipPressEnd}
+            in:scale={{ duration: 180, start: 0.5 }}
+          >
             {r.key}{#if r.count > 1}<span>{r.count}</span>{/if}
           </button>
         {/each}
       </div>
+    {/if}
+
+    {#if reactionsFor !== null}
+      <ReactionsSheet {roomId} reactions={msg.reactions} initial={reactionsFor || null} onClose={() => (reactionsFor = null)} />
     {/if}
 
     {#if msg.thread && msg.thread.replies > 0 && onThread}
@@ -1162,6 +1202,10 @@
   }
   .wide .bubble.big {
     padding: 0;
+  }
+  /* No bubble edge to tuck under: reactions go below the message, not over its text. */
+  .wide .reactions {
+    margin: 4px 0 2px;
   }
   .seen {
     display: flex;
