@@ -21,6 +21,7 @@
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import type { Snippet } from "svelte";
   import { fly } from "svelte/transition";
+  import { sidePanels } from "$lib/stores/panel.svelte";
 
   /** A full-screen page (settings and the like) that slides in over the app. */
   let {
@@ -29,6 +30,13 @@
     children,
     layout = getContext<PageLayout | undefined>(LAYOUT) ?? "full",
   }: { title: string; onClose: () => void; children: Snippet; layout?: PageLayout } = $props();
+
+  // A side panel makes the chats layout narrower rather than covering the chat.
+  $effect(() => {
+    if (layout !== "panel") return;
+    sidePanels.open++;
+    return () => void sidePanels.open--;
+  });
 </script>
 
 <div class="page {layout}" role="dialog" aria-modal="true" aria-label={title} transition:fly={{ x: 48, duration: 220 }}>
@@ -114,7 +122,7 @@
     }
     .page.panel {
       left: auto;
-      width: 400px;
+      width: var(--side-panel);
       border-left: 1px solid var(--border);
       box-shadow: -16px 0 40px rgb(0 0 0 / 0.25);
     }

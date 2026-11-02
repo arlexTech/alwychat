@@ -18,8 +18,10 @@
   import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
   import { onMount } from "svelte";
+  import logo from "$lib/assets/logo.svg";
   import Download from "@lucide/svelte/icons/download";
   import { updates } from "$lib/stores/updates.svelte";
+  import { sidePanels } from "$lib/stores/panel.svelte";
   import { flip } from "svelte/animate";
   import { fade, fly } from "svelte/transition";
   import {
@@ -282,7 +284,7 @@
   }
 </script>
 
-<div class="shell" class:has-selection={selected} class:call-side={call.sideChat}>
+<div class="shell" class:has-selection={selected} class:call-side={call.sideChat} class:side-panel={sidePanels.open > 0}>
   <aside class="list-pane">
     <header>
       <button class="me" onclick={() => (settingsOpen = true)} aria-label={tr("Settings")} title={tr("Settings")}>
@@ -425,7 +427,10 @@
     {:else if selected}
       <ChatView room={selected} onBack={closeChat} />
     {:else}
-      <div class="placeholder">{tr("Select a chat to start messaging")}</div>
+      <div class="placeholder">
+        <img src={logo} alt="" width="72" height="72" />
+        <span>{tr("Select a chat to start messaging")}</span>
+      </div>
     {/if}
   </section>
 </div>
@@ -823,6 +828,12 @@
     min-width: 0;
     min-height: 0;
   }
+  /* Chat or space settings open on the right (wide screens): the chats make room for them. */
+  @media (min-width: 900px) {
+    .shell.side-panel {
+      padding-right: var(--side-panel);
+    }
+  }
   /* In a call with its chat open (computer): the chat pane sits on the right of the call. */
   .shell.call-side .chat-pane {
     position: fixed;
@@ -862,9 +873,16 @@
   }
   .placeholder {
     flex: 1;
-    display: grid;
-    place-items: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
     color: var(--muted);
+  }
+  .placeholder img {
+    border-radius: 18px;
+    opacity: 0.85;
   }
 
   /* Phone layout: one pane at a time. */

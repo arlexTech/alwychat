@@ -9,6 +9,7 @@
   import { presence } from "$lib/stores/presence.svelte";
   import Page, { setPageLayout } from "./Page.svelte";
   import VoiceSettings from "./VoiceSettings.svelte";
+  import logo from "$lib/assets/logo.svg";
   import { updates } from "$lib/stores/updates.svelte";
   import { clock } from "$lib/stores/clock.svelte";
   import FolderPage from "./FolderPage.svelte";
@@ -707,6 +708,7 @@
   <Page title={tr("About")} onClose={() => (section = null)} layout="section">
     {#if settings}
     <div class="about">
+      <img class="about-logo" src={logo} alt="" width="64" height="64" />
       <p><strong>{tr("AlwyChat")}</strong> {version}</p>
       <p>{tr("Server: {server}", { server: server })}</p>
       <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button></p>

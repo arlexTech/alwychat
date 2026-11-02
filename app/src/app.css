@@ -1,5 +1,7 @@
 /* Design tokens — Element X calm × Messenger warmth. Dark by default; [data-theme] switches. */
 :root {
+  /* Width of chat / space settings beside the chat (wide screens). */
+  --side-panel: 400px;
   /* Width of the settings list beside the open section (wide screens). */
   --settings-list: 360px;
   /* Width of a call's chat docked beside it. */
