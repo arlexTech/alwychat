@@ -8,6 +8,7 @@
   import { tr } from "$lib/i18n/index.svelte";
   import { members } from "$lib/stores/members.svelte";
   import Avatar from "./Avatar.svelte";
+  import { portal } from "$lib/portal";
 
   let {
     roomId,
@@ -29,8 +30,8 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" transition:fade={{ duration: 140 }} onclick={onClose}></div>
-<div class="sheet" role="dialog" aria-label={tr("Reactions")} transition:fly={{ y: 40, duration: 200 }}>
+<div class="backdrop" use:portal transition:fade={{ duration: 140 }} onclick={onClose}></div>
+<div class="sheet" use:portal role="dialog" aria-label={tr("Reactions")} transition:fly={{ y: 40, duration: 200 }}>
   <div class="grip"></div>
   <div class="tabs" role="tablist">
     <button role="tab" aria-selected={tab === null} class:on={tab === null} onclick={() => (tab = null)}>{tr("All")} {total}</button>

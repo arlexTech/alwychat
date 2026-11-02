@@ -461,8 +461,15 @@
   });
 
   /** Buttons next to the field keep the focus in it (on a phone, losing it closes the keyboard). */
+  /** Android shrinks the page while its keyboard is open (MainActivity's insets). */
+  const keyboardOpen = () => !isAndroid || window.innerHeight < screen.height * 0.75;
+  // Send and the quick reaction keep the keyboard as it is: open stays open (several messages
+  // in a row), closed stays closed (Android's back gesture hides it but leaves the field
+  // focused, and it would pop up again).
   function keepFocus(event: MouseEvent) {
-    if (document.activeElement === input) event.preventDefault();
+    if (document.activeElement !== input) return;
+    if (keyboardOpen()) event.preventDefault();
+    else input.blur();
   }
 
   async function send(event?: SubmitEvent) {
@@ -1703,9 +1710,8 @@
   :global(.chat-pane.scenic) .timeline.wide {
     margin: 8px 8px 0;
     border-radius: 18px;
-    background: rgb(8 10 18 / 0.5);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    /* No backdrop-filter: it would trap fixed-position sheets and menus inside the panel. */
+    background: rgb(8 10 18 / 0.62);
   }
   .center {
     margin: 10px 24px;
