@@ -25,7 +25,7 @@
   const rows = $derived(
     reactions
       .filter((r) => tab === null || r.key === tab)
-      .flatMap((r) => r.senders.map((userId) => ({ key: r.key, userId, ...members.get(roomId, userId) }))),
+      .flatMap((r) => (r.senders ?? []).map((userId) => ({ key: r.key, userId, ...members.get(roomId, userId) }))),
   );
 </script>
 

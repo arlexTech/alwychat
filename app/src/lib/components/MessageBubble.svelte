@@ -278,7 +278,7 @@
   const chipPressEnd = () => clearTimeout(chipTimer);
   function reactedBy(r: Reaction): string {
     void members.load(roomId);
-    const names = r.senders.map((id) => {
+    const names = (r.senders ?? []).map((id) => {
       const m = members.get(roomId, id);
       return m.isMe ? tr("You") : m.name;
     });

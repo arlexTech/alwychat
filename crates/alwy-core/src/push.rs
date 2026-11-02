@@ -126,7 +126,7 @@ impl crate::Core {
             ),
             // An internal gateway (only the homeserver reaches it) is fine: this direct test
             // just can't run from the phone.
-            Err(e) if e.is_connect() || e.is_timeout() => (
+            Err(e) if unreachable(&e) => (
                 false,
                 false,
                 Some("your server's push gateway can only be reached by the server itself, so this test can't run from here; send yourself a message from another device instead".into()),
@@ -230,4 +230,12 @@ impl crate::Core {
             noisy: item.is_noisy.unwrap_or(true),
         }))
     }
+}
+
+/// The gateway couldn't be reached at all (an address only the homeserver can reach).
+fn unreachable(e: &reqwest::Error) -> bool {
+    #[cfg(not(target_family = "wasm"))]
+    return e.is_connect() || e.is_timeout();
+    #[cfg(target_family = "wasm")]
+    return e.is_timeout() || e.is_request();
 }

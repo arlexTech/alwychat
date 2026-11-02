@@ -1240,6 +1240,8 @@
     {#each rows as row (row.key)}
       {#if row.kind === "message"}
         <div data-event={row.msg.item_id}>
+          <!-- One message that fails to draw mustn't take the whole conversation with it. -->
+          <svelte:boundary onerror={(e) => console.warn("message", row.msg.item_id, e)}>
           <MessageBubble
             msg={row.msg}
             first={row.first}
@@ -1265,6 +1267,8 @@
             onForward={actionsFor(row.msg, row.album).forward}
             onLongPress={() => (actionFor = { msg: row.msg, album: row.album })}
           />
+          {#snippet failed()}<p class="broken">{tr("Couldn't show this message")}</p>{/snippet}
+          </svelte:boundary>
         </div>
       {:else if row.kind === "day"}
         <div class="day"><span>{row.label}</span></div>
@@ -1712,6 +1716,12 @@
     border-radius: 18px;
     /* No backdrop-filter: it would trap fixed-position sheets and menus inside the panel. */
     background: rgb(8 10 18 / 0.62);
+  }
+  .broken {
+    margin: 2px 16px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-style: italic;
   }
   .center {
     margin: 10px 24px;

@@ -196,8 +196,13 @@
   .slide {
     flex: 0 0 100%;
     display: grid;
+    /* A definite cell, so the image's max-height has something to measure: without it, a tall
+       screenshot kept its full height and ran off the screen. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
     min-width: 0;
+    height: 100%;
+    box-sizing: border-box;
     padding: 64px 4vw 72px;
   }
   img,

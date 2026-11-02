@@ -167,6 +167,7 @@
   "Couldn't open Saved messages: {e}": "Impossible d'ouvrir les messages enregistrés : {e}",
   "Couldn't save: {error}": "Enregistrement impossible : {error}",
   "Couldn't save: {e}": "Enregistrement impossible : {e}",
+  "Couldn't show this message": "Impossible d'afficher ce message",
   "Couldn't start recording: {e}": "Impossible de lancer l'enregistrement : {e}",
   "Couldn't start the chat: {e}": "Impossible de démarrer la discussion : {e}",
   "Couldn't start the {what}: {e}": "Impossible de démarrer : {what} ({e})",

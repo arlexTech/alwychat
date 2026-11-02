@@ -1,6 +1,7 @@
 //! Plain HTTP downloads outside Matrix (app updates), with the same client stack as the SDK
 //! (it already has working TLS on every platform, Android included).
 
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 
 use matrix_sdk::reqwest;
@@ -27,7 +28,8 @@ pub async fn fetch_text(url: &str) -> Result<String> {
         .map_err(|e| Error::Download(e.to_string()))
 }
 
-/// Download `url` into `path`, reporting (bytes so far, total if known).
+/// Download `url` into `path`, reporting (bytes so far, total if known). Not in a browser.
+#[cfg(not(target_family = "wasm"))]
 pub async fn download_to(
     url: &str,
     path: &Path,
