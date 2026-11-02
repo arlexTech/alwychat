@@ -190,25 +190,45 @@ async fn drive(
             | VerificationRequestState::Requested { .. } => {}
             VerificationRequestState::Ready { .. } => {
                 emit(VerificationUpdate::Ready);
-                // We only offer emoji, so whoever gets here first starts it (the spec resolves races).
+                // We only offer emoji. If both sides start it at once, the spec drops one of the
+                // two, so the side that asked starts it; the other only steps in when nothing
+                // came (some clients wait for the other side to start).
+                if !request.we_started() {
+                    tokio::select! {
+                        next = changes.next() => {
+                            state = match next {
+                                Some(s) => s,
+                                None => return,
+                            };
+                            continue;
+                        }
+                        () = crate::rt::sleep(std::time::Duration::from_secs(3)) => {}
+                    }
+                }
                 if let Err(e) = request.start_sas().await {
                     warn!("couldn't start emoji verification: {e}");
                 }
             }
             VerificationRequestState::Transitioned { verification, .. } => {
-                match verification.sas() {
-                    Some(sas) => {
-                        *slot.lock().unwrap() = Some(sas.clone());
-                        drive_sas(sas, emit).await;
-                    }
-                    None => {
-                        let _ = request.cancel().await;
-                        emit(VerificationUpdate::Cancelled {
-                            reason: "Only emoji verification is supported".to_owned(),
-                        });
+                let Some(sas) = verification.sas() else {
+                    let _ = request.cancel().await;
+                    return emit(VerificationUpdate::Cancelled {
+                        reason: "Only emoji verification is supported".to_owned(),
+                    });
+                };
+                *slot.lock().unwrap() = Some(sas.clone());
+                // Follow it, but switch when the request moves to another one (both sides
+                // started at once and the spec kept the other side's).
+                tokio::select! {
+                    () = drive_sas(sas, &emit) => return,
+                    next = changes.next() => {
+                        state = match next {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        continue;
                     }
                 }
-                return;
             }
             VerificationRequestState::Done => return emit(VerificationUpdate::Done),
             VerificationRequestState::Cancelled(info) => {
