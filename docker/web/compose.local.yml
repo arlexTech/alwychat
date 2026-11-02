@@ -1,6 +1,7 @@
-# Local test on this PC: https://chat.example.org with a certificate from Caddy's own local CA
+# Local test on this PC: https://$ALWY_LOCAL_HOST (point it to 127.0.0.1 in /etc/hosts) with a
+# certificate from Caddy's own local CA
 # (the browser warns once). Serves the folder built by `pnpm build:web`, no image build needed.
-#   docker compose -f docker/web/compose.local.yml up -d
+#   ALWY_LOCAL_HOST=chat.example.org docker compose -f docker/web/compose.local.yml up -d
 services:
   alwychat-web:
     image: caddy:2-alpine
@@ -8,7 +9,7 @@ services:
       - "127.0.0.1:443:443"
       - "127.0.0.1:80:80"
     environment:
-      ALWY_ADDRESS: chat.example.org
+      ALWY_ADDRESS: ${ALWY_LOCAL_HOST:-chat.localhost}
       ALWY_TLS: tls internal
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

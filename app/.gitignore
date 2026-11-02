@@ -13,3 +13,4 @@ vite.config.ts.timestamp-*
 src/lib/backend/wasm/
 build-web/
 .dev-cert/
+.dev-web.env
