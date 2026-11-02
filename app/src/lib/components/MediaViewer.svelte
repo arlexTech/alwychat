@@ -20,6 +20,61 @@
     if (next === index) return;
     index = next;
     status = null;
+    resetZoom();
+  }
+
+  // Zoom (photos): pinch, wheel, double tap / double click; drag to move around when zoomed.
+  // Coordinates are relative to the screen's centre, where the photo is centred.
+  let zoom = $state(1);
+  let panX = $state(0);
+  let panY = $state(0);
+  let height = $state(1);
+  let zooming = $state(false);
+  const MAX_ZOOM = 5;
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinch: { dist: number; zoom: number; midX: number; midY: number; panX: number; panY: number } | null = null;
+  let pan: { id: number; x: number; y: number; panX: number; panY: number } | null = null;
+
+  function resetZoom() {
+    zoom = 1;
+    panX = panY = 0;
+    pinch = pan = null;
+  }
+  function clampPan() {
+    const maxX = ((zoom - 1) * width) / 2;
+    const maxY = ((zoom - 1) * height) / 2;
+    panX = Math.max(-maxX, Math.min(maxX, panX));
+    panY = Math.max(-maxY, Math.min(maxY, panY));
+  }
+  /** Zoom to `next` keeping the screen point (x, y) where it is. */
+  function zoomAt(next: number, x: number, y: number) {
+    next = Math.max(1, Math.min(MAX_ZOOM, next));
+    const mx = x - width / 2;
+    const my = y - height / 2;
+    const k = next / zoom;
+    panX = mx - (mx - panX) * k;
+    panY = my - (my - panY) * k;
+    zoom = next;
+    if (zoom === 1) panX = panY = 0;
+    clampPan();
+  }
+  function wheel(e: WheelEvent) {
+    if (item?.kind !== "image") return;
+    e.preventDefault();
+    zoomAt(zoom * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+  }
+  // Svelte's wheel listeners are passive (can't stop the page scrolling): add our own.
+  let viewer = $state<HTMLElement>();
+  $effect(() => {
+    const el = viewer;
+    if (!el) return;
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+  });
+  function toggleZoom(e: MouseEvent) {
+    e.stopPropagation();
+    if (zoom > 1) resetZoom();
+    else zoomAt(2.5, e.clientX, e.clientY);
   }
 
   let status = $state<string | null>(null);
@@ -42,6 +97,24 @@
 
   function down(e: PointerEvent) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (item?.kind === "image" && pointers.size === 2) {
+      // Two fingers: pinch, never a swipe.
+      const [a, b] = [...pointers.values()];
+      pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom, midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, panX, panY };
+      drag = null;
+      dx = dy = 0;
+      dragging = false;
+      zooming = swiped = true;
+      return;
+    }
+    if (zoom > 1) {
+      // Zoomed: one finger (or the mouse) moves the photo around.
+      pan = { id: e.pointerId, x: e.clientX, y: e.clientY, panX, panY };
+      zooming = true;
+      swiped = false;
+      return;
+    }
     // Leave the video's own controls (seek bar) alone.
     if (e.target instanceof HTMLVideoElement && e.clientY > e.target.getBoundingClientRect().bottom - 64) return;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, axis: null };
@@ -49,6 +122,28 @@
   }
 
   function move(e: PointerEvent) {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      const next = Math.max(1, Math.min(MAX_ZOOM, pinch.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist)));
+      const mx = (a.x + b.x) / 2 - width / 2;
+      const my = (a.y + b.y) / 2 - height / 2;
+      const m0x = pinch.midX - width / 2;
+      const m0y = pinch.midY - height / 2;
+      const k = next / pinch.zoom;
+      zoom = next;
+      panX = mx - (m0x - pinch.panX) * k;
+      panY = my - (m0y - pinch.panY) * k;
+      clampPan();
+      return;
+    }
+    if (pan && e.pointerId === pan.id) {
+      if (Math.hypot(e.clientX - pan.x, e.clientY - pan.y) > 6) swiped = true;
+      panX = pan.panX + e.clientX - pan.x;
+      panY = pan.panY + e.clientY - pan.y;
+      clampPan();
+      return;
+    }
     if (!drag || e.pointerId !== drag.id) return;
     const mx = e.clientX - drag.x;
     const my = e.clientY - drag.y;
@@ -67,6 +162,16 @@
   }
 
   function up(e: PointerEvent) {
+    pointers.delete(e.pointerId);
+    if (pinch || pan) {
+      if (pointers.size < 2) pinch = null;
+      if (pan?.id === e.pointerId) pan = null;
+      if (!pinch && !pan) {
+        zooming = false;
+        if (zoom < 1.05) resetZoom();
+      }
+      return;
+    }
     if (!drag || e.pointerId !== drag.id) return;
     const { axis, t } = drag;
     drag = null;
@@ -104,6 +209,8 @@
   transition:fade={{ duration: 160 }}
   style:background-color="rgb(0 0 0 / {0.92 * Math.max(0.2, 1 - Math.abs(dy) / 400)})"
   bind:clientWidth={width}
+  bind:clientHeight={height}
+  bind:this={viewer}
   onclick={backdropClick}
   onpointerdown={down}
   onpointermove={move}
@@ -125,7 +232,10 @@
                 src={eventMediaUrl(it.media)}
                 alt={it.caption ?? ""}
                 draggable="false"
+                class:zooming
+                style:transform={i === index && zoom > 1 ? `translate(${panX}px, ${panY}px) scale(${zoom})` : undefined}
                 onclick={(e) => e.stopPropagation()}
+                ondblclick={toggleZoom}
               />
             {:else if i === index}
               <!-- svelte-ignore a11y_media_has_caption -->
@@ -204,6 +314,13 @@
     height: 100%;
     box-sizing: border-box;
     padding: 64px 4vw 72px;
+  }
+  img {
+    transition: transform 0.2s var(--ease, ease-out);
+    will-change: transform;
+  }
+  img.zooming {
+    transition: none;
   }
   img,
   video {

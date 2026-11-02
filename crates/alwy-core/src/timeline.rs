@@ -1299,7 +1299,46 @@ fn reply_only_mention(
         MessageType::Emote(t) => t.formatted.as_ref().map(|f| f.body.as_str()),
         _ => None,
     };
-    let named =
-        m.body().contains(id) || html.is_some_and(|h| h.contains(id) || h.contains(&encoded));
+    // The quote of the replied message (reply fallback) names us too: only the new text counts.
+    let body = without_plain_quote(m.body());
+    let html = html.map(without_html_quote);
+    let named = body.contains(id) || html.is_some_and(|h| h.contains(id) || h.contains(&encoded));
     !named
+}
+
+/// A reply's plain body without its fallback quote ("> <@user> text" lines, then a blank line).
+fn without_plain_quote(body: &str) -> &str {
+    if !body.starts_with("> ") {
+        return body;
+    }
+    body.split_once("\n\n").map_or("", |(_, rest)| rest)
+}
+
+/// A reply's HTML without its fallback quote (`<mx-reply>…</mx-reply>`).
+fn without_html_quote(html: &str) -> &str {
+    match html.find("</mx-reply>") {
+        Some(end) => &html[end + "</mx-reply>".len()..],
+        None => html,
+    }
+}
+
+#[cfg(test)]
+mod reply_quote_tests {
+    use super::{without_html_quote, without_plain_quote};
+
+    #[test]
+    fn quotes_are_left_out() {
+        assert_eq!(
+            without_plain_quote("> <@a:x.org> hi\n> there\n\nbanger"),
+            "banger"
+        );
+        assert_eq!(without_plain_quote("hello @a:x.org"), "hello @a:x.org");
+        assert_eq!(
+            without_html_quote(
+                "<mx-reply><blockquote><a href=\"https://matrix.to/#/@a:x.org\">a</a></blockquote></mx-reply>banger"
+            ),
+            "banger"
+        );
+        assert_eq!(without_html_quote("<p>hi</p>"), "<p>hi</p>");
+    }
 }
