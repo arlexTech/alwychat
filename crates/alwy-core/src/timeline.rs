@@ -658,9 +658,9 @@ async fn stream_timeline(
 /// Notice for our own `com.alwy.chat.room.*` state events (theme, quick reaction, nicknames).
 fn custom_state_verb(event_type: &str) -> Option<&'static str> {
     match event_type {
-        crate::custom::THEME => Some("changed the chat theme"),
-        crate::custom::QUICK_REACTION => Some("changed the quick reaction"),
-        crate::custom::NICKNAMES => Some("changed a nickname"),
+        t if t == crate::custom::THEME => Some("changed the chat theme"),
+        t if t == crate::custom::QUICK_REACTION => Some("changed the quick reaction"),
+        t if t == crate::custom::NICKNAMES => Some("changed a nickname"),
         _ => None,
     }
 }
@@ -1124,10 +1124,11 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
     }
 }
 
-/// `com.alwy.chat.gallery` from the event's content (absent on local echoes until sent).
+/// The album (`com.alwy.chat.gallery`) from the event's content (absent on local echoes until sent).
 fn gallery_of(event: &EventTimelineItem) -> Option<GalleryRef> {
     let content: serde_json::Value = event.original_json()?.get_field("content").ok()??;
-    serde_json::from_value(content.get("com.alwy.chat.gallery")?.clone()).ok()
+    let value = content.get(crate::names::GALLERY)?;
+    serde_json::from_value(value.clone()).ok()
 }
 
 /// The items a diff carries, if any.

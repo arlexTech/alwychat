@@ -9,3 +9,6 @@ app/src-tauri/gen/schemas/
 
 # Local notes for Claude (server details, kept off GitHub)
 CLAUDE.md
+
+# Local release settings (scripts/release-local.sh): personal hosts, never commit
+.release.env

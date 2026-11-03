@@ -26,9 +26,7 @@ use tracing::warn;
 
 use crate::{Error, Result};
 
-pub const QUICK_REACTION: &str = "com.alwy.chat.room.quick_reaction";
-pub const THEME: &str = "com.alwy.chat.room.theme";
-pub const NICKNAMES: &str = "com.alwy.chat.room.nicknames";
+pub use crate::names::{NICKNAMES, QUICK_REACTION, THEME};
 
 /// Everything the chat view needs to look the way its members chose.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -81,7 +79,9 @@ impl crate::Core {
             let on_style = on_style.clone();
             async move {
                 let kind = event.get_field::<String>("type").ok().flatten();
-                if matches!(kind.as_deref(), Some(QUICK_REACTION | THEME | NICKNAMES))
+                if kind
+                    .as_deref()
+                    .is_some_and(|k| k == QUICK_REACTION || k == THEME || k == NICKNAMES)
                     || kind.as_deref() == Some("m.room.power_levels")
                 {
                     on_style(chat_style(&room).await);

@@ -19,7 +19,7 @@ const THUMBNAIL_MAX_SIDE: u32 = 800;
 const COMPRESSED_QUALITY: u8 = 82;
 const THUMBNAIL_QUALITY: u8 = 75;
 /// Per-chat media preferences (room account data, private, synced between our devices).
-const MEDIA_PREFS: &str = "com.alwy.chat.room.media_prefs";
+use crate::names::MEDIA_PREFS;
 
 /// One file to send, as described by the UI (the bytes travel separately).
 #[derive(Debug, Deserialize)]
@@ -60,7 +60,7 @@ impl crate::Core {
                 .map(matrix_sdk::ruma::events::room::message::TextMessageEventContent::markdown),
             extra_content: file.gallery.map(|g| {
                 let mut map = serde_json::Map::new();
-                map.insert("com.alwy.chat.gallery".to_owned(), json!(g));
+                map.insert(crate::names::GALLERY.to_owned(), json!(g));
                 map
             }),
             ..Default::default()

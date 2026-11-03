@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 
-pub const DRAFT: &str = "com.alwy.chat.draft";
+pub use crate::names::DRAFT;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Draft {

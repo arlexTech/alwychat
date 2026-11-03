@@ -39,7 +39,7 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// MAS only accepts a custom-scheme redirect whose reversed scheme is under this host.
 const CLIENT_URI: &str = "https://arlextech.github.io/alwychat";
 /// Mobile redirect target, declared to the OS by the deep-link plugin (tauri.conf.json).
-pub const REDIRECT_SCHEME: &str = "com.alwy.chat";
+pub const REDIRECT_SCHEME: &str = crate::names::APP_ID;
 const SESSION_FILE: &str = "session.json";
 /// The store of sessions saved before stores got their own folder per sign-in.
 const STORE_DIR: &str = "store";
@@ -93,7 +93,7 @@ struct Secrets {
 mod keychain {
     use super::Secrets;
 
-    const SERVICE: &str = "com.alwy.chat";
+    const SERVICE: &str = crate::names::APP_ID;
 
     fn entry(account: &str) -> keyring::Result<keyring::Entry> {
         keyring::Entry::new(SERVICE, account)

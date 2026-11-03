@@ -1196,7 +1196,10 @@ mod tests {
             "content": { "msgtype": "m.image", "body": "vacances.jpg", "url": "mxc://x/y" }
         }));
         index
-            .apply("!r:x", &[&photo, &msg("$l", "regarde https://arlextech.github.io/alwychat stp")])
+            .apply(
+                "!r:x",
+                &[&photo, &msg("$l", "regarde https://example.org stp")],
+            )
             .unwrap();
         let media = index.listing("!r:x", KindFilter::Media, None, 10).unwrap();
         assert_eq!(media.len(), 1);

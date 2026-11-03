@@ -32,7 +32,7 @@ use tracing::warn;
 
 use crate::{Error, Result};
 
-const CHAT_LIST_PREFS: &str = "com.alwy.chat.chat_list";
+use crate::names::CHAT_LIST as CHAT_LIST_PREFS;
 
 /// A joined top-level space.
 #[derive(Debug, Clone, Serialize)]
@@ -312,7 +312,6 @@ impl crate::Core {
     pub async fn chat_list_prefs(&self) -> Result<ChatListPrefs> {
         let account = self.client()?.account();
         let kind = GlobalAccountDataEventType::from(CHAT_LIST_PREFS);
-        // Offline: the last synced copy.
         let raw = match account.fetch_account_data(kind.clone()).await {
             Ok(raw) => raw,
             Err(e) => {

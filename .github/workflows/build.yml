@@ -308,7 +308,10 @@ jobs:
               sleep 20
             done
           fi
-          gh release view beta >/dev/null 2>&1 || gh release create beta --prerelease --title "Beta" --notes "Building…"
+          # Android publishes first: start the release afresh, so files of older builds (and of
+          # platforms that no longer build) don't linger. The tag stays.
+          gh release delete beta --yes || true
+          gh release create beta --prerelease --title "Beta" --notes "Building…"
           py=$(command -v python3 || command -v python)
           "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}" "$PLATFORM"
           gh release upload beta out/* --clobber

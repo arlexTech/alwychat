@@ -14,7 +14,7 @@ use tracing::warn;
 
 use crate::{Error, Result};
 
-const SAVED_MESSAGES: &str = "com.alwy.chat.saved_messages";
+use crate::names::SAVED_MESSAGES;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Pointer {

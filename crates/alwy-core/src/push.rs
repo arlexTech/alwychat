@@ -22,9 +22,9 @@ use tracing::info;
 use crate::Result;
 
 /// Key in the homeserver's `/.well-known/matrix/client` naming its AlwyChat push gateway.
-const WELL_KNOWN_KEY: &str = "com.alwy.chat.push";
+const WELL_KNOWN_KEY: &str = crate::names::PUSH_WELL_KNOWN;
 /// Must match the app id in the gateway's config.
-pub const PUSH_APP_ID: &str = "com.alwy.chat";
+pub const PUSH_APP_ID: &str = crate::names::APP_ID;
 /// Event ID of the test notification (see `test_push`).
 pub const TEST_EVENT: &str = "$alwychat-push-test";
 
