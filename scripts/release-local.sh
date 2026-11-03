@@ -72,7 +72,7 @@ if $android; then
   [ -f src-tauri/gen/android/app/google-services.json ] ||
     echo "warning: no google-services.json, this build gets notifications only while it runs"
   rm -rf src-tauri/gen/android/app/build/outputs/apk
-  ALWY_UPDATE_FEED="$RELEASE_URL/latest-android.json" pnpm tauri android build --apk --target aarch64 armv7 x86_64 --config "$config"
+  ALWY_UPDATE_FEED="$RELEASE_URL/latest-android.json" pnpm tauri android build --apk --target aarch64 --config "$config"
   cp "$(find src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)" "$out/alwychat-$version-$commit.apk"
   if $made_props; then rm -f "$props"; fi
 fi

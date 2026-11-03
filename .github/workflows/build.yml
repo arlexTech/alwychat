@@ -279,7 +279,8 @@ jobs:
           # $1: file name suffix ("" or "-autoupdate").
           build() {
             rm -rf src-tauri/gen/android/app/build/outputs/apk
-            pnpm tauri android build --apk "${mode[@]}" --target aarch64 armv7 x86_64
+            # arm64 only: every phone of the last years (32-bit and x86 builds tripled the size).
+            pnpm tauri android build --apk "${mode[@]}" --target aarch64
             cp "$(find src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)" "../out/AlwyChat-android$1.apk"
           }
           build ""

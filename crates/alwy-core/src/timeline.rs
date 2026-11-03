@@ -30,6 +30,11 @@ use crate::{
 
 /// Events fetched per back-pagination request.
 const PAGE_EVENTS: u16 = 40;
+/// Closed chats whose timeline is kept for a quick reopen.
+const RECENT_CHATS: usize = 6;
+/// A new chat's timeline is filled to this many items (at most this many pages) before it's shown.
+const PREFILL_ITEMS: usize = 30;
+const PREFILL_PAGES: usize = 3;
 /// Messages loaded around a search result.
 const FOCUS_CONTEXT_EVENTS: u16 = 30;
 
@@ -245,6 +250,8 @@ pub enum SendState {
 pub(crate) struct OpenChat {
     room_id: OwnedRoomId,
     timeline: Arc<Timeline>,
+    /// The live timeline (not one focused on a search result): kept for a quick reopen.
+    live: bool,
     task: crate::rt::AbortHandle,
     typing_task: crate::rt::AbortHandle,
     /// Keeps the theme/quick reaction/nicknames watch alive while the chat is open.
@@ -302,7 +309,35 @@ impl crate::Core {
                 hide_threaded_events: true,
             }),
         };
-        let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
+        // A chat opened recently reopens instantly: its timeline was kept, already filled
+        // and following new messages. A new one is filled before the first batch goes out,
+        // so the chat appears whole instead of a few items followed by a loading spinner.
+        let kept = match focus {
+            Some(_) => None,
+            None => self.with_active(|a| {
+                let at = a.recent_chats.iter().position(|(id, _)| *id == room_id)?;
+                Some(a.recent_chats.remove(at).1)
+            })?,
+        };
+        let timeline = match kept {
+            Some(timeline) => timeline,
+            None => {
+                let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
+                if focus.is_none() {
+                    for _ in 0..PREFILL_PAGES {
+                        if timeline.items().await.len() >= PREFILL_ITEMS
+                            || timeline
+                                .paginate_backwards(PAGE_EVENTS)
+                                .await
+                                .unwrap_or(true)
+                        {
+                            break;
+                        }
+                    }
+                }
+                timeline
+            }
+        };
 
         let task = crate::rt::spawn(stream_timeline(timeline.clone(), self.media.clone(), sink))
             .abort_handle();
@@ -310,9 +345,11 @@ impl crate::Core {
         let style = self.watch_chat_style(&room, on_style).await;
         let pins = self.watch_pins(&room, on_pins).await;
         self.with_active(|a| {
+            keep_recent(a);
             a.chat = Some(OpenChat {
                 room_id,
                 timeline,
+                live: focus.is_none(),
                 task,
                 typing_task,
                 _style: style,
@@ -323,7 +360,7 @@ impl crate::Core {
     }
 
     pub fn close_chat(&self) -> Result<()> {
-        self.with_active(|a| a.chat = None)
+        self.with_active(keep_recent)
     }
 
     /// Open the thread started on `root` (it may have no replies yet) in the open chat and
@@ -626,6 +663,24 @@ impl crate::Core {
                 .map(|t| t.timeline.clone())
         })?
         .ok_or(Error::ChatNotOpen)
+    }
+}
+
+/// Close the open chat, keeping its live timeline (a few chats) for a quick reopen.
+fn keep_recent(active: &mut crate::session::Active) {
+    let Some(chat) = active.chat.take().filter(|c| c.live) else {
+        return;
+    };
+    if chat.timeline.room().is_space() {
+        return;
+    }
+    let timeline = chat.timeline.clone();
+    let room_id = chat.room_id.clone();
+    drop(chat);
+    active.recent_chats.retain(|(id, _)| *id != room_id);
+    active.recent_chats.push((room_id, timeline));
+    if active.recent_chats.len() > RECENT_CHATS {
+        active.recent_chats.remove(0);
     }
 }
 

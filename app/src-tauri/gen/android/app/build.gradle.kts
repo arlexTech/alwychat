@@ -59,6 +59,11 @@ android {
         }
         getByName("release") {
             signingConfigs.findByName("release")?.let { signingConfig = it }
+            // The Rust library compresses ~2.5× (51 → 21 MB): a much smaller download and
+            // update, unpacked once at install instead of being stored uncompressed in the APK.
+            packaging {
+                jniLibs.useLegacyPackaging = true
+            }
             optimization {
                enable = true
             }

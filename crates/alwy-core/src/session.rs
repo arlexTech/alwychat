@@ -187,6 +187,11 @@ pub(crate) struct Active {
     /// Background tasks feeding the UI; aborted on sign-out or re-subscribe.
     pub tasks: Vec<crate::rt::AbortHandle>,
     pub chat: Option<crate::timeline::OpenChat>,
+    /// Live timelines of recently closed chats (newest last), reused when they reopen.
+    pub recent_chats: Vec<(
+        matrix_sdk::ruma::OwnedRoomId,
+        Arc<matrix_sdk_ui::timeline::Timeline>,
+    )>,
     pub verifications: Arc<crate::encryption::Verifications>,
     pub encryption_task: Option<crate::rt::AbortHandle>,
     /// Cleared when this session is torn down, so late token refreshes can't rewrite
@@ -582,6 +587,7 @@ impl Core {
             sync,
             tasks: Vec::new(),
             chat: None,
+            recent_chats: Vec::new(),
             verifications,
             encryption_task: None,
             may_persist,
