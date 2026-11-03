@@ -57,7 +57,7 @@
       "mobile": [
         {
           "scheme": [
-            "com.alwy.chat"
+            "io.github.arlextech.alwychat"
           ],
           "appLink": false
         }

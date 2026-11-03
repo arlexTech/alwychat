@@ -61,7 +61,7 @@ class PushService : FirebaseMessagingService() {
       }
       val roomId = n.getString("room_id")
       // Tapping opens the chat (deep link handled in lib.rs).
-      val open = Intent(Intent.ACTION_VIEW, Uri.parse("com.alwy.chat:/room?id=" + Uri.encode(roomId)))
+      val open = Intent(Intent.ACTION_VIEW, Uri.parse("io.github.arlextech.alwychat:/room?id=" + Uri.encode(roomId)))
         .setPackage(context.packageName)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
       val pending = PendingIntent.getActivity(

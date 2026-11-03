@@ -1690,7 +1690,7 @@ async fn test_push(
     }
 }
 
-/// `com.alwy.chat:/room?id=!room:server` (a tapped notification) → the room ID.
+/// `io.github.arlextech.alwychat:/room?id=!room:server` (a tapped notification) → the room ID.
 #[cfg_attr(not(mobile), allow(dead_code))]
 fn room_link(url: &tauri::Url) -> Option<String> {
     (url.scheme() == alwy_core::session::REDIRECT_SCHEME && url.path() == "/room")
@@ -1831,7 +1831,7 @@ pub fn run() {
         if let Ok(dir) = opened_dir(app.handle()) {
             let _ = std::fs::remove_dir_all(dir);
         }
-        // Mobile sign-in comes back as com.alwy.chat:/callback?code=…
+        // Mobile sign-in comes back as io.github.arlextech.alwychat:/callback?code=…
         #[cfg(mobile)]
         {
             use tauri_plugin_deep_link::DeepLinkExt;

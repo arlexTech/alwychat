@@ -1,7 +1,7 @@
 //! Sign-in through the homeserver's OAuth 2.0 service (MAS), session persistence and sign-out.
 //!
 //! Desktop flow (RFC 8252): a one-shot HTTP server on 127.0.0.1 receives the browser redirect.
-//! Mobile flow: the browser redirects to `com.alwy.chat:/callback`, the OS reopens the app
+//! Mobile flow: the browser redirects to `io.github.arlextech.alwychat:/callback`, the OS reopens the app
 //! with that URL and the shell hands it to [`Core::handle_login_redirect`]. (A loopback server
 //! can't work there: the app is paused while the browser is in front.)
 
@@ -38,8 +38,9 @@ use crate::{Error, Result};
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// MAS only accepts a custom-scheme redirect whose reversed scheme is under this host.
 const CLIENT_URI: &str = "https://arlextech.github.io/alwychat";
-/// Mobile redirect target, declared to the OS by the deep-link plugin (tauri.conf.json).
-pub const REDIRECT_SCHEME: &str = crate::names::APP_ID;
+/// Mobile redirect target (and notification links), declared to the OS by the deep-link plugin
+/// (tauri.conf.json). Not the app ID: it must be CLIENT_URI's host reversed (see above).
+pub const REDIRECT_SCHEME: &str = "io.github.arlextech.alwychat";
 const SESSION_FILE: &str = "session.json";
 /// The store of sessions saved before stores got their own folder per sign-in.
 const STORE_DIR: &str = "store";
@@ -170,7 +171,7 @@ pub struct Core {
 pub enum LoginRedirect {
     /// One-shot HTTP server on 127.0.0.1 (desktop).
     Loopback,
-    /// `com.alwy.chat:/callback`, delivered through [`Core::handle_login_redirect`] (mobile).
+    /// `io.github.arlextech.alwychat:/callback`, delivered through [`Core::handle_login_redirect`] (mobile).
     AppScheme,
     /// A page of the web app (opened in a popup), whose URL comes back through
     /// [`Core::handle_login_redirect`] (browser).

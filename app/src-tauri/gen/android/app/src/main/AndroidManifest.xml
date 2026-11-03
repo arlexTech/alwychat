@@ -57,7 +57,7 @@
                 <action android:name="org.chromium.arc.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="com.alwy.chat" />
+                <data android:scheme="io.github.arlextech.alwychat" />
                 
                 
                 
