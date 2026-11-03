@@ -125,16 +125,28 @@ class Chat {
   }
 
   /** Fetch one page of older messages. Returns false if nothing was requested. */
+  /** Older messages couldn't be loaded (after retries): the chat offers Retry. */
+  olderFailed = $state(false);
+
   async older(): Promise<boolean> {
     const roomId = this.roomId;
     if (!roomId || this.atStart || this.loadingOlder) return false;
     this.loadingOlder = true;
+    this.olderFailed = false;
     try {
-      const atStart = await loadOlder(roomId);
-      if (this.roomId === roomId) this.atStart = atStart;
-      return true;
-    } catch (e) {
-      if (this.roomId === roomId) this.error = String(e);
+      // A network hiccup shouldn't stop the history: a few quiet retries first.
+      for (const wait of [0, 2000, 5000, 10000]) {
+        if (wait) await new Promise((r) => setTimeout(r, wait));
+        if (this.roomId !== roomId) return false;
+        try {
+          const atStart = await loadOlder(roomId);
+          if (this.roomId === roomId) this.atStart = atStart;
+          return true;
+        } catch (e) {
+          console.warn("older messages", e);
+        }
+      }
+      if (this.roomId === roomId) this.olderFailed = true;
       return false;
     } finally {
       this.loadingOlder = false;

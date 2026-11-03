@@ -18,6 +18,7 @@
   import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
   import { onMount } from "svelte";
+  import { friendlyError } from "$lib/errors";
   import logo from "$lib/assets/logo.svg";
   import Download from "@lucide/svelte/icons/download";
   import { updates } from "$lib/stores/updates.svelte";
@@ -354,7 +355,7 @@
       </button>
     </nav>
 
-    {#if actionError}<p class="state error small">{actionError}</p>{/if}
+    {#if actionError}<p class="state error small">{friendlyError(actionError)}</p>{/if}
 
     <div class="rows">
       {#if chatList.error}

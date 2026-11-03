@@ -28,14 +28,23 @@ export class ThreadTimeline {
       .catch((e) => (this.error = String(e)));
   }
 
+  olderFailed = $state(false);
+
   async older(): Promise<boolean> {
     if (!this.#open || this.atStart || this.loadingOlder) return false;
     this.loadingOlder = true;
+    this.olderFailed = false;
     try {
-      this.atStart = await loadOlder(this.root);
-      return true;
-    } catch (e) {
-      this.error = String(e);
+      for (const wait of [0, 2000, 5000]) {
+        if (wait) await new Promise((r) => setTimeout(r, wait));
+        try {
+          this.atStart = await loadOlder(this.root);
+          return true;
+        } catch (e) {
+          console.warn("older replies", e);
+        }
+      }
+      this.olderFailed = true;
       return false;
     } finally {
       this.loadingOlder = false;

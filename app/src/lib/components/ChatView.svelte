@@ -70,6 +70,7 @@
   import { clockTime, dayLabel, shortTime } from "$lib/format";
   import { chat } from "$lib/stores/chat.svelte";
   import { layouts } from "$lib/stores/layout.svelte";
+  import { friendlyError } from "$lib/errors";
   import { drafts } from "$lib/stores/drafts.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { share } from "$lib/stores/share.svelte";
@@ -1231,7 +1232,13 @@
   {/if}
   <div class="timeline" class:wide>
     {#if tl.error}
-      <p class="center error">{tl.error}</p>
+      <p class="center error">{friendlyError(tl.error)}</p>
+    {/if}
+    {#if tl.olderFailed}
+      <p class="center error">
+        {tr("Couldn't load older messages.")}
+        <button class="retry" onclick={() => tl.older()}>{tr("Retry")}</button>
+      </p>
     {/if}
     {#if tl.loadingOlder}
       <div class="spinner" aria-label={tr("Loading older messages")}></div>
@@ -1329,7 +1336,7 @@
     <MentionSuggestions suggestions={mention.suggestions} index={mention.index} onPick={pickMention} />
   {/if}
   {#if sendingFiles}<p class="send-status">{tr("Sending…")}</p>{/if}
-  {#if sendError}<p class="send-error">{sendError}</p>{/if}
+  {#if sendError}<p class="send-error">{friendlyError(sendError)}</p>{/if}
   {#if recorder.recording}
     <div class="bar recording" transition:fade={{ duration: 120 }}>
       <button type="button" class="attach" onclick={() => recorder.cancel()} aria-label={tr("Delete recording")}><Trash2 size={22} /></button>
@@ -1716,6 +1723,16 @@
     border-radius: 18px;
     /* No backdrop-filter: it would trap fixed-position sheets and menus inside the panel. */
     background: rgb(8 10 18 / 0.62);
+  }
+  .retry {
+    margin-left: 6px;
+    padding: 2px 10px;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
   }
   .broken {
     margin: 2px 16px;
