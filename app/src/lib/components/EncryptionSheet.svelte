@@ -5,10 +5,15 @@
     acceptVerification,
     cancelVerification,
     confirmEmojis,
+    confirmQrScanned,
     recover,
+    startEmojiVerification,
     verifyThisDevice,
   } from "$lib/backend";
   import { encryption } from "$lib/stores/encryption.svelte";
+  import QrScanner from "./QrScanner.svelte";
+
+  let scanning = $state(false);
 
   type Mode = "choose" | "key";
 
@@ -71,6 +76,29 @@
   {:else if v?.state === "ready"}
     <h2 id="unlock-title">{tr("Getting the emoji ready…")}</h2>
     <div class="spinner"></div>
+  {:else if v?.state === "choose"}
+    <h2 id="unlock-title">{tr("Verify with a QR code")}</h2>
+    {#if v.qr}
+      <p>{tr("Scan this code with your other device (in Element: “Scan with this device”).")}</p>
+      <!-- Our own core's SVG: only the code's squares. -->
+      <div class="qr">{@html v.qr}</div>
+    {/if}
+    {#if v.can_scan}
+      <button class="option wide" disabled={busy} onclick={() => (scanning = true)}>
+        <span class="icon">📷</span>
+        <span><strong>{tr("Scan the other device's code")}</strong><small>{tr("If it shows a QR code")}</small></span>
+      </button>
+    {/if}
+    <div class="buttons">
+      <button class="secondary" disabled={busy} onclick={() => run(startEmojiVerification)}>{tr("Compare emoji instead")}</button>
+    </div>
+  {:else if v?.state === "qr_scanned"}
+    <h2 id="unlock-title">{tr("Your other device scanned the code")}</h2>
+    <p>{tr("Does it say the verification worked?")}</p>
+    <div class="buttons">
+      <button class="secondary" disabled={busy} onclick={() => run(() => confirmQrScanned(false))}>{tr("No")}</button>
+      <button class="primary" disabled={busy} onclick={() => run(() => confirmQrScanned(true))}>{tr("Yes")}</button>
+    </div>
   {:else if v?.state === "emojis"}
     <h2 id="unlock-title">{tr("Do these emoji match?")}</h2>
     <p>{tr("Compare them with the ones shown on your other device, in the same order.")}</p>
@@ -127,7 +155,7 @@
         onclick={() => run(verifyThisDevice)}
       >
         <span class="icon">📱</span>
-        <span><strong>{tr("Use another device")}</strong><small>{tr("Compare emoji with Element")}</small></span>
+        <span><strong>{tr("Use another device")}</strong><small>{tr("QR code or emoji, with Element")}</small></span>
       </button>
       {#if status?.recovery !== "disabled"}
         <button class="option" disabled={busy} onclick={() => (mode = "key")}>
@@ -140,6 +168,9 @@
 
   {#if error}<p class="error">{error}</p>{/if}
 </div>
+{#if scanning && v?.state === "choose"}
+  <QrScanner onDone={() => (scanning = false)} onClose={() => (scanning = false)} />
+{/if}
 
 <style>
   .backdrop {
@@ -216,6 +247,23 @@
   }
   .icon {
     font-size: 1.6rem;
+  }
+  .option.wide {
+    width: 100%;
+    margin-top: 4px;
+  }
+  .qr {
+    width: min(240px, 70vw);
+    margin: 0 auto 16px;
+    padding: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .qr :global(svg) {
+    display: block;
+    width: 100%;
+    height: auto;
   }
   textarea {
     width: 100%;

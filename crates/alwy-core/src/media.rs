@@ -26,10 +26,27 @@ impl crate::Core {
         };
         Ok(client.media().get_media_content(&request, true).await?)
     }
+
+    /// The whole file behind an unencrypted `mxc://` (soundboard sounds).
+    pub async fn plain_file(&self, mxc: &str) -> Result<Vec<u8>> {
+        let client = self.client()?;
+        let uri = OwnedMxcUri::from(mxc);
+        if !uri.is_valid() {
+            return Err(Error::InvalidMedia(mxc.to_owned()));
+        }
+        let request = MediaRequestParameters {
+            source: MediaSource::Plain(uri),
+            format: MediaFormat::File,
+        };
+        Ok(client.media().get_media_content(&request, true).await?)
+    }
 }
 
 /// Media of timeline messages, by item ID, so the UI can request it with a short URL
 /// (`media://localhost/_event/<item id>`) without ever seeing encryption keys.
+/// How long a message's preview may take before it fails (and the bubble retries).
+const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Default)]
 pub(crate) struct MediaRegistry(Mutex<HashMap<String, EventMedia>>);
 
@@ -93,7 +110,22 @@ impl crate::Core {
                 media.mimetype.clone(),
             ),
         };
-        let bytes = client.media().get_media_content(&request, true).await?;
+        let media_api = client.media();
+        let download = media_api.get_media_content(&request, true);
+        // A preview that hangs (network gone quiet) fails after a while, so the bubble retries
+        // instead of waiting forever. Whole files (videos, the viewer) may take longer.
+        let bytes = if thumbnail {
+            let limit = crate::rt::sleep(PREVIEW_TIMEOUT);
+            futures_util::pin_mut!(download, limit);
+            match futures_util::future::select(download, limit).await {
+                futures_util::future::Either::Left((result, _)) => result?,
+                futures_util::future::Either::Right(_) => {
+                    return Err(crate::Error::Download("the preview took too long".into()));
+                }
+            }
+        } else {
+            download.await?
+        };
         let mimetype = mimetype.unwrap_or_else(|| sniff(&bytes).to_owned());
         Ok((bytes, mimetype))
     }
@@ -104,21 +136,28 @@ impl crate::Core {
     pub async fn save_event_media(&self, key: &str, dir: &Path) -> Result<PathBuf> {
         let media = self.media.get(key)?;
         let (bytes, _) = self.event_media(key, false).await?;
-        tokio::fs::create_dir_all(dir).await?;
-        let name = safe_file_name(&media.filename);
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((s, e)) if !s.is_empty() => (s.to_owned(), format!(".{e}")),
-            _ => (name.clone(), String::new()),
-        };
-        let mut path = dir.join(&name);
-        let mut n = 1;
-        while tokio::fs::try_exists(&path).await? {
-            path = dir.join(format!("{stem} ({n}){ext}"));
-            n += 1;
-        }
-        tokio::fs::write(&path, bytes).await?;
-        Ok(path)
+        write_unique(dir, &media.filename, &bytes).await
     }
+}
+
+/// Write `bytes` as `name` (made safe) in `dir`, created if needed, never overwriting:
+/// `photo.jpg` becomes `photo (1).jpg` if taken.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn write_unique(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf> {
+    tokio::fs::create_dir_all(dir).await?;
+    let name = safe_file_name(name);
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_owned(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let mut path = dir.join(&name);
+    let mut n = 1;
+    while tokio::fs::try_exists(&path).await? {
+        path = dir.join(format!("{stem} ({n}){ext}"));
+        n += 1;
+    }
+    tokio::fs::write(&path, bytes).await?;
+    Ok(path)
 }
 
 /// A file name from someone else's message, safe to create anywhere: no folders, no characters
@@ -225,6 +264,16 @@ pub fn runs_when_opened(name: &str) -> bool {
 }
 
 /// MIME type from magic bytes, for images served without a declared type.
+/// A HEIC/HEIF photo (an ISO-BMFF "ftyp" box with a HEIF brand), which web views can't show.
+pub fn is_heic(bytes: &[u8]) -> bool {
+    bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && matches!(
+            &bytes[8..12],
+            b"heic" | b"heix" | b"heim" | b"heis" | b"hevc" | b"hevx" | b"mif1" | b"msf1" | b"heif"
+        )
+}
+
 pub fn sniff(bytes: &[u8]) -> &'static str {
     match bytes {
         [0x89, b'P', b'N', b'G', ..] => "image/png",
@@ -277,5 +326,22 @@ mod file_name_tests {
         assert!(!runs_when_opened("photo.jpg"));
         assert!(!runs_when_opened("notes.pdf"));
         assert!(!runs_when_opened("README"));
+    }
+}
+
+#[cfg(test)]
+mod heic_tests {
+    #[test]
+    fn detects_heic() {
+        let mut heic = vec![0, 0, 0, 24];
+        heic.extend(b"ftypheic");
+        heic.extend([0; 16]);
+        assert!(super::is_heic(&heic));
+        let mut mp4 = vec![0, 0, 0, 24];
+        mp4.extend(b"ftypisom");
+        assert!(!super::is_heic(&mp4));
+        assert!(!super::is_heic(&[
+            0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]));
     }
 }

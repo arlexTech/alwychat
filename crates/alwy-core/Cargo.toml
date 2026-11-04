@@ -20,6 +20,9 @@ rand.workspace = true
 # App lock PIN hash.
 pbkdf2 = "0.13"
 sha2 = "0.11"
+# CollectStrategy for custom to-device messages (not re-exported by matrix-sdk).
+matrix-sdk-base = { version = "0.19", default-features = false }
+base64 = "0.22"
 # Message search (SQLite FTS5); in a browser through sqlite-wasm-rs.
 rusqlite = "0.40"
 serde.workspace = true
@@ -28,6 +31,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
+rqrr = "0.11.0"
 
 # Desktop: session tokens and the store passphrase live in the OS keychain (Secret Service on
 # Linux). Android keeps them in the app's private storage (no backups, not debuggable in release).

@@ -13,7 +13,7 @@ alwy-core = { path = "crates/alwy-core" }
 ammonia = "4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 mime = "0.3"
-matrix-sdk = { version = "0.19", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "markdown"] }
+matrix-sdk = { version = "0.19", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "markdown", "experimental-send-custom-to-device", "qrcode"] }
 matrix-sdk-ui = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

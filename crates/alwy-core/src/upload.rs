@@ -29,6 +29,9 @@ pub struct OutgoingFile {
     pub caption: Option<String>,
     /// Set on every photo of an album, so we can show them as one grid.
     pub gallery: Option<GalleryRef>,
+    /// Shown once, then deleted (AlwyChat only, see view_once.rs).
+    #[serde(default)]
+    pub view_once: bool,
 }
 
 /// `com.alwy.chat.gallery`: which album a photo belongs to (other clients just show the photos).
@@ -58,11 +61,16 @@ impl crate::Core {
                 .caption
                 .filter(|c| !c.trim().is_empty())
                 .map(matrix_sdk::ruma::events::room::message::TextMessageEventContent::markdown),
-            extra_content: file.gallery.map(|g| {
+            extra_content: {
                 let mut map = serde_json::Map::new();
-                map.insert(crate::names::GALLERY.to_owned(), json!(g));
-                map
-            }),
+                if let Some(g) = file.gallery {
+                    map.insert(crate::names::GALLERY.to_owned(), json!(g));
+                }
+                if file.view_once {
+                    map.insert(crate::names::VIEW_ONCE.to_owned(), json!(true));
+                }
+                (!map.is_empty()).then_some(map)
+            },
             ..Default::default()
         };
 
@@ -75,9 +83,17 @@ impl crate::Core {
                 width: Some(UInt::from(processed.width)),
                 height: Some(UInt::from(processed.height)),
                 size: UInt::new(processed.bytes.len() as u64),
+                // A view-once photo gives nothing away before it's opened.
+                blurhash: if file.view_once {
+                    None
+                } else {
+                    processed.blurhash.clone()
+                },
                 ..Default::default()
             }));
-            config.thumbnail = processed.thumbnail;
+            if !file.view_once {
+                config.thumbnail = processed.thumbnail;
+            }
             let filename = if processed.reencoded {
                 with_extension(&filename, "jpg")
             } else {
@@ -141,12 +157,15 @@ struct PreparedImage {
     height: u32,
     thumbnail: Option<Thumbnail>,
     reencoded: bool,
+    /// Blurry preview drawn by apps while the photo loads.
+    blurhash: Option<String>,
 }
 
 /// Decode once (applying the camera's EXIF rotation), maybe compress, and make a thumbnail.
 fn prepare_image(bytes: Vec<u8>, mime: &str, hd: bool) -> Result<PreparedImage> {
     let image = decode_oriented(&bytes)?;
     let (width, height) = (image.width(), image.height());
+    let blurhash = crate::blurhash::of_image(&image);
 
     let thumbnail = (width.max(height) > THUMBNAIL_MAX_SIDE)
         .then(|| {
@@ -171,6 +190,7 @@ fn prepare_image(bytes: Vec<u8>, mime: &str, hd: bool) -> Result<PreparedImage> 
             height,
             thumbnail,
             reencoded: false,
+            blurhash: blurhash.clone(),
         });
     }
 
@@ -193,6 +213,7 @@ fn prepare_image(bytes: Vec<u8>, mime: &str, hd: bool) -> Result<PreparedImage> 
             height,
             thumbnail,
             reencoded: false,
+            blurhash: blurhash.clone(),
         });
     }
     Ok(PreparedImage {
@@ -202,6 +223,7 @@ fn prepare_image(bytes: Vec<u8>, mime: &str, hd: bool) -> Result<PreparedImage> 
         mime: "image/jpeg".to_owned(),
         thumbnail,
         reencoded: true,
+        blurhash,
     })
 }
 

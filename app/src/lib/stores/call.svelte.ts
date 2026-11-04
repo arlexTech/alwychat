@@ -9,10 +9,18 @@ import {
   Track,
   VideoPresets,
   type Participant,
+  type RemoteAudioTrack,
   type RemoteParticipant,
   type RemoteTrack,
 } from "livekit-client";
 import {
+  isAndroid,
+  launchCall,
+  onCallLink,
+  type CallLink,
+  callAudio,
+  callNotification,
+  onCallAction,
   declineCall,
   joinCall,
   leaveCall,
@@ -22,10 +30,14 @@ import {
   nativeCallSetDeafened,
   nativeCallSetMic,
   nativeCallSetMutedForMe,
+  nativeCallSetSoundboardOff,
   nativeCallSetSetup,
   nativeCallSetCamera,
   nativeCallSetScreen,
   onCallSignal,
+  callKeys,
+  onCallKey,
+  nativeCallPlaySound,
   type NativeAudioSetup,
   type NativeCallMember,
   roomMembers,
@@ -36,8 +48,10 @@ import {
 import { MediaQuery } from "svelte/reactivity";
 import { startRinging, stopRinging } from "$lib/ringtone";
 import { nav } from "./nav.svelte";
+import { chatList } from "./chatList.svelte";
 import { nativeVideo } from "./nativeVideo.svelte";
 import { tr } from "$lib/i18n/index.svelte";
+import { MatrixKeyProvider, e2eeWorker } from "$lib/callKeys";
 
 type Ring = Extract<CallSignal, { kind: "ring" }>;
 /** A 1:1 call nobody answers ends after this. */
@@ -80,6 +94,8 @@ export interface CallPrefs {
   volumes: Record<string, number>;
   /** People muted for us only (their volume is kept for when they're unmuted). */
   muted: string[];
+  /** How loud soundboard sounds are for us, ours and others' (0–1). */
+  soundboardVolume: number;
 }
 
 /** Someone in a call or a voice channel, as the person menu shows them. */
@@ -105,6 +121,7 @@ function loadPrefs(): CallPrefs {
     cameraDevice: null,
     volumes: {},
     muted: [],
+    soundboardVolume: 1,
   };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
@@ -129,6 +146,11 @@ class CallStore {
   screenOn = $state(false);
   /** Nobody heard (and our mic off), Discord style. */
   deafened = $state(false);
+  /** Android picture-in-picture: the app is the small call window (UI = call tiles only). */
+  pip = $state(false);
+  #minimizedBeforePip = false;
+  /** Phone: call audio on the loudspeaker (else earpiece, or headphones when connected). */
+  speaker = $state(false);
   /** Mic state to restore when undeafening. */
   #micBeforeDeafen = true;
   prefs = $state<CallPrefs>(loadPrefs());
@@ -190,6 +212,52 @@ class CallStore {
     if (this.#listening) return;
     this.#listening = true;
     void nativeCalls().then((native) => (this.native = native));
+    if (isAndroid) {
+      // The incoming call notification (the app wasn't on screen when it rang).
+      void onCallLink((link) => void this.#link(link));
+      void launchCall().then((link) => link && this.#link(link)).catch(() => {});
+      // The ringtone waits while the app is in the background (the notification rings then).
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && this.incoming) startRinging();
+      });
+      void onCallAction((action) => {
+        if (action === "hang_up") void this.leave();
+        else if (action === "toggle_mic") {
+          if (this.roomId) void this.toggleMic();
+        } else if (action === "pip_on") {
+          // Android's picture-in-picture: only the call, full window.
+          this.#minimizedBeforePip = this.minimized;
+          this.minimized = false;
+          this.pip = true;
+        } else {
+          this.pip = false;
+          if (this.roomId) this.minimized = this.#minimizedBeforePip;
+        }
+      });
+      // The ongoing call notification follows the call: shown while in one, its mute button
+      // following the mic (none with push to talk, where the mic opens and closes all the time).
+      $effect.root(() => {
+        $effect(() => {
+          const roomId = this.roomId;
+          if (!roomId) return;
+          const muted = this.prefs.pushToTalk ? null : !this.micOn;
+          const texts = {
+            title: this.roomName,
+            text: tr("Ongoing call · tap to return"),
+            hangUp: tr("Hang up"),
+            channel: tr("Calls"),
+            mute: tr("Mute"),
+            unmute: tr("Unmute"),
+          };
+          callNotification(true, texts, roomId, muted, this.camOn).catch((e) => console.warn("call notification", e));
+        });
+      });
+    }
+    // Media keys (end-to-end encryption) for the call we're in; the native engine gets them
+    // from the core directly.
+    void onCallKey((key) => {
+      if (key.room_id === this.roomId) void this.#keys?.add(key).catch((e) => console.warn("call key", e));
+    });
     void onCallSignal((signal) => {
       if (signal.kind === "ring") this.#ring(signal);
       else if (signal.room_id === this.roomId && this.calling) {
@@ -201,9 +269,35 @@ class CallStore {
   #ring(ring: Ring) {
     if (this.active || this.incoming) return;
     this.incoming = ring;
-    startRinging();
+    if (!isAndroid || document.visibilityState === "visible") startRinging();
     clearTimeout(this.#ringEnd);
     this.#ringEnd = setTimeout(() => this.stopRing(), Math.max(0, ring.expires_at - Date.now()));
+  }
+
+  /** From the incoming call notification: Answer joins the call, a tap shows it ringing. */
+  async #link(link: CallLink) {
+    if (link.answer) {
+      const started = Date.now();
+      let room = chatList.rooms.find((r) => r.id === link.room_id);
+      // Launched by the notification: the chat list may still be loading.
+      while (!room && Date.now() - started < 10_000) {
+        await new Promise((r) => setTimeout(r, 200));
+        room = chatList.rooms.find((r) => r.id === link.room_id);
+      }
+      if (!room) return this.#tell(tr("Couldn't join the call"));
+      this.stopRing();
+      await this.join(room, link.video, false);
+    } else if (link.expires_at > Date.now()) {
+      this.#ring({
+        kind: "ring",
+        room_id: link.room_id,
+        notification_id: link.notification_id,
+        caller_name: link.caller_name,
+        caller_avatar: chatList.rooms.find((r) => r.id === link.room_id)?.avatar ?? null,
+        video: link.video,
+        expires_at: link.expires_at,
+      });
+    }
   }
 
   /** The ring ended without an answer here (timeout, caller hung up, answered elsewhere). */
@@ -226,6 +320,20 @@ class CallStore {
   }
 
   #lk: Room | null = null;
+  /** Who is speaking by our own measure (LiveKit's comes from the server about twice a second,
+   * smoothed: the ring lagged ~1 s behind the voice), by LiveKit identity. */
+  #voices = new Map<string, { speaking: boolean; lastLoud: number }>();
+  #meter: ReturnType<typeof setInterval> | undefined;
+  #keys: MatrixKeyProvider | null = null;
+  // Soundboard: a Web Audio context (also plays our own sounds to us), and in webview calls the
+  // published track sounds are played into.
+  #sbContext: AudioContext | null = null;
+  #sbOut: MediaStreamAudioDestinationNode | null = null;
+  #sbPlaying: AudioBufferSourceNode[] = [];
+  /** Our own sound as we hear it (the volume slider changes it while it plays). */
+  #sbGain: GainNode | null = null;
+  /** Our media is end-to-end encrypted (encrypted room). */
+  encrypted = $state(false);
   #members = new Map<string, Member>();
   /** Remote audio elements, kept out of the DOM tree of the call view. */
   #audio = new Map<string, HTMLMediaElement>();
@@ -255,6 +363,10 @@ class CallStore {
     this.talking = false;
     this.camOn = video;
     this.screenOn = false;
+    // Like phone apps: a call starts on the earpiece (voice channels and groups too), a video
+    // call on the loudspeaker.
+    this.speaker = video;
+    if (isAndroid) callAudio(this.speaker).catch((e) => console.warn("call audio", e));
     roomMembers(room.id)
       .then((list) => {
         this.#members = new Map(list.map((m) => [m.user_id, m]));
@@ -263,11 +375,12 @@ class CallStore {
       .catch(() => {});
 
     try {
-      const { url, jwt } = await joinCall(room.id, video);
+      const { url, jwt, encrypted } = await joinCall(room.id, video);
       if (this.native) {
         // Before awaiting: the first member snapshot comes while joining.
         this.#nativeIn = true;
-        await nativeCallJoin(url, jwt, this.micOn, this.#nativeSetup(), (event) => {
+        this.encrypted = encrypted;
+        await nativeCallJoin(room.id, url, jwt, encrypted, this.micOn, this.#nativeSetup(), (event) => {
           if (event.kind === "members") {
             this.#nativeMembers = event.members;
             this.#sync();
@@ -278,10 +391,13 @@ class CallStore {
         }, (key, jpeg) => nativeVideo.push(key, jpeg));
         this.status = "connected";
         for (const userId of this.prefs.muted) void nativeCallSetMutedForMe(userId, true).catch(() => {});
+        if (this.prefs.soundboardVolume < 0.01) void nativeCallSetSoundboardOff(true).catch(() => {});
         if (video) await nativeCallSetCamera(true).catch((e) => this.#fail("camera", e));
         this.#sync();
         return;
       }
+      const keys = new MatrixKeyProvider();
+      const worker = await e2eeWorker();
       const lk = new Room({
         adaptiveStream: true,
         dynacast: true,
@@ -298,8 +414,13 @@ class CallStore {
           screenShareEncoding: ScreenSharePresets.h1080fps15.encoding,
         },
         audioOutput: { deviceId: this.prefs.outputDevice ?? undefined },
+        // Always there: whoever encrypts (Element Call, FluffyChat) is decrypted with their key,
+        // even where we don't encrypt ourselves.
+        e2ee: worker ? { keyProvider: keys, worker } : undefined,
       });
       this.#lk = lk;
+      this.#keys = keys;
+      for (const key of await callKeys(room.id)) void keys.add(key).catch((e) => console.warn("call key", e));
       lk.on(RoomEvent.ParticipantConnected, () => this.#sync())
         .on(RoomEvent.ParticipantDisconnected, () => this.#sync())
         .on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
@@ -323,12 +444,18 @@ class CallStore {
         });
       await lk.connect(url, jwt);
       this.status = "connected";
+      // Before the microphone is published, so nothing goes out in clear.
+      if (encrypted && worker) {
+        await lk.setE2EEEnabled(true);
+        this.encrypted = true;
+      } else if (encrypted) console.warn("this WebView can't encrypt call media");
       // Push-to-talk starts silent (the mic is opened while talking).
       if (!this.prefs.pushToTalk) {
         await lk.localParticipant.setMicrophoneEnabled(true).catch((e) => this.#fail("microphone", e));
       }
       if (video) await lk.localParticipant.setCameraEnabled(true).catch((e) => this.#fail("camera", e));
       await lk.startAudio().catch(() => {});
+      this.#startMeter(lk);
       this.#sync();
     } catch (e) {
       const message = String(e);
@@ -339,16 +466,70 @@ class CallStore {
     }
   }
 
+  /** Play a soundboard sound (48 kHz mono) for everyone in the call, and to us. Its own track,
+   * so the microphone's processing doesn't touch it; a new sound replaces the one playing. */
+  async playSound(buffer: AudioBuffer) {
+    if (!this.#connected || this.deafened) return;
+    const ctx = (this.#sbContext ??= new AudioContext({ sampleRate: 48_000 }));
+    await ctx.resume().catch(() => {});
+    for (const node of this.#sbPlaying) node.stop();
+    this.#sbPlaying = [];
+    const local = ctx.createBufferSource();
+    local.buffer = buffer;
+    const volume = ctx.createGain();
+    volume.gain.value = 0.7 * this.prefs.soundboardVolume;
+    this.#sbGain = volume;
+    local.connect(volume).connect(ctx.destination);
+    local.start();
+    this.#sbPlaying.push(local);
+    if (this.#nativeIn) {
+      const { pcm16 } = await import("./soundboard.svelte");
+      const bytes = pcm16(buffer);
+      let binary = "";
+      for (let k = 0; k < bytes.length; k += 0x8000) binary += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
+      await nativeCallPlaySound(btoa(binary)).catch((e) => console.warn("soundboard", e));
+      return;
+    }
+    const lk = this.#lk;
+    if (!lk) return;
+    if (!this.#sbOut) {
+      this.#sbOut = ctx.createMediaStreamDestination();
+      await lk.localParticipant
+        .publishTrack(this.#sbOut.stream.getAudioTracks()[0], { name: "soundboard", source: Track.Source.Unknown, dtx: false, red: false })
+        .catch((e) => console.warn("soundboard", e));
+    }
+    const out = ctx.createBufferSource();
+    out.buffer = buffer;
+    out.connect(this.#sbOut);
+    out.start();
+    this.#sbPlaying.push(out);
+  }
+
   async leave() {
     clearTimeout(this.#noAnswer);
+    clearInterval(this.#meter);
+    this.#meter = undefined;
+    this.#voices.clear();
+    for (const node of this.#sbPlaying) node.stop();
+    this.#sbPlaying = [];
+    this.#sbGain = null;
+    this.#sbOut = null;
+    void this.#sbContext?.close().catch(() => {});
+    this.#sbContext = null;
     this.calling = false;
     const lk = this.#lk;
     this.#lk = null;
+    this.#keys = null;
+    this.encrypted = false;
     const wasNative = this.#nativeIn;
     this.#nativeIn = false;
     this.#nativeMembers = [];
     nativeVideo.clear();
     const wasIn = this.roomId !== null;
+    if (wasIn && isAndroid) {
+      callNotification(false).catch(() => {});
+      callAudio(null).catch(() => {});
+    }
     this.roomId = null;
     this.chatOpen = false;
     this.status = null;
@@ -367,6 +548,11 @@ class CallStore {
     // Unmuting while deafened undeafens too (as Discord does).
     if (this.deafened && !this.micOn) this.#setDeafened(false);
     await this.#setMic(!this.micOn);
+  }
+
+  toggleSpeaker() {
+    this.speaker = !this.speaker;
+    callAudio(this.speaker).catch((e) => console.warn("call audio", e));
   }
 
   async toggleDeafen() {
@@ -488,6 +674,22 @@ class CallStore {
   #applyVolume(participant: RemoteParticipant) {
     const userId = userOf(participant.identity);
     participant.setVolume(this.isMutedForMe(userId) ? 0 : this.volumeOf(userId));
+    // Their soundboard: its own track (setVolume above only touches the microphone).
+    for (const pub of participant.audioTrackPublications.values()) {
+      if (pub.trackName === "soundboard" && pub.audioTrack) {
+        (pub.audioTrack as RemoteAudioTrack).setVolume(this.isMutedForMe(userId) ? 0 : this.prefs.soundboardVolume);
+      }
+    }
+  }
+
+  /** How loud soundboard sounds are for us (ours and others'), 0–1. Natively, others' can only
+   * be on or off. */
+  setSoundboardVolume(volume: number) {
+    this.prefs = { ...this.prefs, soundboardVolume: volume };
+    this.#savePrefs();
+    if (this.#sbGain) this.#sbGain.gain.value = 0.7 * volume;
+    if (this.#nativeIn) return void nativeCallSetSoundboardOff(volume < 0.01).catch(() => {});
+    for (const p of this.#lk?.remoteParticipants.values() ?? []) this.#applyVolume(p);
   }
 
   /** Open the person menu: at the pointer with a mouse, as a bottom sheet on touch. */
@@ -534,6 +736,48 @@ class CallStore {
       : tr("Couldn't start the {what}: {e}", { what: what, e: e });
   }
 
+  /** Measure everyone's voice 10 times a second from WebRTC's audio levels (our microphone's
+   * source, each remote microphone's inbound stream), like the Linux engine does. */
+  #startMeter(lk: Room) {
+    const LEVEL = 0.03; // WebRTC audioLevel (0–1) that counts as speaking
+    const HOLD = 400; // ms the ring stays after the voice drops, so it doesn't flicker
+    let busy = false;
+    const levelOf = async (track: Track | undefined, type: "media-source" | "inbound-rtp") => {
+      const report = await track?.getRTCStatsReport().catch(() => undefined);
+      let level = 0;
+      report?.forEach((s: { type?: string; kind?: string; audioLevel?: number }) => {
+        if (s.type === type && s.kind === "audio" && typeof s.audioLevel === "number") level = Math.max(level, s.audioLevel);
+      });
+      return level;
+    };
+    this.#meter = setInterval(async () => {
+      if (busy || this.#lk !== lk) return;
+      busy = true;
+      try {
+        const levels: [string, number][] = [];
+        const mine = lk.localParticipant.getTrackPublication(Track.Source.Microphone);
+        levels.push([lk.localParticipant.identity, mine && !mine.isMuted ? await levelOf(mine.track, "media-source") : 0]);
+        for (const p of lk.remoteParticipants.values()) {
+          const mic = p.getTrackPublication(Track.Source.Microphone);
+          levels.push([p.identity, mic && !mic.isMuted ? await levelOf(mic.track, "inbound-rtp") : 0]);
+        }
+        const now = performance.now();
+        let changed = false;
+        for (const [id, level] of levels) {
+          const voice = this.#voices.get(id) ?? { speaking: false, lastLoud: -Infinity };
+          if (level >= LEVEL) voice.lastLoud = now;
+          const speaking = now - voice.lastLoud < HOLD;
+          if (speaking !== voice.speaking) changed = true;
+          voice.speaking = speaking;
+          this.#voices.set(id, voice);
+        }
+        if (changed && this.#lk === lk) this.#sync();
+      } finally {
+        busy = false;
+      }
+    }, 100);
+  }
+
   #attachAudio(track: RemoteTrack) {
     if (track.kind !== Track.Kind.Audio || !track.sid) return;
     const el = track.attach();
@@ -561,7 +805,7 @@ class CallStore {
       name: member?.name ?? (p.name || userId.slice(1).split(":")[0]),
       avatar: member?.avatar ?? null,
       isMe,
-      speaking: p.isSpeaking,
+      speaking: this.#voices.get(p.identity)?.speaking ?? p.isSpeaking,
       micOn: p.isMicrophoneEnabled,
       camera: camera?.track && !camera.isMuted ? camera.track : null,
       screen: screen?.track && !screen.isMuted ? screen.track : null,
@@ -612,3 +856,6 @@ class CallStore {
 }
 
 export const call = new CallStore();
+
+// Dev builds only: lets the desktop test harness (WebDriver) drive the call view.
+if (import.meta.env.DEV) (globalThis as Record<string, unknown>).__call = call;

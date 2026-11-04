@@ -57,6 +57,20 @@ body {
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  /* An app, not a document: nothing is selected by a long-press (buttons, emoji, labels…),
+     which opens menus instead. Typing fields stay selectable, and message text with a mouse
+     (MessageBubble). */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 button,

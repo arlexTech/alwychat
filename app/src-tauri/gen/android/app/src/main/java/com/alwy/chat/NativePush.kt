@@ -12,4 +12,15 @@ object NativePush {
   /** The notification for a pushed event as JSON (`PushNotification`), or "" for none. Blocks. */
   @JvmStatic
   external fun notification(context: Context, dataDir: String, roomId: String, eventId: String): String
+
+  /**
+   * A new UnifiedPush endpoint for this device (`endpoint` empty: none any more); `old` is the
+   * previous one, whose pusher is removed. Registers with the homeserver. Blocks.
+   */
+  @JvmStatic
+  external fun setEndpoint(context: Context, dataDir: String, endpoint: String, old: String)
+
+  /** Decline the call rung by `eventId` (from the incoming-call notification). Blocks. */
+  @JvmStatic
+  external fun decline(context: Context, dataDir: String, roomId: String, eventId: String)
 }

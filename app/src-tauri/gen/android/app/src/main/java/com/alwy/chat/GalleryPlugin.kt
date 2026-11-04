@@ -27,6 +27,13 @@ import app.tauri.plugin.Plugin
 import java.io.File
 
 @InvokeArg
+class HeicArgs {
+  lateinit var path: String
+  lateinit var to: String
+  var maxSide: Int = 0
+}
+
+@InvokeArg
 class SaveArgs {
   /** File written by the Rust core in the app's cache; deleted once copied. */
   lateinit var path: String
@@ -117,12 +124,11 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
       invoke.resolve(JSObject().put("files", JSArray()))
       return
     }
-    val picked = JSObject()
-      .put("path", file.absolutePath)
-      .put("name", file.name)
-      .put("mime", captureMime)
-      .put("size", file.length())
-    invoke.resolve(JSObject().put("files", JSArray().put(picked)))
+    // Some camera apps save HEIC whatever the file is called.
+    Thread {
+      val picked = asJpegIfHeic(file, file.name, captureMime)
+      invoke.resolve(JSObject().put("files", JSArray().put(picked)))
+    }.start()
   }
 
   /** Opens the system picker (several items at once); no storage permission needed. */
@@ -183,11 +189,40 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     // Unique on disk, original name kept for the message.
     val target = File(dir, "${System.nanoTime()}-$index-${name.replace('/', '_')}")
     resolver.openInputStream(uri)!!.use { input -> target.outputStream().use { input.copyTo(it) } }
+    return asJpegIfHeic(target, name, mime)
+  }
+
+  /**
+   * A picked / shared / captured file, HEIC photos converted to JPEG first: sent as HEIC, they
+   * reached nobody (no size, no preview, and apps can't show them). Same name, `.jpg`.
+   */
+  private fun asJpegIfHeic(file: File, name: String, mime: String): JSObject {
+    if (Heic.isHeic(file)) {
+      val jpeg = File(file.parentFile, file.nameWithoutExtension + ".jpg")
+      if (Heic.toJpeg(file, jpeg, quality = 95)) {
+        file.delete()
+        return JSObject()
+          .put("path", jpeg.absolutePath)
+          .put("name", name.substringBeforeLast('.', name) + ".jpg")
+          .put("mime", "image/jpeg")
+          .put("size", jpeg.length())
+      }
+    }
     return JSObject()
-      .put("path", target.absolutePath)
+      .put("path", file.absolutePath)
       .put("name", name)
       .put("mime", mime)
-      .put("size", target.length())
+      .put("size", file.length())
+  }
+
+  /** HEIC photos received from others, for display: `{path}` (HEIC) → JPEG at `{to}`. */
+  @Command
+  fun heicToJpeg(invoke: Invoke) {
+    val args = invoke.parseArgs(HeicArgs::class.java)
+    Thread {
+      if (Heic.toJpeg(File(args.path), File(args.to), args.maxSide)) invoke.resolve()
+      else invoke.reject("couldn't convert this photo")
+    }.start()
   }
 
   /** Images, GIFs and stickers the keyboard inserted (KeyboardContent), once. */
@@ -293,7 +328,12 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     return "$folder/${source.name}"
   }
 
-  /** Opens a downloaded file in another app (PDF viewer, text editor…), with a chooser. */
+  /**
+   * Opens a downloaded file in another app (PDF viewer, text editor…). A plain ACTION_VIEW, not
+   * Intent.createChooser: the chooser is the share-style sheet that never offers "Always".
+   * Started directly, Android shows its "Open with" dialog (Just once / Always), or goes
+   * straight to the app picked as default (as in AlwyMail).
+   */
   @Command
   fun open(invoke: Invoke) {
     val file = File(invoke.parseArgs(FileArgs::class.java).path)
@@ -302,10 +342,12 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
       .setDataAndType(uri, mimeOf(file))
       .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     try {
-      activity.startActivity(Intent.createChooser(view, file.name))
+      activity.startActivity(view)
       invoke.resolve()
-    } catch (e: Exception) {
+    } catch (e: android.content.ActivityNotFoundException) {
       invoke.reject("no app can open this file")
+    } catch (e: Exception) {
+      invoke.reject("couldn't open ${file.name}: ${e.message}")
     }
   }
 

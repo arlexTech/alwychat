@@ -18,6 +18,12 @@ export function mediaUrl(mxc: string | null | undefined, size: number): string |
   return `${base}${path}?size=${px}`;
 }
 
+/** The whole (unencrypted) file behind `mxc://server/id`, e.g. a soundboard sound. */
+export function plainFileUrl(mxc: string): string | null {
+  if (!mxc.startsWith("mxc://")) return null;
+  return `${base}${mxc.slice("mxc://".length)}?file=1`;
+}
+
 /** Preview of a file picked in Android's picker (served from the app cache by the core). */
 export function pickedMediaUrl(path: string): string {
   const name = encodeURIComponent(path.slice(path.lastIndexOf("/") + 1));

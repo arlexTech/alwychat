@@ -175,3 +175,6 @@ class Chat {
 }
 
 export const chat = new Chat();
+
+// Dev builds only: lets the desktop test harness (WebDriver) read the open chat.
+if (import.meta.env.DEV) (globalThis as Record<string, unknown>).__chat = chat;

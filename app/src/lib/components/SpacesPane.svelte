@@ -14,13 +14,21 @@
     createVoiceChannel,
     joinRoom,
     openSpace,
+    createRoom,
+    spaceCategories,
     type RoomSummary,
+    type SpaceCategory,
     type SpaceChild,
   } from "$lib/backend";
+  import CategoryPage from "./CategoryPage.svelte";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Pencil from "@lucide/svelte/icons/pencil";
   import { call } from "$lib/stores/call.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import Avatar from "./Avatar.svelte";
+  import { spaceBanner } from "$lib/backend";
+  import { mediaUrl } from "$lib/media";
   import ChatRow from "./ChatRow.svelte";
   import Page from "./Page.svelte";
   import VoiceChannel from "./VoiceChannel.svelte";
@@ -43,6 +51,15 @@
   let children = $state<SpaceChild[]>([]);
   let loading = $state(false);
   let settingsFor = $state<Ref | null>(null);
+
+  // The open space's banner, read again when its settings close (it may have changed).
+  let banner = $state<string | null>(null);
+  $effect(() => {
+    const id = current?.id;
+    void settingsFor; // also when its settings open or close
+    if (id) spaceBanner(id).then((b) => current?.id === id && (banner = b)).catch(() => {});
+    else banner = null;
+  });
   let newSpace = $state(false);
   /** A space to open once it shows up (just created or joined). */
   let pending = $state<string | null>(null);
@@ -135,6 +152,61 @@
     });
   }
 
+  // ── Categories: the space's sub-spaces, shown as sections with their chats ──
+  let categories = $state<SpaceCategory[]>([]);
+  let categoriesTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Reload them (after the space's children change, or a change of ours). */
+  function loadCategories(delay = 300) {
+    const id = currentId;
+    clearTimeout(categoriesTimer);
+    if (!id) return void (categories = []);
+    categoriesTimer = setTimeout(() => {
+      spaceCategories(id)
+        .then((list) => currentId === id && (categories = list))
+        .catch((e) => console.warn("categories", e));
+    }, delay);
+  }
+  $effect(() => {
+    void children;
+    loadCategories();
+  });
+  const COLLAPSED_KEY = "alwychat.collapsedCategories";
+  let collapsed = $state<string[]>(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
+  function toggleCategory(id: string) {
+    collapsed = collapsed.includes(id) ? collapsed.filter((c) => c !== id) : [...collapsed, id];
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed));
+  }
+  /** A sub-space's section: its data once loaded (the name meanwhile). */
+  const categoryOf = (sub: SpaceChild): SpaceCategory => categories.find((c) => c.id === sub.id) ?? { id: sub.id, name: sub.name, joined: sub.joined, children: [] };
+  let editingCategory = $state<SpaceCategory | null>(null);
+  $effect(() => {
+    if (editingCategory) return onBack(() => (editingCategory = null));
+  });
+  /** The space's own chats, which can move into a category. */
+  const looseChats = $derived(children.filter((c) => !c.is_space));
+
+  let newCategory = $state<{ name: string; busy: boolean; error: string | null } | null>(null);
+  $effect(() => {
+    if (newCategory) return onBack(() => (newCategory = null));
+  });
+  async function createCategory() {
+    const space = current;
+    const form = newCategory;
+    if (!space || !form || !form.name.trim()) return;
+    form.busy = true;
+    form.error = null;
+    try {
+      // A sub-space anyone in the space can see into (what Element and Cinny show as sections).
+      await createRoom({ kind: "space", name: form.name.trim(), topic: "", access: "space", encrypted: false, parent: space.id, invite: [] });
+      newCategory = null;
+      loadCategories(1500);
+    } catch (e) {
+      form.error = String(e);
+    } finally {
+      form.busy = false;
+    }
+  }
+
   async function enterVoice(child: SpaceChild, room: RoomSummary | null) {
     error = null;
     if (room) return void call.join(room, false, false);
@@ -207,6 +279,7 @@
   </div>
 {:else}
   <div class="space-view" in:fly={{ x: 24, duration: 180 }}>
+    {#if banner}<img class="space-banner" src={mediaUrl(banner, 400)} alt="" />{/if}
     <header>
       <button class="icon" onclick={() => (path = path.slice(0, -1))} aria-label={tr("Back")}><ChevronLeft size={22} /></button>
       <Avatar name={current.name} mxc={current.avatar} size={32} square />
@@ -235,12 +308,48 @@
       {/each}
     {/if}
     {#each subSpaces as sub (sub.id)}
-      <button class="space" onclick={() => (path = [...path, { id: sub.id, name: sub.name, avatar: sub.avatar }])}>
-        <Avatar name={sub.name} mxc={sub.avatar} size={44} square />
-        <span class="text"><strong>{sub.name}</strong><small>{tr("Space{value}", { value: sub.joined ? "" : " · not joined" })}</small></span>
-        <ChevronRight size={18} />
-      </button>
+      {@const cat = categoryOf(sub)}
+      {@const open = !collapsed.includes(cat.id)}
+      {@const unread = unreadIn(cat.children.map((c) => c.id))}
+      <h4 class="category">
+        <button class="category-toggle" onclick={() => toggleCategory(cat.id)} aria-expanded={open}>
+          <span class="chevron" class:closed={!open}><ChevronDown size={14} /></span>
+          <span class="category-name">{cat.name}</span>
+          {#if unread && !open}<span class="badge">{unread}</span>{/if}
+        </button>
+        {#if canAdd}
+          <button class="icon small" onclick={() => (editingCategory = cat)} aria-label={tr("Edit category")} title={tr("Edit category")}><Pencil size={15} /></button>
+        {/if}
+        <button class="icon small" onclick={() => (path = [...path, { id: sub.id, name: sub.name, avatar: sub.avatar }])} aria-label={tr("Open {name}", { name: cat.name })} title={tr("Open {name}", { name: cat.name })}><ChevronRight size={16} /></button>
+      </h4>
+      {#if open}
+        {#each cat.children as child (child.id)}
+          {@const room = roomsById.get(child.id) ?? null}
+          {#if child.is_voice}
+            <VoiceChannel {room} name={child.name} busy={joining === child.id} onJoin={() => enterVoice(child, room)} onChat={room ? () => onSelect(child.id) : undefined} />
+          {:else if child.is_space}
+            <button class="space" onclick={() => (path = [...path, { id: child.id, name: child.name, avatar: child.avatar }])}>
+              <Avatar name={child.name} mxc={child.avatar} size={36} square />
+              <span class="text"><strong>{child.name}</strong></span>
+              <ChevronRight size={18} />
+            </button>
+          {:else if room}
+            <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} />
+          {:else}
+            <div class="joinable">
+              <Avatar name={child.name} mxc={child.avatar} size={44} />
+              <span class="text"><strong>{child.name}</strong><small><Users size={12} /> {child.members}{child.topic ? ` · ${child.topic}` : ""}</small></span>
+              <button class="join" disabled={joining === child.id} onclick={() => join(child)}>{joining === child.id ? tr("Joining…") : tr("Join")}</button>
+            </div>
+          {/if}
+        {:else}
+          <p class="category-empty">{cat.joined || categories.some((c) => c.id === cat.id) ? tr("No chats in this category yet.") : tr("Loading…")}</p>
+        {/each}
+      {/if}
     {/each}
+    {#if canAdd}
+      <button class="new-category" onclick={() => (newCategory = { name: "", busy: false, error: null })}><Plus size={16} />{tr("New category")}</button>
+    {/if}
     {#if joinable.length}
       <h4>{tr("Other chats in this space")}</h4>
       {#each joinable as child (child.id)}
@@ -262,6 +371,22 @@
       <p class="state">{tr("This space has no chats yet.")}</p>
     {/if}
   </div>
+{/if}
+
+{#if newCategory}
+  {@const form = newCategory}
+  <Page title={tr("New category")} onClose={() => (newCategory = null)}>
+    <form class="new-channel" onsubmit={(e) => (e.preventDefault(), createCategory())}>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input placeholder={tr("Category name")} maxlength="60" bind:value={form.name} autofocus />
+      <p class="hint">{tr("A section of {value}, with its own chats and voice channels. Element and Cinny show it as a sub-space.", { value: current?.name ?? "the space" })}</p>
+      {#if form.error}<p class="hint error">{form.error}</p>{/if}
+      <button class="create" disabled={!form.name.trim() || form.busy}>{form.busy ? tr("Creating…") : tr("Create")}</button>
+    </form>
+  </Page>
+{/if}
+{#if editingCategory && current}
+  <CategoryPage spaceId={current.id} category={categories.find((c) => c.id === editingCategory?.id) ?? editingCategory} loose={looseChats} onChanged={() => loadCategories(1500)} onClose={() => (editingCategory = null)} />
 {/if}
 
 {#if newChannel}
@@ -301,6 +426,13 @@
   .space-view {
     display: flex;
     flex-direction: column;
+  }
+  .space-banner {
+    width: calc(100% - 16px);
+    aspect-ratio: 3;
+    margin: 4px 8px 0;
+    border-radius: 14px;
+    object-fit: cover;
   }
   .space {
     display: flex;
@@ -410,6 +542,72 @@
     border-radius: 999px;
     background: var(--accent);
     color: white;
+    cursor: pointer;
+  }
+  h4.category {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin: 14px 4px 4px 6px;
+  }
+  .category-toggle {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 4px 6px;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .category-toggle:hover {
+    color: var(--text);
+  }
+  .chevron {
+    display: grid;
+    transition: transform 0.15s;
+  }
+  .chevron.closed {
+    transform: rotate(-90deg);
+  }
+  .category-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .category .badge {
+    margin-left: auto;
+    min-width: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    text-align: center;
+    text-transform: none;
+  }
+  .category-empty {
+    margin: 2px 14px 8px;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .new-category {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 12px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    background: none;
+    color: var(--muted);
+    font: inherit;
     cursor: pointer;
   }
   .with-action {

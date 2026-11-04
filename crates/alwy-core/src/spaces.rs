@@ -16,10 +16,7 @@ use matrix_sdk::{
     ruma::{
         OwnedRoomId, OwnedRoomOrAliasId,
         api::client::room::create_room,
-        events::{
-            GlobalAccountDataEventType, StateEventType, SyncStateEvent,
-            space::child::SpaceChildEventContent,
-        },
+        events::{GlobalAccountDataEventType, StateEventType},
         room::RoomType,
         serde::Raw,
     },
@@ -161,11 +158,19 @@ impl crate::Core {
         let changed = Arc::new(Notify::new());
         let notify = changed.clone();
         let client = self.client()?;
+        // Raw events: a removal is an *empty* m.space.child, which the typed event (it requires
+        // `via`) fails to read, so removals never refreshed the list.
         let handle = client.add_room_event_handler(
             &space_id,
-            move |_: SyncStateEvent<SpaceChildEventContent>| {
+            move |event: Raw<matrix_sdk::ruma::events::AnySyncStateEvent>| {
                 let notify = notify.clone();
-                async move { notify.notify_one() }
+                async move {
+                    if event.get_field::<String>("type").ok().flatten().as_deref()
+                        == Some("m.space.child")
+                    {
+                        notify.notify_one();
+                    }
+                }
             },
         );
         let guard = client.event_handler_drop_guard(handle);
@@ -377,5 +382,156 @@ mod tests {
                 .unwrap();
         assert_eq!(prefs.folders[0].rooms, ["!x:y"]);
         assert!(!prefs.folders[0].people);
+    }
+}
+
+/// A category of a space: one of its sub-spaces, with that sub-space's own chats (Discord-style
+/// sections; Element and Cinny show sub-spaces the same way).
+#[derive(Debug, Clone, Serialize)]
+pub struct SpaceCategory {
+    pub id: String,
+    pub name: String,
+    /// We're in it (needed to see its chats' messages; joining a chat inside works either way).
+    pub joined: bool,
+    pub children: Vec<SpaceChild>,
+}
+
+fn hierarchy_child(client: &Client, room: &serde_json::Value) -> Option<SpaceChild> {
+    let id = room["room_id"].as_str()?.to_owned();
+    let room_type = room["room_type"].as_str().map(RoomType::from);
+    let joined = OwnedRoomId::try_from(id.as_str())
+        .ok()
+        .and_then(|rid| client.get_room(&rid))
+        .is_some_and(|r| r.state() == matrix_sdk::RoomState::Joined);
+    Some(SpaceChild {
+        name: room["name"]
+            .as_str()
+            .or(room["canonical_alias"].as_str())
+            .unwrap_or(&id)
+            .to_owned(),
+        avatar: room["avatar_url"].as_str().map(ToOwned::to_owned),
+        topic: room["topic"].as_str().map(ToOwned::to_owned),
+        members: room["num_joined_members"].as_u64().unwrap_or(0),
+        is_space: room_type == Some(RoomType::Space),
+        is_voice: crate::rooms::is_voice_type(room_type.as_ref()),
+        joined,
+        suggested: false,
+        via: Vec::new(),
+        id,
+    })
+}
+
+impl crate::Core {
+    /// The space's categories (sub-spaces) and what's in each, from the server's hierarchy two
+    /// levels deep (the space list only has direct children).
+    pub async fn space_categories(&self, space_id: &str) -> Result<Vec<SpaceCategory>> {
+        use matrix_sdk::ruma::{api::client::space::get_hierarchy, uint};
+        let client = self.client()?;
+        let space = OwnedRoomId::try_from(space_id).map_err(|_| Error::UnknownRoom)?;
+        let mut rooms: Vec<serde_json::Value> = Vec::new();
+        let mut from = None;
+        // A few pages at most (big public spaces).
+        for _ in 0..5 {
+            let mut request = get_hierarchy::v1::Request::new(space.clone());
+            request.max_depth = Some(uint!(2));
+            request.from = from.take();
+            let response = client.send(request).await?;
+            rooms.extend(
+                response
+                    .rooms
+                    .iter()
+                    .filter_map(|r| serde_json::to_value(r).ok()),
+            );
+            match response.next_batch {
+                Some(next) => from = Some(next),
+                None => break,
+            }
+        }
+        let by_id: HashMap<&str, &serde_json::Value> = rooms
+            .iter()
+            .filter_map(|r| Some((r["room_id"].as_str()?, r)))
+            .collect();
+        // A space's children (ID and servers to join through), in its own order.
+        let children_of = |id: &str| -> Vec<(String, Vec<String>)> {
+            by_id
+                .get(id)
+                .and_then(|r| r["children_state"].as_array())
+                .map(|events| {
+                    events
+                        .iter()
+                        .filter_map(|e| {
+                            let via: Vec<String> = e["content"]["via"]
+                                .as_array()?
+                                .iter()
+                                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                                .collect();
+                            let id = e["state_key"].as_str()?.to_owned();
+                            (!via.is_empty()).then_some((id, via))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut categories = Vec::new();
+        for (child_id, _) in children_of(space_id) {
+            let Some(room) = by_id.get(child_id.as_str()) else {
+                continue;
+            };
+            if room["room_type"].as_str() != Some("m.space") {
+                continue;
+            }
+            let Some(category) = hierarchy_child(&client, room) else {
+                continue;
+            };
+            let children = children_of(&child_id)
+                .into_iter()
+                .filter_map(|(id, via)| {
+                    let mut child = hierarchy_child(&client, by_id.get(id.as_str())?)?;
+                    child.via = via;
+                    Some(child)
+                })
+                .collect();
+            categories.push(SpaceCategory {
+                id: category.id,
+                name: category.name,
+                joined: category.joined,
+                children,
+            });
+        }
+        Ok(categories)
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+struct BannerContent {
+    #[serde(default)]
+    url: Option<String>,
+}
+
+impl crate::Core {
+    /// A space's banner (`com.alwy.chat.room.banner`, AlwyChat's own: Matrix has none), an
+    /// `mxc://` URL.
+    pub async fn space_banner(&self, room_id: &str) -> Result<Option<String>> {
+        let room = self.room(room_id)?;
+        let content: Option<BannerContent> =
+            crate::custom::fetch(&room, crate::names::BANNER, "").await?;
+        Ok(content
+            .and_then(|c| c.url)
+            .filter(|u| u.starts_with("mxc://")))
+    }
+
+    /// Set (a JPEG) or remove (`None`) a space's banner.
+    pub async fn set_space_banner(&self, room_id: &str, jpeg: Option<Vec<u8>>) -> Result<()> {
+        let room = self.room(room_id)?;
+        let content = match jpeg {
+            Some(bytes) => {
+                let url = self.upload_wallpaper(bytes, "image/jpeg").await?;
+                serde_json::json!({ "url": url })
+            }
+            None => serde_json::json!({}),
+        };
+        room.send_state_event_raw(crate::names::BANNER, "", content)
+            .await?;
+        Ok(())
     }
 }

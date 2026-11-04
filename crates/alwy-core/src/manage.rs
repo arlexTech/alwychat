@@ -89,6 +89,8 @@ pub struct RoomDetails {
     pub name: String,
     pub topic: Option<String>,
     pub avatar: Option<String>,
+    /// The chat has its own name (not one made from its members': a 1:1 shows the person).
+    pub has_name: bool,
     pub alias: Option<String>,
     pub is_space: bool,
     pub is_dm: bool,
@@ -327,6 +329,9 @@ impl crate::Core {
         };
 
         let mut request = create_room::v3::Request::new();
+        // Version 11: needed for disappearing messages deleted by the server (delayed
+        // redactions), supported by every current client.
+        request.room_version = Some(matrix_sdk::ruma::RoomVersionId::V11);
         request.name = Some(name.to_owned());
         let topic = new.topic.trim();
         if !topic.is_empty() {
@@ -640,6 +645,7 @@ impl crate::Core {
                 .unwrap_or_else(|| room.room_id().to_string()),
             topic: room.topic(),
             avatar: room.avatar_url().map(|u| u.to_string()),
+            has_name: room.name().is_some_and(|n| !n.trim().is_empty()),
             alias: room.canonical_alias().map(|a| a.to_string()),
             is_space: room.is_space(),
             is_dm: room.is_direct().await.unwrap_or(false),
@@ -664,6 +670,7 @@ impl crate::Core {
         })
     }
 
+    /// An empty name removes it (a 1:1 chat then shows the person's name again).
     pub async fn set_room_name(&self, room_id: &str, name: &str) -> Result<()> {
         self.room(room_id)?.set_name(name.trim().to_owned()).await?;
         Ok(())

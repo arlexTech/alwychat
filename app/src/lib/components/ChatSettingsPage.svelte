@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tr } from "$lib/i18n/index.svelte";
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import {
     roomDetails,
@@ -9,6 +9,9 @@
     setTheme,
     type Member,
     type RoomDetails,
+    setDisappearing,
+    disappearingByServer,
+    isAndroid,
   } from "$lib/backend";
   import RoomManage from "./RoomManage.svelte";
   import UserPage from "./UserPage.svelte";
@@ -20,6 +23,9 @@
   import ImageUp from "@lucide/svelte/icons/image-up";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import Timer from "@lucide/svelte/icons/timer";
+  import CalendarHeart from "@lucide/svelte/icons/calendar-heart";
+  import CountdownsPage from "./CountdownsPage.svelte";
   import CustomizePage from "./CustomizePage.svelte";
   import MembersPage from "./MembersPage.svelte";
   import Search from "@lucide/svelte/icons/search";
@@ -35,6 +41,8 @@
   import { layouts } from "$lib/stores/layout.svelte";
   import type { MessageLayout } from "$lib/backend";
   import Images from "@lucide/svelte/icons/images";
+  import ImageDown from "@lucide/svelte/icons/image-down";
+  import { prefs } from "$lib/stores/prefs.svelte";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
   let {
@@ -60,7 +68,7 @@
   } = $props();
 
   let details = $state<RoomDetails | null>(null);
-  let sub = $state<"profile" | "members" | "nicknames" | "customize" | "privacy" | null>(null);
+  let sub = $state<"profile" | "members" | "nicknames" | "customize" | "privacy" | "dates" | null>(null);
   $effect(() => {
     if (sub) return onBack(() => (sub = null));
   });
@@ -87,6 +95,20 @@
     roomMembers(roomId)
       .then((list) => (members = list.sort((a, b) => Number(b.is_me) - Number(a.is_me))))
       .catch((e) => (error = String(e)));
+  });
+
+  const DISAPPEAR_TIMERS: [number, string][] = [
+    [0, tr("Off")],
+    [5 * 60_000, tr("5 minutes")],
+    [3_600_000, tr("1 hour")],
+    [8 * 3_600_000, tr("8 hours")],
+    [24 * 3_600_000, tr("1 day")],
+    [7 * 24 * 3_600_000, tr("1 week")],
+  ];
+  /** The server deletes them on time (room version 11+), else the sender's app. */
+  let byServer = $state(false);
+  $effect(() => {
+    disappearingByServer(roomId).then((v) => (byServer = v)).catch(() => {});
   });
 
   /** Show the change at once; the server's copy comes back through the chat's style stream. */
@@ -158,6 +180,11 @@
     <span class="m-text"><strong>{tr("Theme")}</strong><small>{style?.wallpaper ? tr("Your photo") : `${currentTheme.name} ${currentTheme.emoji}`}</small></span>
     <span class="m-end quick">{quick}</span><ChevronRight size={18} />
   </button>
+  <button class="m-row" onclick={() => (sub = "dates")}>
+    <span class="m-icon"><CalendarHeart size={20} /></span>
+    <span class="m-text"><strong>{tr("Dates & countdowns")}</strong><small>{style?.countdowns.length ? trn(style.countdowns.length, "{n} date", "{n} dates") : tr("Days together, birthdays, trips…")}</small></span>
+    <ChevronRight size={18} />
+  </button>
   <div class="m-row">
     <span class="m-icon"><ImageUp size={20} /></span>
     <span class="m-text"><strong>{tr("Photos you send here")}</strong></span>
@@ -167,6 +194,23 @@
       <option value="compressed">{tr("Compressed")}</option>
     </select>
   </div>
+  {#if prefs.settings}
+    {@const autoSave = prefs.settings.auto_save_rooms.includes(roomId)}
+    <label class="m-row">
+      <span class="m-icon"><ImageDown size={20} /></span>
+      <span class="m-text"><strong>{tr("Save new photos & videos")}</strong><small>{isAndroid ? tr("Others' new ones go to this phone's gallery") : tr("Others' new ones go to Pictures/AlwyChat on this computer")}</small></span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={autoSave}
+        onchange={(e) => {
+          const on = e.currentTarget.checked;
+          const rooms = prefs.settings!.auto_save_rooms.filter((r) => r !== roomId);
+          prefs.save({ auto_save_rooms: on ? [...rooms, roomId] : rooms }).catch(() => {});
+        }}
+      />
+    </label>
+  {/if}
   <div class="m-row">
     <span class="m-icon"><MessagesSquare size={20} /></span>
     <span class="m-text"><strong>{tr("Message layout")}</strong><small>{tr("On this device")}</small></span>
@@ -195,6 +239,28 @@
     <RoomManage room={details} part="notify" reload={loadDetails} />
 
     <h3 class="m-section">{tr("Privacy & support")}</h3>
+    <div class="m-row">
+      <span class="m-icon"><Timer size={20} /></span>
+      <span class="m-text">
+        <strong>{tr("Disappearing messages")}</strong>
+        <small>
+          {#if !style?.disappearing}{tr("New messages vanish after a while, for everyone")}
+          {:else if byServer}{tr("Deleted by the server on time, even if phones are off")}
+          {:else}{tr("Deleted by the sender's app when it runs (older chat; hidden for everyone on time)")}{/if}
+        </small>
+      </span>
+      <select
+        class="m-select"
+        disabled={!style?.can_edit}
+        value={String(style?.disappearing?.timer_ms ?? 0)}
+        onchange={(e) => {
+          const ms = Number(e.currentTarget.value) || null;
+          void apply({ disappearing: ms ? { timer_ms: ms, since: Date.now() } : null }, () => setDisappearing(roomId, ms));
+        }}
+      >
+        {#each DISAPPEAR_TIMERS as [ms, label] (ms)}<option value={String(ms)}>{label}</option>{/each}
+      </select>
+    </div>
     <button class="m-row" onclick={() => (sub = "privacy")}>
       <span class="m-icon"><ShieldCheck size={20} /></span>
       <span class="m-text"><strong>{tr("Privacy & security")}</strong><small>{details.encrypted ? tr("End-to-end encrypted") : tr("Not encrypted")}{details.is_dm ? "" : tr(" · who can join, roles")}</small></span>
@@ -207,6 +273,8 @@
 
 {#if sub === "customize"}
   <CustomizePage {roomId} onClose={() => (sub = null)} />
+{:else if sub === "dates"}
+  <CountdownsPage {roomId} onClose={() => (sub = null)} />
 {:else if sub === "privacy" && details}
   <Page title={tr("Privacy & security")} onClose={() => (sub = null)}>
     <RoomManage room={details} part="privacy" reload={loadDetails} />

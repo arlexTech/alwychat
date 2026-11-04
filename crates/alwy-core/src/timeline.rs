@@ -143,6 +143,8 @@ pub enum MessageContent {
         caption: Option<String>,
         /// Album this photo belongs to (`com.alwy.chat.gallery`), if sent as one.
         gallery: Option<GalleryRef>,
+        /// Shown once (view_once.rs).
+        view_once: bool,
     },
     Video {
         media: String,
@@ -152,6 +154,8 @@ pub enum MessageContent {
         duration_ms: Option<u64>,
         has_thumbnail: bool,
         caption: Option<String>,
+        /// Shown once (view_once.rs).
+        view_once: bool,
     },
     File {
         media: String,
@@ -294,6 +298,13 @@ impl crate::Core {
         let client = self.client()?;
         let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
         let room = client.get_room(&room_id).ok_or(Error::UnknownRoom)?;
+        // Subscribe the open chat in sliding sync (like Element X): every sync then carries its
+        // events and receipts. Without it, the echo of our own read receipt could wait for the
+        // next message there, leaving the chat marked unread in the list after reading it. Kept
+        // until another chat opens, so the echo also arrives after going back to the list.
+        let list = self.with_active(|a| a.sync.room_list_service())?;
+        let subscribed = room_id.clone();
+        crate::rt::spawn(async move { list.set_room_subscriptions(&[&subscribed]).await });
         // Focused on one message (a search result): its surroundings, paginated both ways,
         // without live updates until the UI goes back to the latest messages.
         let builder = match focus {
@@ -435,9 +446,10 @@ impl crate::Core {
         body: &str,
         mentions: &[MentionInput],
         reply_to: Option<&str>,
+        emotes: &[crate::emotes::EmoteInput],
     ) -> Result<()> {
         let timeline = self.timeline(room_id)?;
-        let content = mentions::compose(body, mentions);
+        let content = crate::emotes::with_emotes(mentions::compose(body, mentions), emotes);
         match reply_to {
             Some(id) => {
                 let event_id = OwnedEventId::try_from(id).map_err(|_| Error::UnknownEvent)?;
@@ -554,14 +566,41 @@ impl crate::Core {
         mentions: &[MentionInput],
     ) -> Result<()> {
         let timeline = self.timeline(room_id)?;
+        let id = parse_item_id(item_id)?;
         let content = mentions::compose(body, mentions);
-        timeline
-            .edit(
-                &parse_item_id(item_id)?,
-                EditedContent::RoomMessage(content),
-            )
-            .await
-            .map_err(timeline_err)
+        // A photo, video, file or voice message: only its caption changes (empty = removed).
+        let items = timeline.items().await;
+        let item = items
+            .iter()
+            .filter_map(|item| item.as_event())
+            .find(|e| e.identifier() == id);
+        let is_media = item.is_some_and(|item| {
+            item.content().as_message().is_some_and(|m| {
+                matches!(
+                    m.msgtype(),
+                    MessageType::Image(_)
+                        | MessageType::Video(_)
+                        | MessageType::File(_)
+                        | MessageType::Audio(_)
+                )
+            })
+        });
+        let edited = if is_media {
+            let (caption, formatted_caption) = match content.msgtype {
+                MessageType::Text(text) if !body.trim().is_empty() => {
+                    (Some(text.body), text.formatted)
+                }
+                _ => (None, None),
+            };
+            EditedContent::MediaCaption {
+                caption,
+                formatted_caption,
+                mentions: content.mentions,
+            }
+        } else {
+            EditedContent::RoomMessage(content)
+        };
+        timeline.edit(&id, edited).await.map_err(timeline_err)
     }
 
     /// Send copies of messages from the open chat to `target_room_id` (same content, media
@@ -716,6 +755,8 @@ fn custom_state_verb(event_type: &str) -> Option<&'static str> {
         t if t == crate::custom::THEME => Some("changed the chat theme"),
         t if t == crate::custom::QUICK_REACTION => Some("changed the quick reaction"),
         t if t == crate::custom::NICKNAMES => Some("changed a nickname"),
+        t if t == crate::names::DISAPPEARING => Some("changed disappearing messages"),
+        t if t == crate::names::COUNTDOWNS => Some("changed the chat's dates"),
         _ => None,
     }
 }
@@ -1060,6 +1101,7 @@ impl Mapper {
                     blurhash: info.and_then(|i| i.blurhash.clone()),
                     caption: c.caption().map(ToOwned::to_owned),
                     gallery: gallery_of(event),
+                    view_once: view_once_of(event),
                 }
             }
             MessageType::Video(c) => {
@@ -1079,6 +1121,7 @@ impl Mapper {
                     duration_ms: info.and_then(|i| i.duration).map(|d| d.as_millis() as u64),
                     has_thumbnail: thumbnail.is_some(),
                     caption: c.caption().map(ToOwned::to_owned),
+                    view_once: view_once_of(event),
                 }
             }
             MessageType::Audio(c) => {
@@ -1180,6 +1223,14 @@ fn message_content(msgtype: &MessageType) -> MessageContent {
 }
 
 /// The album (`com.alwy.chat.gallery`) from the event's content (absent on local echoes until sent).
+/// A view-once photo or video (`com.alwy.chat.view_once`).
+fn view_once_of(event: &EventTimelineItem) -> bool {
+    event
+        .original_json()
+        .and_then(|raw| raw.get_field::<serde_json::Value>("content").ok().flatten())
+        .is_some_and(|c| c.get(crate::names::VIEW_ONCE).and_then(|v| v.as_bool()) == Some(true))
+}
+
 fn gallery_of(event: &EventTimelineItem) -> Option<GalleryRef> {
     let content: serde_json::Value = event.original_json()?.get_field("content").ok()??;
     let value = content.get(crate::names::GALLERY)?;

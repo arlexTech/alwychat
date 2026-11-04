@@ -1,0 +1,10 @@
+#!/bin/sh
+# The makensis Tauri runs for Windows installers. It must come from the same NSIS build as the
+# Stubs it packs: Arch's AUR nsis is compiled with NSIS_MAX_STRLEN=8192 (and 64-bit by default),
+# the official 32-bit stubs with 1024, and a mismatch makes an installer that "completes" without
+# installing anything. So: the official NSIS zip unpacked in $ALWY_NSIS, plus a Linux makensis
+# built from the same version's source with the default settings into its Bin/:
+#   scons SKIPSTUBS=all SKIPPLUGINS=all SKIPUTILS=all SKIPMISC=all NSIS_CONFIG_CONST_DATA_PATH=no makensis
+# (it then finds Stubs/Plugins/Include next to Bin/). Check: makensis -HDRINFO shows NSIS_MAX_STRLEN=1024.
+nsis=${ALWY_NSIS:-$HOME/.local/opt/nsis-3.13}
+exec "$nsis/Bin/makensis" "$@"

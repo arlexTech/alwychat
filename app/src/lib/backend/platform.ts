@@ -103,17 +103,25 @@ export async function webLogin(server: string): Promise<unknown> {
     if (popup && !popup.closed) popup.location.href = payload;
     else window.open(payload, "alwychat-login", "popup,width=480,height=720");
   });
-  const onMessage = (e: MessageEvent) => {
-    if (e.origin !== location.origin || e.data?.type !== "alwychat-login") return;
-    mod.finishLogin(String(e.data.url));
+  // The callback page (static/oauth-callback.js) answers on both: postMessage needs the opener,
+  // which the server's sign-in page often cuts (Cross-Origin-Opener-Policy); the channel doesn't.
+  let done = false;
+  const finish = (data: unknown) => {
+    const d = data as { type?: string; url?: string } | null;
+    if (done || d?.type !== "alwychat-login" || !d.url) return;
+    done = true;
+    mod.finishLogin(String(d.url));
   };
+  const onMessage = (e: MessageEvent) => e.origin === location.origin && finish(e.data);
   window.addEventListener("message", onMessage);
-  // Closing the popup without signing in cancels.
-  const watch = setInterval(() => popup?.closed && void mod.invoke("cancel_login", {}), 1000);
+  const channel = new BroadcastChannel("alwychat-login");
+  channel.onmessage = (e) => finish(e.data);
+  // No cancel when the popup looks closed: once the opener link is cut, `closed` reads true while
+  // the sign-in is still going on. The waiting screen has its own Cancel.
   try {
     return await mod.invoke("login", { server, redirect: loginRedirect() });
   } finally {
-    clearInterval(watch);
+    channel.close();
     unlisten();
     window.removeEventListener("message", onMessage);
     if (popup && !popup.closed) popup.close();

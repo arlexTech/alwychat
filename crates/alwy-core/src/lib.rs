@@ -4,11 +4,18 @@
 #![cfg_attr(target_family = "wasm", allow(clippy::arc_with_non_send_sync))]
 
 pub mod applock;
+#[cfg(not(target_family = "wasm"))]
+pub mod autosave;
+pub mod blurhash;
+pub mod call_history;
+pub mod call_keys;
 pub mod custom;
+pub mod disappearing;
 pub mod discovery;
 pub mod download;
 pub mod drafts;
 mod effects;
+pub mod emotes;
 pub mod encryption;
 pub mod error;
 mod files;
@@ -31,9 +38,11 @@ pub mod saved;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod sounds;
 pub mod spaces;
 pub mod timeline;
 pub mod upload;
+pub mod view_once;
 pub mod voice;
 
 pub use error::{Error, Result};

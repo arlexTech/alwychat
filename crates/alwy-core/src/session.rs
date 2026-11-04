@@ -564,8 +564,21 @@ impl Core {
         crate::notifications::install(&client, self.on_notification.clone(), self.settings.clone())
             .await;
         crate::rtc::install(&client, self.on_call_signal.clone());
+        crate::call_keys::install(&client);
+        crate::view_once::install(&client);
+        crate::call_history::install(self.data_dir.join(&store_dir).join("calls.json"));
+        #[cfg(not(target_family = "wasm"))]
+        crate::autosave::install(
+            &client,
+            self.settings.clone(),
+            self.data_dir.join(&store_dir).join("autosave.json"),
+        );
         crate::drafts::install(&client, self.on_draft.clone());
         let search = crate::search::install(&client, &self.data_dir.join(&store_dir));
+        let disappearing = crate::disappearing::install(
+            &client,
+            self.data_dir.join(&store_dir).join("disappearing.json"),
+        );
 
         // The event cache feeds timelines and chat-list previews; it must run before sync starts.
         client
@@ -585,7 +598,7 @@ impl Core {
         *self.active.lock().unwrap() = Some(Active {
             client,
             sync,
-            tasks: Vec::new(),
+            tasks: vec![disappearing],
             chat: None,
             recent_chats: Vec::new(),
             verifications,

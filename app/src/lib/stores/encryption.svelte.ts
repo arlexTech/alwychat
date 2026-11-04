@@ -1,4 +1,6 @@
 import {
+  isAndroid,
+  setCanScanQr,
   subscribeEncryption,
   type EncryptionStatus,
   type VerificationUpdate,
@@ -34,6 +36,8 @@ class Encryption {
         if (update.state === "incoming") this.sheetOpen = true;
       },
     );
+    // Phones have a camera to scan the other device's code; computers rarely, they show theirs.
+    await setCanScanQr(isAndroid).catch(() => {});
   }
 
   reset() {

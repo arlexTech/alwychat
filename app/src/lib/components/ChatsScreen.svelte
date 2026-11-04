@@ -17,11 +17,16 @@
   import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
   import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
+  import CallsPane from "./CallsPane.svelte";
+  import PhoneIcon from "@lucide/svelte/icons/phone";
+  import { calls } from "$lib/stores/calls.svelte";
+  import { viewOnce } from "$lib/stores/viewOnce.svelte";
   import { onMount } from "svelte";
   import { friendlyError } from "$lib/errors";
   import logo from "$lib/assets/logo.svg";
   import Download from "@lucide/svelte/icons/download";
   import { updates } from "$lib/stores/updates.svelte";
+  import ProgressBar from "./ProgressBar.svelte";
   import { sidePanels } from "$lib/stores/panel.svelte";
   import { flip } from "svelte/animate";
   import { fade, fly } from "svelte/transition";
@@ -75,6 +80,9 @@
   import { liveLocation } from "$lib/stores/liveLocation.svelte";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import X from "@lucide/svelte/icons/x";
+  import { appOffer, nativeApp } from "$lib/nativeApp.svelte";
+  import { openExternal } from "$lib/backend";
   import { pickedMediaUrl } from "$lib/media";
   import ForwardPage from "./ForwardPage.svelte";
   import FileIcon from "@lucide/svelte/icons/file";
@@ -114,7 +122,7 @@
   }
   let query = $state("");
   /** Bottom bar: chats, or spaces and their chats. */
-  let tab = $state<"chats" | "spaces">("chats");
+  let tab = $state<"chats" | "spaces" | "calls">("chats");
   /** Messages matching the search box, under the matching chats. */
   const messageSearch = new MessageSearch();
   $effect(() => {
@@ -141,6 +149,10 @@
   // Android back: a full-screen call shrinks to its pill first.
   $effect(() => {
     if (call.active && !call.minimized) return onBack(() => (call.minimized = true));
+  });
+  // The call history: back returns to the chats.
+  $effect(() => {
+    if (tab === "calls") return onBack(() => (tab = "chats"));
   });
   // Then menus and sheets, then the open chat.
   $effect(() => {
@@ -243,6 +255,8 @@
     updates.start();
     presence.start();
     call.listen();
+    void calls.start();
+    void viewOnce.load();
     spaces.start();
     saved.start();
     drafts.start();
@@ -291,7 +305,16 @@
       <button class="me" onclick={() => (settingsOpen = true)} aria-label={tr("Settings")} title={tr("Settings")}>
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
-      <h1>{tab === "chats" ? tr("Chats") : tr("Spaces")}</h1>
+      <h1>{tab === "chats" ? tr("Chats") : tab === "spaces" ? tr("Spaces") : tr("Calls")}</h1>
+      <!-- Calls are a page from here, not a tab: used less than chats and spaces. -->
+      <button
+        class="new-chat calls-button"
+        class:active={tab === "calls"}
+        onclick={() => (tab = tab === "calls" ? "chats" : "calls")}
+        aria-label={tr("Calls")}
+        title={tr("Calls")}
+        ><PhoneIcon size={20} />{#if calls.unseenMissed && tab !== "calls"}<span class="missed">{calls.unseenMissed}</span>{/if}</button
+      >
       <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label={tr("New chat")} title={tr("New chat")}><SquarePen size={21} /></button>
     </header>
 
@@ -315,8 +338,22 @@
             {:else if u.error}{u.error}
             {:else}{tr("Tap to update")}{/if}
           </small>
+          {#if u.stage === "downloading"}<span class="update-bar"><ProgressBar value={u.progress} label={tr("Download progress")} /></span>{/if}
         </span>
       </button>
+    {/if}
+    {#if appOffer.shown}
+      {@const app = nativeApp()}
+      {#if app}
+        <div class="unlock-banner app-offer" transition:fade>
+          <span class="update-icon"><Download size={18} /></span>
+          <button class="app-offer-text" onclick={() => (openExternal(app.url), appOffer.dismiss())}>
+            <strong>{tr("Get the AlwyChat app for {system}", { system: app.system })}</strong>
+            <small>{tr("Notifications even with this tab closed. Tap to download")}</small>
+          </button>
+          <button class="icon app-offer-close" onclick={() => appOffer.dismiss()} aria-label={tr("Not now")} title={tr("Not now")}><X size={18} /></button>
+        </div>
+      {/if}
     {/if}
     {#if encryption.locked}
       <button class="unlock-banner" onclick={() => (encryption.sheetOpen = true)} transition:fade>
@@ -328,6 +365,10 @@
     {#if tab === "spaces"}
       <div class="rows">
         <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} />
+      </div>
+    {:else if tab === "calls"}
+      <div class="rows">
+        <CallsPane onOpen={(id) => (selectedId = id)} />
       </div>
     {:else}
     <input class="search" type="search" placeholder={tr("Search")} bind:value={query} />
@@ -623,6 +664,7 @@
   .chat-pane.scenic > :global(.scroller),
   .chat-pane.scenic > :global(form),
   .chat-pane.scenic > :global(.pin-banner),
+  .chat-pane.scenic > :global(.countdown-strip),
   .chat-pane.scenic > :global(.live-bar),
   .chat-pane.scenic > :global(.timeline),
   .chat-pane.scenic > :global(.call-banner),
@@ -643,6 +685,7 @@
   .chat-pane.scenic > :global(.scroller),
   .chat-pane.scenic > :global(form),
   .chat-pane.scenic > :global(.pin-banner),
+  .chat-pane.scenic > :global(.countdown-strip),
   .chat-pane.scenic > :global(.live-bar),
   .chat-pane.scenic > :global(.timeline),
   .chat-pane.scenic > :global(.call-banner),
@@ -671,6 +714,27 @@
   }
   .new-chat:hover {
     background: var(--surface-hover);
+  }
+  .calls-button {
+    position: relative;
+  }
+  .calls-button.active {
+    background: color-mix(in srgb, var(--accent-a) 22%, transparent);
+    color: var(--accent-a);
+  }
+  /* Missed calls: red, like a missed call anywhere. */
+  .missed {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    min-width: 18px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
   }
   .me {
     padding: 0;
@@ -746,7 +810,7 @@
   }
   .tabbar {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
     border-top: 1px solid var(--border);
     background: inherit;
   }
@@ -862,9 +926,26 @@
     display: flex;
     flex-direction: column;
   }
+  .update-bar {
+    display: block;
+    margin-top: 6px;
+  }
   .update-icon {
     display: grid;
     color: var(--accent-a);
+  }
+  .app-offer {
+    cursor: default;
+  }
+  .app-offer-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    cursor: pointer;
+  }
+  .app-offer-close {
+    color: var(--muted);
   }
   .unlock-banner:disabled {
     cursor: default;

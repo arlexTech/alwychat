@@ -22,24 +22,7 @@ class PushService : FirebaseMessagingService() {
   override fun onMessageReceived(message: RemoteMessage) {
     val roomId = message.data["room_id"] ?: return
     val eventId = message.data["event_id"] ?: return
-    // Settings → Notifications → "Send a test notification": shown even with the app open.
-    if (eventId == TEST_EVENT) {
-      show(this, JSONObject()
-        .put("room_id", roomId)
-        .put("title", "AlwyChat")
-        .put("body", "Notifications work: this one came from your server's push gateway, through Google, to this phone."))
-      return
-    }
-    // On screen, the chat list already shows it.
-    if (MainActivity.visible) return
-    val json = try {
-      NativePush.notification(applicationContext, applicationContext.dataDir.absolutePath, roomId, eventId)
-    } catch (e: Throwable) {
-      Log.w("AlwyChat", "push: $e")
-      ""
-    }
-    if (json.isEmpty()) return
-    show(this, JSONObject(json))
+    handle(applicationContext, roomId, eventId)
   }
 
   override fun onNewToken(token: String) {
@@ -49,6 +32,29 @@ class PushService : FirebaseMessagingService() {
 
   companion object {
     const val CHANNEL = "messages"
+
+    /** A pushed "event X in room Y" (from FCM or UnifiedPush): fetched, decrypted, shown. */
+    fun handle(context: Context, roomId: String, eventId: String) {
+      // Settings → Notifications → "Send a test notification": shown even with the app open.
+      if (eventId == TEST_EVENT) {
+        show(context, JSONObject()
+          .put("room_id", roomId)
+          .put("title", "AlwyChat")
+          .put("body", "Notifications work: this one came from your server, through the push service, to this phone."))
+        return
+      }
+      // On screen, the chat list already shows it.
+      if (MainActivity.visible) return
+      val json = try {
+        NativePush.notification(context, context.dataDir.absolutePath, roomId, eventId)
+      } catch (e: Throwable) {
+        Log.w("AlwyChat", "push: $e")
+        ""
+      }
+      if (json.isEmpty()) return
+      val n = JSONObject(json)
+      if (n.has("call") && !n.isNull("call")) IncomingCall.show(context, n) else show(context, n)
+    }
     /** Matches `alwy_core::push::TEST_EVENT`. */
     const val TEST_EVENT = "\$alwychat-push-test"
 

@@ -64,6 +64,39 @@ export type CallSignal =
 
 export const onCallSignal = (handler: (signal: CallSignal) => void) =>
   listen<CallSignal>("call-signal", (e) => handler(e.payload));
+/** Android: the ongoing call notification (keeps the call going in the background). */
+export type CallNotificationTexts = { title: string; text: string; hangUp: string; channel: string; mute: string; unmute: string };
+/** `muted` null: no mute button (push to talk). */
+export const callNotification = (
+  active: boolean,
+  texts: CallNotificationTexts | null = null,
+  roomId: string | null = null,
+  muted: boolean | null = null,
+  camera = false,
+) => invoke<void>("call_notification", { active, texts, roomId, muted, camera });
+/** Android: call audio on the speaker (true), earpiece/headphones (false), or normal again (null). */
+/** Desktop: AlwyChat opens (in the tray) when the computer starts. */
+export const autostartGet = () => invoke<boolean>("autostart_get");
+export const autostartSet = (on: boolean) => invoke<void>("autostart_set", { on });
+/** Android: the call's picture-in-picture window wide (screen share) or tall. */
+export const pipShape = (wide: boolean) => invoke<void>("pip_shape", { wide });
+export const callAudio = (speaker: boolean | null) => invoke<void>("call_audio", { speaker });
+/** A button of the call notification was tapped. */
+/** An incoming call notification (or its Answer button) was tapped. */
+export type CallLink = {
+  room_id: string;
+  notification_id: string;
+  video: boolean;
+  expires_at: number;
+  caller_name: string;
+  answer: boolean;
+};
+export const onCallLink = (handler: (link: CallLink) => void) => listen<CallLink>("call-link", (e) => handler(e.payload));
+/** The incoming call notification that launched the app, if any. */
+export const launchCall = () => invoke<CallLink | null>("launch_call");
+export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off";
+export const onCallAction = (handler: (action: CallAction) => void) =>
+  listen<CallAction>("call-action", (e) => handler(e.payload));
 export const declineCall = (roomId: string, notificationId: string) =>
   invoke<void>("decline_call", { roomId, notificationId });
 
@@ -98,7 +131,8 @@ export interface RoomSummary {
   avatar: string | null;
   is_dm: boolean;
   dm_user: string | null;
-  /** Users in the room's call right now. */
+  /** The chat has its own name (shown instead of the person's / nicknames in a 1:1). */
+  has_name: boolean;
   /** People in the room's call right now. */
   in_call: CallMember[];
   /** A voice channel (Element Call video room): opening it joins the call. */
@@ -169,6 +203,8 @@ export type MessageContent =
       caption: string | null;
       /** Album (com.alwy.chat.gallery) this photo was sent in. */
       gallery: GalleryRef | null;
+      /** Shown once (com.alwy.chat.view_once). */
+      view_once: boolean;
     }
   | {
       kind: "video";
@@ -179,6 +215,8 @@ export type MessageContent =
       duration_ms: number | null;
       has_thumbnail: boolean;
       caption: string | null;
+      /** Shown once (com.alwy.chat.view_once). */
+      view_once: boolean;
     }
   | { kind: "file"; media: string; filename: string; size: number | null; caption: string | null }
   | { kind: "sticker"; media: string; body: string; width: number | null; height: number | null }
@@ -258,8 +296,72 @@ export type TimelineEntry = { key: string } & (
 );
 
 /** Join (or start) the room's call: returns where to connect with livekit-client. */
+/** `encrypted`: encrypt our media end to end (encrypted room). */
 export const joinCall = (roomId: string, video: boolean) =>
-  invoke<{ url: string; jwt: string }>("join_call", { roomId, video });
+  invoke<{ url: string; jwt: string; encrypted: boolean }>("join_call", { roomId, video });
+
+/** A space's banner (mxc), AlwyChat's own (other apps don't show it). */
+export const spaceBanner = (roomId: string) => invoke<string | null>("space_banner", { roomId });
+/** Set a space's banner (base64 JPEG) or remove it (null). */
+export const setSpaceBanner = (roomId: string, image: string | null) => invoke<void>("set_space_banner", { roomId, image });
+
+/** View-once messages we opened (any of our devices). */
+export const viewedOnce = () => invoke<string[]>("viewed_once");
+/** Open a view-once message: remembered, and its sender is told (their app deletes it). */
+export const openViewOnce = (roomId: string, eventId: string) => invoke<void>("open_view_once", { roomId, eventId });
+
+/** A call in this device's log (the Calls tab). */
+export interface CallRecord {
+  id: string;
+  room_id: string;
+  kind: "outgoing" | "incoming" | "missed" | "declined" | "joined";
+  video: boolean;
+  /** When it rang or started (ms). */
+  at: number;
+  /** How long we were in it, once over. */
+  duration_s: number | null;
+  /** Who called (incoming, missed, declined). */
+  caller: string | null;
+  /** Someone else was in it (an outgoing call without: no answer). */
+  connected: boolean;
+}
+export const callHistory = () => invoke<{ records: CallRecord[]; unseen_missed: number }>("call_history");
+export const markCallsSeen = () => invoke<void>("mark_calls_seen");
+export const clearCallHistory = (id: string | null) => invoke<void>("clear_call_history", { id });
+export const onCallHistory = (handler: () => void) => listen("call-history", () => handler());
+
+/** A chat's own soundboard sound (built-in ones live in the UI). */
+export interface Sound {
+  id: string;
+  name: string;
+  emoji: string | null;
+  /** `mxc://` of the WAV. */
+  url: string;
+  mime: string;
+  duration_ms: number;
+  by: string | null;
+}
+export const roomSounds = (roomId: string) => invoke<Sound[]>("room_sounds", { roomId });
+export const setRoomSounds = (roomId: string, items: Sound[]) => invoke<void>("set_room_sounds", { roomId, items });
+export const canEditSounds = (roomId: string) => invoke<boolean>("can_edit_sounds", { roomId });
+export const uploadSound = (data: string, mime: string) => invoke<string>("upload_sound", { data, mime });
+/** Linux desktop calls: play 48 kHz mono 16-bit samples (base64) on the soundboard track. */
+export const nativeCallPlaySound = (pcm: string) => invoke<void>("native_call_play_sound", { pcm });
+
+/** A call media key (Element Call's per-participant end-to-end encryption). */
+export interface CallKey {
+  room_id: string;
+  /** LiveKit participant identities it applies to. */
+  identities: string[];
+  /** Key slot, 0–255. */
+  index: number;
+  /** Raw key, base64. */
+  key: string;
+  /** Ours, to encrypt with. */
+  own: boolean;
+}
+export const callKeys = (roomId: string) => invoke<CallKey[]>("call_keys", { roomId });
+export const onCallKey = (handler: (key: CallKey) => void) => listen<CallKey>("call-key", (e) => handler(e.payload));
 export const leaveCall = () => invoke<void>("leave_call");
 export const callParticipants = (roomId: string) => invoke<Member[]>("call_participants", { roomId });
 
@@ -299,8 +401,11 @@ export const nativeDevices = () =>
   invoke<{ inputs: NativeDevice[]; outputs: NativeDevice[]; cameras: NativeDevice[] }>("native_devices");
 export const nativeCallSetSetup = (setup: NativeAudioSetup) => invoke<void>("native_call_set_setup", { setup });
 export function nativeCallJoin(
+  roomId: string,
   url: string,
   token: string,
+  /** Encrypt our media (the keys come from the core directly). */
+  encrypted: boolean,
   micOn: boolean,
   setup: NativeAudioSetup,
   onEvent: (event: NativeCallEvent) => void,
@@ -309,7 +414,7 @@ export function nativeCallJoin(
 ) {
   const channel = new Channel<NativeCallEvent>();
   channel.onmessage = onEvent;
-  return invoke<void>("native_call_join", { url, token, micOn, setup, onEvent: channel, onFrame: frameChannel(onFrame) });
+  return invoke<void>("native_call_join", { roomId, url, token, encrypted, micOn, setup, onEvent: channel, onFrame: frameChannel(onFrame) });
 }
 
 /** Video frames from the native engine: raw bytes [key length][key][JPEG]. */
@@ -333,6 +438,7 @@ export const nativeCallSetMic = (on: boolean) => invoke<void>("native_call_set_m
 export const nativeCallSetDeafened = (deafened: boolean) => invoke<void>("native_call_set_deafened", { deafened });
 export const nativeCallSetMutedForMe = (userId: string, muted: boolean) =>
   invoke<void>("native_call_set_muted_for_me", { userId, muted });
+export const nativeCallSetSoundboardOff = (off: boolean) => invoke<void>("native_call_set_soundboard_off", { off });
 
 export interface Presence {
   user_id: string;
@@ -398,8 +504,19 @@ export interface ChatStyle {
   nicknames: Record<string, string>;
   /** `mxc://` background image (over the theme's scenery). */
   wallpaper: string | null;
+  /** Disappearing messages: messages sent since `since` (ms) vanish `timer_ms` after. */
+  disappearing: { timer_ms: number; since: number } | null;
+  /** Shared dates: countdowns and "days together". */
+  countdowns: Countdown[];
   can_edit: boolean;
 }
+/** A date shown in the chat. `date` is a local calendar day (YYYY-MM-DD). */
+export type Countdown = { id: string; title: string; date: string; kind: "until" | "since"; emoji: string | null; yearly: boolean };
+export const setCountdowns = (roomId: string, items: Countdown[]) => invoke<void>("set_countdowns", { roomId, items });
+export const setDisappearing = (roomId: string, timerMs: number | null) =>
+  invoke<void>("set_disappearing", { roomId, timerMs });
+/** Whether the server deletes this chat's disappearing messages on time (else the sender's app). */
+export const disappearingByServer = (roomId: string) => invoke<boolean>("disappearing_by_server", { roomId });
 
 // ── Extended profile: status, time zone ─────────────────────────────────────
 
@@ -668,10 +785,16 @@ export interface GalleryRef {
 export async function sendFile(
   roomId: string,
   file: File,
-  meta: { caption?: string | null; gallery?: GalleryRef | null } = {},
+  meta: { caption?: string | null; gallery?: GalleryRef | null; viewOnce?: boolean } = {},
 ) {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const info = { filename: file.name || "file", mime: file.type || null, caption: meta.caption ?? null, gallery: meta.gallery ?? null };
+  const info = {
+    filename: file.name || "file",
+    mime: file.type || null,
+    caption: meta.caption ?? null,
+    gallery: meta.gallery ?? null,
+    view_once: !!meta.viewOnce,
+  };
   if (isWeb) return invoke<void>("send_file", { roomId, file: info, bytes });
   return invoke<void>("send_file", bytes, {
     headers: { "x-room": encodeURIComponent(roomId), "x-file": encodeURIComponent(JSON.stringify(info)) },
@@ -715,12 +838,34 @@ export const capture = (kind: "photo" | "video") => invoke<Picked[]>("capture", 
 export function sendPicked(
   roomId: string,
   picked: Picked,
-  meta: { caption?: string | null; gallery?: GalleryRef | null } = {},
+  meta: { caption?: string | null; gallery?: GalleryRef | null; viewOnce?: boolean } = {},
 ) {
-  const file = { filename: picked.name, mime: picked.mime, caption: meta.caption ?? null, gallery: meta.gallery ?? null };
+  const file = {
+    filename: picked.name,
+    mime: picked.mime,
+    caption: meta.caption ?? null,
+    gallery: meta.gallery ?? null,
+    view_once: !!meta.viewOnce,
+  };
   return invoke<void>("send_picked", { roomId, path: picked.path, file });
 }
 
+/** Android: a photo edited before sending (JPEG, base64), saved as a file waiting to be sent. */
+const saveBlobPart = (name: string, mime: string, data: string, appendTo: string | null) =>
+  invoke<Picked>("save_blob", { name, mime, data, appendTo });
+
+/** A file made in the app (edited photo, camera shot) as a waiting picked file (Android). */
+export async function saveBlob(name: string, blob: Blob): Promise<Picked> {
+  const PART = 2 * 1024 * 1024;
+  let picked: Picked | null = null;
+  for (let at = 0; at < blob.size || !picked; at += PART) {
+    const bytes = new Uint8Array(await blob.slice(at, at + PART).arrayBuffer());
+    let binary = "";
+    for (let k = 0; k < bytes.length; k += 0x8000) binary += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
+    picked = await saveBlobPart(name, blob.type || "application/octet-stream", btoa(binary), picked?.path ?? null);
+  }
+  return picked;
+}
 export const discardPicked = (picked: Picked) =>
   invoke<void>("discard_picked", { path: picked.path }).catch(() => {});
 
@@ -784,6 +929,8 @@ export interface Settings {
   /** Text size in percent. */
   text_scale: number;
   message_layout: MessageLayout;
+  /** Chats whose new photos/videos from others are saved to the gallery (this device). */
+  auto_save_rooms: string[];
 }
 /** Android: dark system bar icons on a light theme, and the colour behind the bars. */
 export const setSystemBars = (light: boolean, background: string) =>
@@ -812,7 +959,29 @@ export const sendMessage = (
   body: string,
   replyTo: string | null,
   mentions: MentionInput[] = [],
-) => invoke<void>("send_message", { roomId, body, mentions, replyTo });
+  emotes: EmoteInput[] = [],
+) => invoke<void>("send_message", { roomId, body, mentions, replyTo, emotes });
+
+/** Custom emoji / sticker packs (MSC2545). */
+export type Emote = {
+  shortcode: string;
+  url: string;
+  body: string | null;
+  emoticon: boolean;
+  sticker: boolean;
+  info: Record<string, unknown> | null;
+};
+export type EmotePack = { id: string; name: string; avatar: string | null; emotes: Emote[]; editable: boolean };
+/** A custom emoji used in a message being sent (`:shortcode:` in the text). */
+export type EmoteInput = { shortcode: string; url: string };
+export const emotePacks = (roomId: string | null) => invoke<EmotePack[]>("emote_packs", { roomId });
+export const sendSticker = (roomId: string, url: string, body: string, info: Record<string, unknown> | null) =>
+  invoke<void>("send_sticker", { roomId, url, body, info });
+export const addOwnEmote = (shortcode: string, url: string, info: Record<string, unknown> | null, emoticon: boolean, sticker: boolean) =>
+  invoke<void>("add_own_emote", { shortcode, url, info, emoticon, sticker });
+export const removeOwnEmote = (shortcode: string) => invoke<void>("remove_own_emote", { shortcode });
+/** An emoji image (base64) → its mxc:// address. */
+export const uploadEmote = (image: string, mime: string) => invoke<string>("upload_emote", { image, mime });
 export const roomMembers = (roomId: string) => invoke<Member[]>("room_members", { roomId });
 export const toggleReaction = (roomId: string, itemId: string, key: string) =>
   invoke<void>("toggle_reaction", { roomId, itemId, key });
@@ -837,6 +1006,10 @@ export type VerificationUpdate =
   | { state: "requested" }
   | { state: "incoming"; from: string }
   | { state: "ready" }
+  /** QR codes possible: `qr` (SVG) to be scanned by the other device, and/or scan theirs. */
+  | { state: "choose"; qr: string | null; can_scan: boolean }
+  /** The other device scanned our code: confirm it says so. */
+  | { state: "qr_scanned" }
   | { state: "emojis"; emojis: VerificationEmoji[] }
   | { state: "confirmed" }
   | { state: "done" }
@@ -858,6 +1031,13 @@ export const verifyThisDevice = () => invoke<void>("verify_this_device");
 export const acceptVerification = () => invoke<void>("accept_verification");
 export const confirmEmojis = (matching: boolean) => invoke<void>("confirm_emojis", { matching });
 export const cancelVerification = () => invoke<void>("cancel_verification");
+/** This device can scan QR codes (a camera). */
+export const setCanScanQr = (can: boolean) => invoke<void>("set_can_scan_qr", { can });
+export const startEmojiVerification = () => invoke<void>("start_emoji_verification");
+/** A greyscale camera frame (base64, one byte per pixel): true once the code is read. */
+export const scanVerificationFrame = (width: number, height: number, luma: string) =>
+  invoke<boolean>("scan_verification_frame", { width, height, luma });
+export const confirmQrScanned = (ok: boolean) => invoke<void>("confirm_qr_scanned", { ok });
 
 // ---- Managing chats, spaces and the account ----
 
@@ -901,6 +1081,8 @@ export interface RoomDetails {
   name: string;
   topic: string | null;
   avatar: string | null;
+  /** Its own name (a 1:1 chat without one shows the person's). */
+  has_name: boolean;
   alias: string | null;
   is_space: boolean;
   is_dm: boolean;
@@ -973,6 +1155,9 @@ export const setNotifyMode = (roomId: string, mode: "all" | "mentions" | "mute" 
   invoke<void>("set_notify_mode", { roomId, mode });
 export const reportRoom = (roomId: string, reason: string) => invoke<void>("report_room", { roomId, reason });
 export const addToSpace = (spaceId: string, roomId: string) => invoke<void>("add_to_space", { spaceId, roomId });
+/** A space's categories (its sub-spaces, Discord-style sections) with their chats. */
+export type SpaceCategory = { id: string; name: string; joined: boolean; children: SpaceChild[] };
+export const spaceCategories = (spaceId: string) => invoke<SpaceCategory[]>("space_categories", { spaceId });
 export const removeFromSpace = (spaceId: string, roomId: string) =>
   invoke<void>("remove_from_space", { spaceId, roomId });
 export const setSuggested = (spaceId: string, roomId: string, suggested: boolean) =>
@@ -1033,6 +1218,17 @@ export interface PushTestResult {
 }
 /** Android: check push end to end; a test notification should appear. */
 export const testPush = () => invoke<PushTestResult>("test_push");
+
+/** UnifiedPush on this phone: distributor apps (ntfy…), the one in use, our endpoint. */
+export interface UnifiedPushStatus {
+  distributors: { id: string; name: string }[];
+  current: string | null;
+  endpoint: string | null;
+}
+/** Android: null elsewhere. */
+export const unifiedPush = () => invoke<UnifiedPushStatus | null>("unified_push");
+/** Use a UnifiedPush distributor (package), or Google's Firebase again (null). */
+export const useUnifiedPush = (distributor: string | null) => invoke<void>("use_unified_push", { distributor });
 
 export interface DayCount {
   /** Start of the (UTC) day, ms. */

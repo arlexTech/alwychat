@@ -38,6 +38,10 @@ static PENDING: std::sync::Mutex<Option<tauri_plugin_updater::Update>> =
 
 #[cfg(target_os = "android")]
 static PENDING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// The update URL whose APK is fully downloaded (to `update.apk` in the cache): installing
+/// again (after allowing installs, or a cancelled installer) doesn't download it twice.
+#[cfg(target_os = "android")]
+static DOWNLOADED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// "0.1.42" > "0.1.9": numeric parts compared in order (pre-release suffixes ignored).
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -160,12 +164,17 @@ pub async fn update_install(
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        let progress = on_progress.clone();
-        alwy_core::download::download_to(&url, &path, move |done, total| {
-            let _ = progress.send(UpdateProgress::Downloading { done, total });
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        let ready = DOWNLOADED.lock().unwrap().as_deref() == Some(url.as_str()) && path.is_file();
+        if !ready {
+            *DOWNLOADED.lock().unwrap() = None;
+            let progress = on_progress.clone();
+            alwy_core::download::download_to(&url, &path, move |done, total| {
+                let _ = progress.send(UpdateProgress::Downloading { done, total });
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            *DOWNLOADED.lock().unwrap() = Some(url);
+        }
         let answer: serde_json::Value = app
             .state::<crate::android::System>()
             .0

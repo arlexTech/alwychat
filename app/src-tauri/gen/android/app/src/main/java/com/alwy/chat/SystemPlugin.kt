@@ -23,6 +23,33 @@ import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
 
 @InvokeArg
+class CallArgs {
+  var active: Boolean = false
+  var title: String = ""
+  var text: String = ""
+  var hangUp: String = ""
+  var channel: String = ""
+  var roomId: String? = null
+  /** null: no mute button (push to talk). */
+  var muted: Boolean? = null
+  var mute: String = ""
+  var unmute: String = ""
+  /** The camera is on: the service may use it outside the foreground too. */
+  var camera: Boolean = false
+}
+
+@InvokeArg
+class PipShapeArgs {
+  var wide: Boolean = false
+}
+
+@InvokeArg
+class AudioArgs {
+  /** null: the call ended (back to normal audio). */
+  var speaker: Boolean? = null
+}
+
+@InvokeArg
 class InstallArgs {
   lateinit var path: String
 }
@@ -36,6 +63,12 @@ class SecureArgs {
 class BarsArgs {
   var light = false
   lateinit var background: String
+}
+
+@InvokeArg
+class DistributorArgs {
+  /** A distributor's package, or null to stop using UnifiedPush. */
+  var distributor: String? = null
 }
 
 @InvokeArg
@@ -101,6 +134,78 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     activity.startActivity(intent)
     ret.put("needsPermission", false)
     invoke.resolve(ret)
+  }
+
+  /** The picture-in-picture window's shape: wide for a screen share, else tall. */
+  @Command
+  fun pipShape(invoke: Invoke) {
+    val args = invoke.parseArgs(PipShapeArgs::class.java)
+    if (MainActivity.pipWide != args.wide) {
+      MainActivity.pipWide = args.wide
+      (activity as? MainActivity)?.updatePip()
+    }
+    invoke.resolve()
+  }
+
+  /** Show (or remove) the ongoing call notification, which keeps the call going in the background. */
+  @Command
+  fun callNotification(invoke: Invoke) {
+    val args = invoke.parseArgs(CallArgs::class.java)
+    MainActivity.inCall = args.active
+    MainActivity.muted = if (args.active) args.muted else null
+    if (args.mute.isNotEmpty()) MainActivity.muteLabel = args.mute
+    if (args.unmute.isNotEmpty()) MainActivity.unmuteLabel = args.unmute
+    if (args.hangUp.isNotEmpty()) MainActivity.hangUpLabel = args.hangUp
+    (activity as? MainActivity)?.updatePip()
+    if (args.active) {
+      CallService.start(activity, args.title, args.text, args.hangUp, args.channel, args.roomId, args.muted, args.mute, args.unmute, args.camera)
+    } else {
+      CallService.stop(activity)
+      // The call ended in picture-in-picture: close that small window too.
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity.isInPictureInPictureMode) {
+        activity.runOnUiThread { activity.moveTaskToBack(false) }
+      }
+    }
+    invoke.resolve()
+  }
+
+  /**
+   * Where call audio plays: the loudspeaker, or else headphones / Bluetooth when connected, the
+   * earpiece otherwise. `speaker` null ends the call mode. Answers `{speaker}` as applied.
+   */
+  @Command
+  fun callAudio(invoke: Invoke) {
+    val args = invoke.parseArgs(AudioArgs::class.java)
+    val am = activity.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+    val speaker = args.speaker
+    if (speaker == null) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.clearCommunicationDevice()
+      else @Suppress("DEPRECATION") { am.isSpeakerphoneOn = false }
+      am.mode = android.media.AudioManager.MODE_NORMAL
+      return invoke.resolve()
+    }
+    am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      val devices = am.availableCommunicationDevices
+      val headset = listOf(
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        android.media.AudioDeviceInfo.TYPE_BLE_HEADSET,
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+      )
+      val wanted = if (speaker) {
+        devices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+      } else {
+        devices.firstOrNull { it.type in headset }
+          ?: devices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+      }
+      if (wanted != null) am.setCommunicationDevice(wanted)
+    } else {
+      @Suppress("DEPRECATION")
+      am.isSpeakerphoneOn = speaker
+    }
+    invoke.resolve(JSObject().apply { put("speaker", speaker) })
   }
 
   /** The user's 12/24-hour choice (Settings → System → Date & time). */
@@ -190,6 +295,44 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.reject("no push token: ${task.exception?.message}")
       }
     }
+  }
+
+  /** UnifiedPush: the distributor apps installed, the one in use and this device's endpoint. */
+  @Command
+  fun unifiedPushStatus(invoke: Invoke) {
+    val pm = activity.packageManager
+    val list = org.json.JSONArray()
+    for (pkg in org.unifiedpush.android.connector.UnifiedPush.getDistributors(activity)) {
+      // Our own package can show up (the connector's embedded FCM distributor): not a choice.
+      if (pkg == activity.packageName) continue
+      val name = try {
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+      } catch (e: Exception) {
+        pkg
+      }
+      list.put(JSObject().put("id", pkg).put("name", name))
+    }
+    val result = JSObject()
+      .put("distributors", list)
+      .put("current", org.unifiedpush.android.connector.UnifiedPush.getSavedDistributor(activity))
+      .put("endpoint", UnifiedPushService.endpointOf(activity))
+    invoke.resolve(result)
+  }
+
+  /** Use a distributor (registers; the endpoint arrives in UnifiedPushService) or stop (null). */
+  @Command
+  fun useUnifiedPush(invoke: Invoke) {
+    val args = invoke.parseArgs(DistributorArgs::class.java)
+    val up = org.unifiedpush.android.connector.UnifiedPush
+    val pkg = args.distributor
+    if (pkg == null) {
+      up.unregister(activity)
+      up.removeDistributor(activity)
+    } else {
+      up.saveDistributor(activity, pkg)
+      up.register(activity, messageForDistributor = "AlwyChat")
+    }
+    invoke.resolve()
   }
 
   /** Match the system bars to the app theme: dark icons on a light theme, and its background. */

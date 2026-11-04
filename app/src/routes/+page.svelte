@@ -23,7 +23,8 @@
   /** The local restore is quick: only say something if it isn't. */
   let slow = $state(false);
   setTimeout(() => (slow = true), 1200);
-  let server = $state("matrix.org");
+  // Builds may preset another server (VITE_ALWY_DEFAULT_SERVER, e.g. in a gitignored .env.local).
+  let server = $state(import.meta.env.VITE_ALWY_DEFAULT_SERVER || "matrix.org");
   let account = $state<Account | null>(null);
   let error = $state<string | null>(null);
 

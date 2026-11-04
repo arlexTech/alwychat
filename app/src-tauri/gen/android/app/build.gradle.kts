@@ -38,7 +38,8 @@ android {
     namespace = "com.alwy.chat"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.alwy.chat"
+        // ALWY_ANDROID_ID: builds published outside GitHub can keep another id (release-local.sh).
+        applicationId = providers.environmentVariable("ALWY_ANDROID_ID").getOrElse("com.alwy.chat")
         minSdk = 24
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -111,6 +112,8 @@ dependencies {
     // Push (FCM). Without google-services.json the app builds and notifies while running only.
     implementation(platform("com.google.firebase:firebase-bom:34.5.0"))
     implementation("com.google.firebase:firebase-messaging")
+    // Push without Google: UnifiedPush distributors (ntfy…).
+    implementation("org.unifiedpush.android:connector:3.3.5")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

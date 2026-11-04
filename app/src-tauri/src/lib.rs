@@ -816,6 +816,124 @@ struct SystemClock {
     locale: Option<String>,
 }
 
+/// The call notification's texts, translated by the UI.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CallTexts {
+    title: String,
+    text: String,
+    hang_up: String,
+    channel: String,
+    mute: String,
+    unmute: String,
+}
+
+/// Android: the ongoing call notification (and its foreground service, which keeps the call
+/// going in the background); `muted` None = no mute button. Elsewhere: nothing.
+#[tauri::command]
+async fn call_notification(
+    app: tauri::AppHandle,
+    active: bool,
+    texts: Option<CallTexts>,
+    room_id: Option<String>,
+    muted: Option<bool>,
+    camera: Option<bool>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let mut args = serde_json::to_value(&texts).map_err(|e| e.to_string())?;
+        if !args.is_object() {
+            args = serde_json::json!({});
+        }
+        args["active"] = active.into();
+        args["roomId"] = serde_json::json!(room_id);
+        args["muted"] = serde_json::json!(muted);
+        args["camera"] = camera.unwrap_or(false).into();
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>("callNotification", args)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, active, texts, room_id, muted, camera);
+    Ok(())
+}
+
+/// Android: the call's picture-in-picture window wide (a screen share) or tall (cameras).
+#[tauri::command]
+async fn pip_shape(app: tauri::AppHandle, wide: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>(
+            "pipShape",
+            serde_json::json!({ "wide": wide }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, wide);
+    Ok(())
+}
+
+/// The argument the computer starts us with ("Open at startup"): start out of sight.
+#[cfg(desktop)]
+const STARTUP_ARG: &str = "--startup";
+
+/// Whether AlwyChat opens when the computer starts (desktop; elsewhere always false).
+#[tauri::command]
+fn autostart_get(app: tauri::AppHandle) -> bool {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        app.autolaunch().is_enabled().unwrap_or(false)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        false
+    }
+}
+
+#[tauri::command]
+fn autostart_set(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let launch = app.autolaunch();
+        if on {
+            launch.enable()
+        } else {
+            launch.disable()
+        }
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, on);
+        Err("not available here".into())
+    }
+}
+
+/// Android: call audio on the loudspeaker (`Some(true)`), the earpiece / headphones
+/// (`Some(false)`), or back to normal after a call (`None`). Elsewhere: nothing.
+#[tauri::command]
+async fn call_audio(app: tauri::AppHandle, speaker: Option<bool>) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>(
+            "callAudio",
+            serde_json::json!({ "speaker": speaker }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, speaker);
+    Ok(())
+}
+
 #[tauri::command]
 async fn system_clock(app: tauri::AppHandle) -> Result<SystemClock, String> {
     #[cfg(target_os = "android")]
@@ -951,6 +1069,104 @@ async fn set_secure_screen(app: tauri::AppHandle, secure: bool) -> Result<(), St
         let _ = (app, secure);
         Ok(())
     }
+}
+
+#[tauri::command]
+async fn room_sounds(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Vec<alwy_core::sounds::Sound>> {
+    core.room_sounds(&room_id).await
+}
+
+#[tauri::command]
+async fn set_room_sounds(
+    core: State<'_, AppCore>,
+    room_id: String,
+    items: Vec<alwy_core::sounds::Sound>,
+) -> alwy_core::Result<()> {
+    core.set_room_sounds(&room_id, items).await
+}
+
+#[tauri::command]
+async fn can_edit_sounds(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<bool> {
+    core.can_edit_sounds(&room_id).await
+}
+
+/// A soundboard sound (base64; small WAVs).
+#[tauri::command]
+async fn upload_sound(
+    core: State<'_, AppCore>,
+    data: String,
+    mime: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| e.to_string())?;
+    core.upload_sound(bytes, &mime)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn space_banner(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Option<String>> {
+    core.space_banner(&room_id).await
+}
+
+/// `image`: base64 JPEG, or none to remove the banner.
+#[tauri::command]
+async fn set_space_banner(
+    core: State<'_, AppCore>,
+    room_id: String,
+    image: Option<String>,
+) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = image
+        .map(|i| base64::engine::general_purpose::STANDARD.decode(i))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    core.set_space_banner(&room_id, bytes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn viewed_once(core: State<'_, AppCore>) -> alwy_core::Result<Vec<String>> {
+    core.viewed_once().await
+}
+
+#[tauri::command]
+async fn open_view_once(
+    core: State<'_, AppCore>,
+    room_id: String,
+    event_id: String,
+) -> alwy_core::Result<()> {
+    core.open_view_once(&room_id, &event_id).await
+}
+
+#[tauri::command]
+fn call_history(core: State<'_, AppCore>) -> alwy_core::call_history::CallHistory {
+    core.call_history()
+}
+
+#[tauri::command]
+fn mark_calls_seen(core: State<'_, AppCore>) {
+    core.mark_calls_seen();
+}
+
+#[tauri::command]
+fn clear_call_history(core: State<'_, AppCore>, id: Option<String>) {
+    core.clear_call_history(id.as_deref());
+}
+
+/// Media keys known for the call in `room_id` (see `call_keys.rs`).
+#[tauri::command]
+fn call_keys(core: State<'_, AppCore>, room_id: String) -> Vec<alwy_core::call_keys::CallKey> {
+    core.call_keys(&room_id)
 }
 
 #[tauri::command]
@@ -1341,6 +1557,60 @@ async fn discard_picked(app: tauri::AppHandle, path: String) -> Result<(), Strin
     std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
+/// A file made in the app (edited photo, in-app camera shot) saved as a waiting "picked" file,
+/// base64 in pieces (the Android webview can't hand raw bytes over, and a video is too big for
+/// one message): the first call creates it, the next ones pass `append_to` (its path).
+#[tauri::command]
+async fn save_blob(
+    app: tauri::AppHandle,
+    name: String,
+    mime: String,
+    data: String,
+    append_to: Option<String>,
+) -> Result<Picked, String> {
+    use base64::Engine;
+    use std::io::Write;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| e.to_string())?;
+    let dir = picked_dir(&app)?;
+    let path = match append_to {
+        // Only files we made there (no path from elsewhere).
+        Some(path) => {
+            let path = std::path::PathBuf::from(path);
+            if path.parent() != Some(dir.as_path()) {
+                return Err("not a file of ours".into());
+            }
+            path
+        }
+        None => {
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let ext = alwy_core::media::safe_file_name(&name)
+                .rsplit_once('.')
+                .map(|(_, e)| e.to_owned())
+                .unwrap_or_else(|| "bin".into());
+            dir.join(format!("{stamp}-made.{ext}"))
+        }
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    Ok(Picked {
+        path: path.display().to_string(),
+        name,
+        mime,
+        size,
+    })
+}
+
 /// Send a recorded voice message. The recording travels base64-encoded: the Android webview
 /// can't pass raw bytes, and voice clips are small.
 #[tauri::command]
@@ -1483,9 +1753,111 @@ async fn send_message(
     body: String,
     mentions: Vec<MentionInput>,
     reply_to: Option<String>,
+    emotes: Option<Vec<alwy_core::emotes::EmoteInput>>,
 ) -> alwy_core::Result<()> {
-    core.send_message(&room_id, &body, &mentions, reply_to.as_deref())
+    core.send_message(
+        &room_id,
+        &body,
+        &mentions,
+        reply_to.as_deref(),
+        &emotes.unwrap_or_default(),
+    )
+    .await
+}
+
+/// A space's categories (sub-spaces) with their chats.
+#[tauri::command]
+async fn space_categories(
+    core: State<'_, AppCore>,
+    space_id: String,
+) -> alwy_core::Result<Vec<alwy_core::spaces::SpaceCategory>> {
+    core.space_categories(&space_id).await
+}
+
+/// The chat's shared dates (countdowns, "days together"), replaced as a whole.
+#[tauri::command]
+async fn set_countdowns(
+    core: State<'_, AppCore>,
+    room_id: String,
+    items: Vec<alwy_core::custom::Countdown>,
+) -> alwy_core::Result<()> {
+    core.set_countdowns(&room_id, items).await
+}
+
+/// Disappearing messages: the chat's timer (ms), or `None` for off.
+#[tauri::command]
+async fn set_disappearing(
+    core: State<'_, AppCore>,
+    room_id: String,
+    timer_ms: Option<u64>,
+) -> alwy_core::Result<()> {
+    core.set_disappearing(&room_id, timer_ms).await
+}
+
+/// Whether the server deletes this chat's disappearing messages (else the sender's app).
+#[tauri::command]
+fn disappearing_by_server(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<bool> {
+    core.disappearing_by_server(&room_id)
+}
+
+/// Custom emoji and sticker packs: ours, the open chat's, and those turned on everywhere.
+#[tauri::command]
+async fn emote_packs(
+    core: State<'_, AppCore>,
+    room_id: Option<String>,
+) -> alwy_core::Result<Vec<alwy_core::emotes::EmotePack>> {
+    core.emote_packs(room_id.as_deref()).await
+}
+
+#[tauri::command]
+async fn send_sticker(
+    core: State<'_, AppCore>,
+    room_id: String,
+    url: String,
+    body: String,
+    info: Option<serde_json::Value>,
+) -> alwy_core::Result<()> {
+    core.send_sticker(&room_id, &url, &body, info).await
+}
+
+#[tauri::command]
+async fn add_own_emote(
+    core: State<'_, AppCore>,
+    shortcode: String,
+    url: String,
+    info: Option<serde_json::Value>,
+    emoticon: bool,
+    sticker: bool,
+) -> alwy_core::Result<()> {
+    core.add_own_emote(&shortcode, &url, info, emoticon, sticker)
         .await
+}
+
+#[tauri::command]
+async fn remove_own_emote(core: State<'_, AppCore>, shortcode: String) -> alwy_core::Result<()> {
+    core.remove_own_emote(&shortcode).await
+}
+
+/// An emoji / sticker image (base64; PNG, GIF, WebP or JPEG, made small by the UI) → `mxc://`.
+#[tauri::command]
+async fn upload_emote(
+    core: State<'_, AppCore>,
+    image: String,
+    mime: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    if !matches!(
+        mime.as_str(),
+        "image/png" | "image/gif" | "image/webp" | "image/jpeg"
+    ) {
+        return Err("not an image".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(image)
+        .map_err(|e| e.to_string())?;
+    core.upload_wallpaper(bytes, &mime)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1545,6 +1917,38 @@ async fn confirm_emojis(core: State<'_, AppCore>, matching: bool) -> alwy_core::
 }
 
 #[tauri::command]
+fn set_can_scan_qr(core: State<'_, AppCore>, can: bool) -> alwy_core::Result<()> {
+    core.set_can_scan_qr(can)
+}
+
+#[tauri::command]
+async fn start_emoji_verification(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.start_emoji_verification().await
+}
+
+/// A camera frame while scanning a verification code: greyscale, one byte per pixel, base64.
+#[tauri::command]
+async fn scan_verification_frame(
+    core: State<'_, AppCore>,
+    width: usize,
+    height: usize,
+    luma: String,
+) -> Result<bool, String> {
+    use base64::Engine;
+    let luma = base64::engine::general_purpose::STANDARD
+        .decode(luma)
+        .map_err(|e| e.to_string())?;
+    core.scan_verification_frame(width, height, &luma)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn confirm_qr_scanned(core: State<'_, AppCore>, ok: bool) -> alwy_core::Result<()> {
+    core.confirm_qr_scanned(ok).await
+}
+
+#[tauri::command]
 async fn cancel_verification(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.cancel_verification().await
 }
@@ -1590,21 +1994,39 @@ async fn setup_push(
 ) -> Result<bool, String> {
     #[cfg(target_os = "android")]
     {
+        // UnifiedPush chosen (Settings → Notifications): it needs nothing from the homeserver.
+        let up = unified_push_status(&app).await;
+        if let Some(status) = up.as_ref().filter(|s| s.current.is_some()) {
+            // Not both: Firebase's pusher goes (if this build has one).
+            if let Ok(token) = fcm_token(&app).await {
+                let _ = core.remove_pusher(&token).await;
+            }
+            let Some(endpoint) = status.endpoint.as_deref() else {
+                // Registration still going: the endpoint comes to UnifiedPushService, which
+                // registers it. Until then the running app notifies.
+                PUSH_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return Ok(false);
+            };
+            let result = if enabled {
+                core.register_unified_pusher(endpoint, "AlwyChat (Android)")
+                    .await
+            } else {
+                core.remove_pusher(endpoint).await
+            };
+            result.map_err(|e| e.to_string())?;
+            PUSH_ACTIVE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+            return Ok(enabled);
+        }
+        // A UnifiedPush endpoint left from before (switched back to Google): its pusher goes.
+        if let Some(endpoint) = up.and_then(|s| s.endpoint) {
+            let _ = core.remove_pusher(&endpoint).await;
+        }
         // The homeserver offers no push gateway: notifications come from the running app.
         if enabled && core.push_gateway().await.ok().flatten().is_none() {
             return Ok(false);
         }
-        #[derive(serde::Deserialize)]
-        struct Token {
-            token: String,
-        }
-        let token = match app
-            .state::<android::System>()
-            .0
-            .run_mobile_plugin_async::<Token>("pushToken", serde_json::json!({}))
-            .await
-        {
-            Ok(t) => t.token,
+        let token = match fcm_token(&app).await {
+            Ok(token) => token,
             Err(e) => {
                 tracing::warn!("no push token, notifying from the running app: {e}");
                 PUSH_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1624,6 +2046,84 @@ async fn setup_push(
     {
         let _ = (app, core, enabled);
         Ok(false)
+    }
+}
+
+/// UnifiedPush on this phone: distributor apps, the one in use, our endpoint.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct UnifiedPushStatus {
+    distributors: Vec<UnifiedPushDistributor>,
+    current: Option<String>,
+    endpoint: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct UnifiedPushDistributor {
+    id: String,
+    name: String,
+}
+
+#[cfg(target_os = "android")]
+async fn unified_push_status(app: &tauri::AppHandle) -> Option<UnifiedPushStatus> {
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<UnifiedPushStatus>("unifiedPushStatus", serde_json::json!({}))
+        .await
+        .map_err(|e| tracing::warn!("UnifiedPush status: {e}"))
+        .ok()
+}
+
+/// This phone's Firebase token (fails on builds without Firebase).
+#[cfg(target_os = "android")]
+async fn fcm_token(app: &tauri::AppHandle) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Token {
+        token: String,
+    }
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<Token>("pushToken", serde_json::json!({}))
+        .await
+        .map(|t| t.token)
+        .map_err(|e| e.to_string())
+}
+
+/// Settings → Notifications: the push services to choose from (Android).
+#[tauri::command]
+async fn unified_push(app: tauri::AppHandle) -> Result<Option<UnifiedPushStatus>, String> {
+    #[cfg(target_os = "android")]
+    {
+        Ok(unified_push_status(&app).await)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
+/// Use a UnifiedPush distributor (its package), or Google again (`None`).
+#[tauri::command]
+async fn use_unified_push(
+    app: tauri::AppHandle,
+    distributor: Option<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>(
+                "useUnifiedPush",
+                serde_json::json!({ "distributor": distributor }),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, distributor);
+        Err("UnifiedPush is for the Android app".into())
     }
 }
 
@@ -1659,6 +2159,30 @@ async fn test_push(
             .await
             .map(|s| s.notifications)
             .unwrap_or(false);
+        if let Some(status) = unified_push_status(&app)
+            .await
+            .filter(|s| s.current.is_some())
+        {
+            let Some(endpoint) = status.endpoint else {
+                return Ok(PushTestResult {
+                    permission,
+                    token: false,
+                    test: None,
+                });
+            };
+            core.register_unified_pusher(&endpoint, "AlwyChat (Android)")
+                .await
+                .map_err(|e| e.to_string())?;
+            let test = core
+                .test_unified_push(&endpoint)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(PushTestResult {
+                permission,
+                token: true,
+                test: Some(test),
+            });
+        }
         let token = match plugin
             .run_mobile_plugin_async::<Token>("pushToken", serde_json::json!({}))
             .await
@@ -1702,6 +2226,58 @@ fn room_link(url: &tauri::Url) -> Option<String> {
         .flatten()
 }
 
+/// `io.github.arlextech.alwychat:/call?id=…&event=…&video=1&expires=…&name=…[&answer=1]`: an
+/// incoming call notification (or its Answer button) was tapped.
+#[derive(Debug, Clone, serde::Serialize)]
+struct CallLink {
+    room_id: String,
+    notification_id: String,
+    video: bool,
+    expires_at: u64,
+    caller_name: String,
+    answer: bool,
+}
+
+#[cfg_attr(not(mobile), allow(dead_code))]
+fn call_link(url: &tauri::Url) -> Option<CallLink> {
+    if url.scheme() != alwy_core::session::REDIRECT_SCHEME || url.path() != "/call" {
+        return None;
+    }
+    let get = |key: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.into_owned())
+    };
+    Some(CallLink {
+        room_id: get("id")?,
+        notification_id: get("event")?,
+        video: get("video").as_deref() == Some("1"),
+        expires_at: get("expires")?.parse().ok()?,
+        caller_name: get("name").unwrap_or_default(),
+        answer: get("answer").as_deref() == Some("1"),
+    })
+}
+
+/// The incoming call whose notification launched the app, if any.
+#[tauri::command]
+fn launch_call(app: tauri::AppHandle) -> Option<CallLink> {
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        app.deep_link()
+            .get_current()
+            .ok()
+            .flatten()?
+            .iter()
+            .find_map(call_link)
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 /// The chat whose notification launched the app, if any.
 #[tauri::command]
 fn launch_room(app: tauri::AppHandle) -> Option<String> {
@@ -1743,6 +2319,7 @@ async fn clear_notifications(app: tauri::AppHandle, room_id: String) -> Result<(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg_attr(target_os = "android", allow(unused_variables))]
     let filter = || {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "info,matrix_sdk=warn".into())
@@ -1770,10 +2347,17 @@ pub fn run() {
         .plugin(android::gallery_plugin())
         .plugin(android::system_plugin());
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![STARTUP_ARG]),
+        ));
     let builder = builder.setup(|app| {
         #[cfg(target_os = "android")]
         init_android_tls()?;
+        #[cfg(target_os = "android")]
+        let _ = android::APP.set(app.handle().clone());
         #[cfg(target_os = "linux")]
         enable_media_capture(app)?;
         let data_dir = app.path().app_data_dir()?;
@@ -1785,6 +2369,44 @@ pub fn run() {
         let handle = app.handle().clone();
         core.on_call_signal(move |signal| {
             let _ = handle.emit("call-signal", signal);
+        });
+        // Auto-save (chats chosen in their settings): Android writes to the cache, then
+        // MediaStore takes the file into the gallery; computers save to ~/Pictures/AlwyChat.
+        #[cfg(target_os = "android")]
+        if let Ok(cache) = app.path().app_cache_dir() {
+            let handle = app.handle().clone();
+            core.on_auto_save(&cache.join("saving"), move |saved| {
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let result: Result<android::Saved, _> = handle
+                        .state::<android::Gallery>()
+                        .0
+                        .run_mobile_plugin_async(
+                            "save",
+                            android::SaveArgs {
+                                path: saved.path,
+                                to_gallery: true,
+                            },
+                        )
+                        .await;
+                    if let Err(e) = result {
+                        tracing::warn!("auto-save to the gallery: {e}");
+                    }
+                });
+            });
+        }
+        #[cfg(not(target_os = "android"))]
+        if let Ok(pictures) = app.path().picture_dir() {
+            core.on_auto_save(&pictures.join("AlwyChat"), |_| {});
+        }
+        let handle = app.handle().clone();
+        core.on_call_history(move || {
+            let _ = handle.emit("call-history", ());
+        });
+        let handle = app.handle().clone();
+        core.on_call_key(move |key| {
+            native_call::on_key(&key);
+            let _ = handle.emit("call-key", key);
         });
         let handle = app.handle().clone();
         core.on_draft(move |change| {
@@ -1840,6 +2462,8 @@ pub fn run() {
                 for url in event.urls() {
                     if let Some(room) = room_link(&url) {
                         let _ = handle.emit("open-room", room);
+                    } else if let Some(call) = call_link(&url) {
+                        let _ = handle.emit("call-link", call);
                     } else if url.scheme() == alwy_core::session::REDIRECT_SCHEME
                         && !handle.state::<AppCore>().handle_login_redirect(url)
                     {
@@ -1856,6 +2480,16 @@ pub fn run() {
                 setup_tray(app)?;
             }
             app.manage(TrayHost(tray));
+            // Opened with the computer: straight to the tray (or the taskbar without one).
+            if std::env::args().any(|a| a == STARTUP_ARG)
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = if tray {
+                    window.hide()
+                } else {
+                    window.minimize()
+                };
+            }
         }
         Ok(())
     });
@@ -1895,22 +2529,52 @@ pub fn run() {
             set_typing,
             join_call,
             leave_call,
+            call_keys,
+            call_history,
+            viewed_once,
+            open_view_once,
+            space_banner,
+            set_space_banner,
+            mark_calls_seen,
+            clear_call_history,
             native_call::native_calls,
             native_call::native_call_join,
             native_call::native_call_leave,
             native_call::native_call_set_mic,
             native_call::native_call_set_deafened,
             native_call::native_call_set_muted_for_me,
+            native_call::native_call_set_soundboard_off,
             native_call::native_call_set_setup,
             native_call::native_devices,
             native_call::native_camera_preview,
             native_call::native_call_set_camera,
             native_call::native_call_set_screen,
+            native_call::native_call_play_sound,
+            room_sounds,
+            set_room_sounds,
+            can_edit_sounds,
+            upload_sound,
             call_participants,
             presence,
             report_activity,
             system_status,
             system_clock,
+            call_notification,
+            pip_shape,
+            autostart_get,
+            autostart_set,
+            emote_packs,
+            set_disappearing,
+            set_countdowns,
+            space_categories,
+            disappearing_by_server,
+            send_sticker,
+            add_own_emote,
+            remove_own_emote,
+            upload_emote,
+            save_blob,
+            launch_call,
+            call_audio,
             updates::update_check,
             updates::update_install,
             link_preview,
@@ -1994,6 +2658,8 @@ pub fn run() {
             end_poll,
             setup_push,
             test_push,
+            unified_push,
+            use_unified_push,
             launch_room,
             clear_notifications,
             set_quick_reaction,
@@ -2032,6 +2698,10 @@ pub fn run() {
             accept_verification,
             confirm_emojis,
             cancel_verification,
+            set_can_scan_qr,
+            start_emoji_verification,
+            scan_verification_frame,
+            confirm_qr_scanned,
             log_ui_error,
             end_session,
             logout
@@ -2150,6 +2820,7 @@ fn show_window(app: &tauri::AppHandle) {
 
 /// The `media://` scheme (URL helpers in app/src/lib/media.ts):
 /// - `media://localhost/<server>/<media-id>?size=96`: avatar thumbnail of an `mxc://` URI;
+/// - `media://localhost/<server>/<media-id>?file=1`: the whole file (soundboard sounds);
 /// - `media://localhost/_event/<item id>[?thumb=1]`: a message's (decrypted) media.
 async fn serve_media(
     app: &tauri::AppHandle,
@@ -2170,7 +2841,24 @@ async fn serve_media(
     let result = match uri.path().strip_prefix("/_event/") {
         Some(key) => {
             let key = percent_encoding::percent_decode_str(key).decode_utf8_lossy();
-            core.event_media(&key, param("thumb") == Some("1")).await
+            let thumb = param("thumb") == Some("1");
+            let media = core.event_media(&key, thumb).await;
+            // HEIC photos (many phones' camera format) can't be shown by the web view.
+            #[cfg(target_os = "android")]
+            let media = match media {
+                Ok((bytes, _)) if alwy_core::media::is_heic(&bytes) => {
+                    heic_as_jpeg(app, &key, thumb, bytes).await
+                }
+                other => other,
+            };
+            media
+        }
+        None if param("file") == Some("1") => {
+            let mxc = format!("mxc:/{}", uri.path());
+            core.plain_file(&mxc).await.map(|bytes| {
+                let mime = alwy_core::media::sniff(&bytes).to_owned();
+                (bytes, mime)
+            })
         }
         None => {
             let mxc = format!("mxc:/{}", uri.path());
@@ -2192,6 +2880,59 @@ async fn serve_media(
                 .expect("valid response")
         }
     }
+}
+
+/// HEIC photos already converted for display (by media key + preview or not).
+#[cfg(target_os = "android")]
+static HEIC_JPEGS: std::sync::LazyLock<std::sync::Mutex<Vec<(String, Vec<u8>)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// A received HEIC photo as JPEG, converted by Android (previews made smaller). Kept for a few
+/// photos, so scrolling back doesn't convert them again.
+#[cfg(target_os = "android")]
+async fn heic_as_jpeg(
+    app: &tauri::AppHandle,
+    key: &str,
+    thumb: bool,
+    bytes: Vec<u8>,
+) -> alwy_core::Result<(Vec<u8>, String)> {
+    let id = format!("{key}#{thumb}");
+    if let Some((_, jpeg)) = HEIC_JPEGS.lock().unwrap().iter().find(|(k, _)| *k == id) {
+        return Ok((jpeg.clone(), "image/jpeg".into()));
+    }
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| alwy_core::Error::InvalidMedia(e.to_string()))?
+        .join("heic");
+    std::fs::create_dir_all(&dir)?;
+    let stem: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let (src, dst) = (
+        dir.join(format!("{stem}.heic")),
+        dir.join(format!("{stem}.jpg")),
+    );
+    std::fs::write(&src, &bytes)?;
+    let converted = app
+        .state::<android::Gallery>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>(
+            "heicToJpeg",
+            serde_json::json!({ "path": src, "to": dst, "maxSide": if thumb { 1280 } else { 0 } }),
+        )
+        .await;
+    let _ = std::fs::remove_file(&src);
+    converted.map_err(|e| alwy_core::Error::InvalidMedia(e.to_string()))?;
+    let jpeg = std::fs::read(&dst)?;
+    let _ = std::fs::remove_file(&dst);
+    let mut cache = HEIC_JPEGS.lock().unwrap();
+    cache.push((id, jpeg.clone()));
+    if cache.len() > 12 {
+        cache.remove(0);
+    }
+    Ok((jpeg, "image/jpeg".into()))
 }
 
 /// `media://localhost/_picked/<file name>`: preview of a file waiting to be sent.
@@ -2342,6 +3083,27 @@ mod android {
             .try_init();
     }
 
+    /// The app, for events from Android code (the call notification's buttons).
+    pub static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+    /// Called by `CallService.kt` when a button of the call notification is tapped
+    /// ("hang_up", "toggle_mic"): passed on to the UI.
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativeCall_action<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        name: jni::objects::JString<'c>,
+    ) {
+        let name = env
+            .with_env(|_| -> Result<_, jni::errors::Error> { Ok(name.to_string()) })
+            .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+        if let Some(app) = APP.get() {
+            use tauri::Emitter;
+            let _ = app.emit("call-action", name);
+        }
+    }
+
     /// Called by `PushService.kt` for each push (on a worker thread, app maybe not running):
     /// returns the notification as JSON, or "" when there's nothing to show.
     #[allow(unsafe_code)] // JNI entry points can't be mangled.
@@ -2365,6 +3127,83 @@ mod android {
             );
             let json = tauri::async_runtime::block_on(notification(dir.into(), room, event));
             jni::objects::JString::from_str(env, json)
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+    }
+
+    /// Called by `UnifiedPushService.kt` with a new endpoint (empty: none any more) and the
+    /// previous one: the homeserver's pusher follows (app maybe not running).
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativePush_setEndpoint<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        context: jni::objects::JObject<'c>,
+        data_dir: jni::objects::JString<'c>,
+        endpoint: jni::objects::JString<'c>,
+        old: jni::objects::JString<'c>,
+    ) {
+        env.with_env(|env| -> Result<_, jni::errors::Error> {
+            init_logging();
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            let (dir, endpoint, old) =
+                (data_dir.to_string(), endpoint.to_string(), old.to_string());
+            tauri::async_runtime::block_on(async move {
+                let core = super::shared_core(dir.into());
+                if !matches!(core.restore().await, Ok(Some(_))) {
+                    return;
+                }
+                if !old.is_empty()
+                    && let Err(e) = core.remove_pusher(&old).await
+                {
+                    tracing::warn!("old UnifiedPush pusher: {e}");
+                }
+                if endpoint.is_empty() {
+                    super::PUSH_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
+                match core
+                    .register_unified_pusher(&endpoint, "AlwyChat (Android)")
+                    .await
+                {
+                    Ok(()) => super::PUSH_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed),
+                    Err(e) => tracing::warn!("UnifiedPush pusher: {e}"),
+                }
+            });
+            Ok(())
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+    }
+
+    /// Called by the incoming-call notification's "Decline" (app maybe not running).
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativePush_decline<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        context: jni::objects::JObject<'c>,
+        data_dir: jni::objects::JString<'c>,
+        room_id: jni::objects::JString<'c>,
+        event_id: jni::objects::JString<'c>,
+    ) {
+        env.with_env(|env| -> Result<_, jni::errors::Error> {
+            init_logging();
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            let (dir, room, event) = (
+                data_dir.to_string(),
+                room_id.to_string(),
+                event_id.to_string(),
+            );
+            tauri::async_runtime::block_on(async move {
+                let core = super::shared_core(dir.into());
+                if !matches!(core.restore().await, Ok(Some(_))) {
+                    return;
+                }
+                if let Err(e) = core.decline_call(&room, &event).await {
+                    tracing::warn!("decline from the notification: {e}");
+                }
+            });
+            Ok(())
         })
         .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
     }

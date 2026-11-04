@@ -41,6 +41,8 @@ pub struct Settings {
     /// right elsewhere), "bubbles" (yours always on the right) or "left" (everyone on the left).
     /// Chats can override it on this device.
     pub message_layout: String,
+    /// Chats whose new photos and videos from others are saved to the gallery (this device).
+    pub auto_save_rooms: Vec<String>,
 }
 
 impl Default for Settings {
@@ -59,6 +61,7 @@ impl Default for Settings {
             enter_sends: true,
             text_scale: 100,
             message_layout: "auto".to_owned(),
+            auto_save_rooms: Vec::new(),
         }
     }
 }

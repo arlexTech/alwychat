@@ -45,7 +45,16 @@
     <h2>{title}</h2>
   </header>
   <div class="body">
-    <div class="inner">{@render children()}</div>
+    <!-- A failing page says so (it used to just not open: "nothing happens"). -->
+    <div class="inner">
+      <svelte:boundary onerror={(e) => console.error("page", e)}>
+        {@render children()}
+        {#snippet failed(error, reset)}
+          <p class="m-error">{tr("Something went wrong on this page: {error}", { error: String((error as Error)?.message ?? error) })}</p>
+          <button class="m-btn" onclick={reset}>{tr("Try again")}</button>
+        {/snippet}
+      </svelte:boundary>
+    </div>
   </div>
 </div>
 

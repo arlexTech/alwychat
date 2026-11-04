@@ -127,6 +127,7 @@
     line-height: 1.6;
     text-align: center;
     word-spacing: 4px;
+    -webkit-user-select: all;
     user-select: all;
   }
 </style>

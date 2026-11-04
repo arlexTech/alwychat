@@ -29,10 +29,10 @@
   let searching = $state(false);
   let error = $state<string | null>(null);
 
-  // People we already talk to, while nothing is typed.
+  // People we already talk to, while nothing is typed. Once each: two 1:1 chats with the same
+  // person are common, and a repeated key makes Svelte drop the whole page (it never opened).
   const recent = $derived(
-    chatList.rooms
-      .filter((r) => r.is_dm && r.dm_user && !r.is_invite)
+    [...new Map(chatList.rooms.filter((r) => r.is_dm && r.dm_user && !r.is_invite).map((r) => [r.dm_user!, r])).values()]
       .slice(0, 12)
       .map((r) => ({ user_id: r.dm_user!, name: r.name, avatar: r.avatar })),
   );
@@ -56,7 +56,8 @@
     }, 300);
   });
 
-  const shown = $derived(query.trim() ? results : recent);
+  const unique = (list: UserResult[]) => [...new Map(list.map((u) => [u.user_id, u])).values()];
+  const shown = $derived(unique(query.trim() ? results : recent));
   const isPicked = (u: UserResult) => picked.some((p) => p.user_id === u.user_id);
 
   function tap(user: UserResult) {

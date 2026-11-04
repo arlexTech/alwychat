@@ -11,8 +11,29 @@
   import Lightbulb from "@lucide/svelte/icons/lightbulb";
   import { untrack, type Component } from "svelte";
 
-  /** The composer's emoji panel (Messenger style): recent ones first, then by category. */
-  let { onPick }: { onPick: (emoji: string) => void } = $props();
+  import type { Emote, EmotePack } from "$lib/backend";
+  import { mediaUrl } from "$lib/media";
+  import Sticker from "@lucide/svelte/icons/sticker";
+
+  /**
+   * The composer's emoji panel (Messenger style): recent ones first, then by category, then the
+   * custom emoji packs (one tab each) and their stickers. Without `onCustom` / `onSticker`
+   * (reactions), only standard emoji.
+   */
+  let {
+    onPick,
+    packs = [],
+    onCustom,
+    onSticker,
+  }: {
+    onPick: (emoji: string) => void;
+    packs?: EmotePack[];
+    onCustom?: (emote: Emote) => void;
+    onSticker?: (emote: Emote) => void;
+  } = $props();
+
+  const emojiPacks = $derived(onCustom ? packs.filter((p) => p.emotes.some((e) => e.emoticon)) : []);
+  const stickers = $derived(onSticker ? packs.flatMap((p) => p.emotes.filter((e) => e.sticker)) : []);
 
   const split = (s: string) => [...new Intl.Segmenter().segment(s)].map((x) => x.segment).filter((x) => x.trim());
   const CATEGORIES: { id: string; icon: Component<{ size?: number }>; emoji: string[] }[] = [
@@ -28,9 +49,13 @@
 
   const RECENT_KEY = "alwychat.recentEmoji";
   let recent = $state<string[]>(JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"));
-  let tab = $state(untrack(() => (recent.length ? tr("Recent") : tr("Smileys"))));
+  // Tab ids aren't translated (the French name used to leave the panel empty at first).
+  let tab = $state(untrack(() => (recent.length ? "Recent" : "Smileys")));
 
   const shown = $derived(tab === "Recent" ? recent : (CATEGORIES.find((c) => c.id === tab)?.emoji ?? []));
+  const customShown = $derived(tab.startsWith("pack:") ? (emojiPacks.find((p) => `pack:${p.id}` === tab)?.emotes.filter((e) => e.emoticon) ?? []) : null);
+  /** A pack's tab icon: its avatar, else its first emoji. */
+  const packIcon = (p: EmotePack) => mediaUrl(p.avatar ?? p.emotes[0]?.url, 22);
 
   function pick(emoji: string) {
     recent = [emoji, ...recent.filter((e) => e !== emoji)].slice(0, 32);
@@ -45,12 +70,34 @@
     {#each CATEGORIES as c (c.id)}
       <button type="button" class:on={tab === c.id} onclick={() => (tab = c.id)} aria-label={c.id}><c.icon size={18} /></button>
     {/each}
-  </div>
-  <div class="grid">
-    {#each shown as e, i (e + i)}
-      <button type="button" onclick={() => pick(e)}>{e}</button>
+    {#each emojiPacks as p (p.id)}
+      <button type="button" class:on={tab === `pack:${p.id}`} onclick={() => (tab = `pack:${p.id}`)} aria-label={p.name} title={p.name}>
+        <img class="pack-icon" src={packIcon(p)} alt="" />
+      </button>
     {/each}
+    {#if stickers.length}
+      <button type="button" class:on={tab === "stickers"} onclick={() => (tab = "stickers")} aria-label={tr("Stickers")} title={tr("Stickers")}><Sticker size={18} /></button>
+    {/if}
   </div>
+  {#if tab === "stickers"}
+    <div class="grid stickers">
+      {#each stickers as e, i (e.url + i)}
+        <button type="button" onclick={() => onSticker?.(e)} title={e.body ?? e.shortcode}><img src={mediaUrl(e.url, 96)} alt={e.body ?? e.shortcode} loading="lazy" /></button>
+      {/each}
+    </div>
+  {:else if customShown}
+    <div class="grid">
+      {#each customShown as e (e.shortcode)}
+        <button type="button" onclick={() => onCustom?.(e)} title={`:${e.shortcode}:`}><img src={mediaUrl(e.url, 40)} alt={`:${e.shortcode}:`} loading="lazy" /></button>
+      {/each}
+    </div>
+  {:else}
+    <div class="grid">
+      {#each shown as e, i (e + i)}
+        <button type="button" onclick={() => pick(e)}>{e}</button>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -104,5 +151,29 @@
   .grid button:hover,
   .grid button:active {
     background: var(--surface-2);
+  }
+  .grid img {
+    width: 30px;
+    height: 30px;
+    object-fit: contain;
+  }
+  .grid.stickers {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  }
+  .grid.stickers button {
+    height: 84px;
+  }
+  .grid.stickers img {
+    width: 72px;
+    height: 72px;
+  }
+  .pack-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    object-fit: cover;
+  }
+  .tabs {
+    overflow-x: auto;
   }
 </style>

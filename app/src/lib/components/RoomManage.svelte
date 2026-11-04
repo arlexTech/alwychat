@@ -6,6 +6,10 @@
   import Link from "@lucide/svelte/icons/link";
   import Lock from "@lucide/svelte/icons/lock";
   import LogOut from "@lucide/svelte/icons/log-out";
+  import X from "@lucide/svelte/icons/x";
+  import ImageIcon from "@lucide/svelte/icons/image";
+  import { mediaUrl } from "$lib/media";
+  import { pickBanner } from "$lib/pickImage";
   import Pencil from "@lucide/svelte/icons/pencil";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
   import UserPlus from "@lucide/svelte/icons/user-plus";
@@ -19,6 +23,8 @@
     setJoinRule,
     setNotifyMode,
     setRoomAvatar,
+    setSpaceBanner,
+    spaceBanner,
     setRoomName,
     setRoomTopic,
     spaceRoomsJoined,
@@ -51,6 +57,20 @@
   } = $props();
 
   const may = (key: string) => can(room.levels, room.my_power, key);
+
+  // A space's banner (AlwyChat's own room state; other apps don't show it).
+  let banner = $state<string | null>(null);
+  const loadBanner = () => (room.is_space ? spaceBanner(room.id).then((b) => (banner = b)).catch(() => {}) : Promise.resolve());
+  $effect(() => {
+    if (part === "header") void loadBanner();
+  });
+  async function chooseBanner() {
+    const picked = await pickBanner().catch(() => null);
+    if (!picked) return;
+    URL.revokeObjectURL(picked.preview);
+    await act(() => setSpaceBanner(room.id, picked.data));
+    await loadBanner();
+  }
   let editing = $state<{ name: string; topic: string } | null>(null);
   let page = $state<"members" | "invite" | "roles" | null>(null);
   let confirm = $state<"leave" | "encrypt" | "report" | null>(null);
@@ -72,6 +92,9 @@
       await what();
       if (done) notice = done;
       reload();
+      // The server's copy (name, photo…) reaches this device with the next sync: look again.
+      setTimeout(reload, 1500);
+      setTimeout(reload, 4000);
     } catch (e) {
       error = String(e);
     } finally {
@@ -82,7 +105,8 @@
   async function saveText() {
     const e = editing!;
     await act(async () => {
-      if (e.name.trim() && e.name.trim() !== room.name) await setRoomName(room.id, e.name);
+      // A 1:1 chat's name can be emptied: it shows the person's name again.
+      if ((e.name.trim() || room.is_dm) && e.name.trim() !== (room.has_name ? room.name : "")) await setRoomName(room.id, e.name);
       if (e.topic.trim() !== (room.topic ?? "")) await setRoomTopic(room.id, e.topic);
     });
     if (!error) editing = null;
@@ -125,17 +149,30 @@
 </script>
 
 {#if part === "header"}
+  {#if room.is_space && (banner || may("com.alwy.chat.room.banner"))}
+    <div class="banner" class:empty={!banner}>
+      {#if banner}<img src={mediaUrl(banner, 600)} alt="" />{/if}
+      {#if may("com.alwy.chat.room.banner")}
+        <div class="banner-actions">
+          <button class="edit" disabled={busy} onclick={chooseBanner}><ImageIcon size={14} /> {banner ? tr("Change banner") : tr("Add a banner")}</button>
+          {#if banner}<button class="edit" disabled={busy} onclick={() => act(() => setSpaceBanner(room.id, null)).then(loadBanner)}><X size={14} /> {tr("Remove")}</button>{/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
   <div class="header">
     <AvatarEdit
       name={room.name}
       mxc={room.avatar}
       square={room.is_space}
-      disabled={room.is_dm || !may("m.room.avatar")}
+      disabled={!may("m.room.avatar")}
       onPicked={(data) => act(() => setRoomAvatar(room.id, data))}
     />
     {#if editing}
-      <input class="m-input" bind:value={editing.name} placeholder={tr("Name")} maxlength="80" disabled={!may("m.room.name")} />
-      <textarea class="m-input" bind:value={editing.topic} placeholder="Topic" maxlength="500" disabled={!may("m.room.topic")}></textarea>
+      <input class="m-input" bind:value={editing.name} placeholder={room.is_dm ? tr("Chat name (empty: their name)") : tr("Name")} maxlength="80" disabled={!may("m.room.name")} />
+      {#if !room.is_dm}
+        <textarea class="m-input" bind:value={editing.topic} placeholder="Topic" maxlength="500" disabled={!may("m.room.topic")}></textarea>
+      {/if}
       <div class="m-buttons">
         <button class="m-btn plain" onclick={() => (editing = null)}>{tr("Cancel")}</button>
         <button class="m-btn" disabled={busy} onclick={saveText}>{tr("Save")}</button>
@@ -147,7 +184,17 @@
         {#if room.encrypted}<Lock size={13} /> {tr("Encrypted ·")}{/if}
         {trn(room.members, "{n} member", "{n} members")}
       </p>
-      {#if !room.is_dm && (may("m.room.name") || may("m.room.topic"))}
+      {#if room.is_dm}
+        <!-- Messenger-style: a shared name and photo for a 1:1 chat (both people see them). -->
+        <div class="dm-edits">
+          {#if may("m.room.name")}
+            <button class="edit" onclick={() => (editing = { name: room.has_name ? room.name : "", topic: "" })}><Pencil size={14} /> {room.has_name ? tr("Rename chat") : tr("Name this chat")}</button>
+          {/if}
+          {#if room.avatar && may("m.room.avatar")}
+            <button class="edit" onclick={() => act(() => setRoomAvatar(room.id, null))}><X size={14} /> {tr("Remove chat photo")}</button>
+          {/if}
+        </div>
+      {:else if may("m.room.name") || may("m.room.topic")}
         <button class="edit" onclick={() => (editing = { name: room.name, topic: room.topic ?? "" })}><Pencil size={14} /> {tr("Edit name and topic")}</button>
       {/if}
     {/if}
@@ -295,6 +342,35 @@
 {/if}
 
 <style>
+  .banner {
+    position: relative;
+    aspect-ratio: 3;
+    margin: 0 0 4px;
+    border-radius: 16px;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  }
+  .banner.empty {
+    aspect-ratio: 6;
+    background: var(--surface-hover);
+  }
+  .banner img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .banner-actions {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    display: flex;
+    gap: 6px;
+  }
+  .banner-actions .edit {
+    background: rgb(0 0 0 / 0.55);
+    color: #fff;
+  }
   .header {
     display: flex;
     flex-direction: column;
@@ -324,6 +400,12 @@
     margin: 0;
     color: var(--muted);
     font-size: 0.9rem;
+  }
+  .dm-edits {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
   }
   .edit {
     display: inline-flex;

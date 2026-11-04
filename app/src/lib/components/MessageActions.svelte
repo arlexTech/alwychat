@@ -4,6 +4,7 @@
   import Copy from "@lucide/svelte/icons/copy";
   import Download from "@lucide/svelte/icons/download";
   import Forward from "@lucide/svelte/icons/forward";
+  import SquareCheck from "@lucide/svelte/icons/square-check";
   import History from "@lucide/svelte/icons/history";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Pin from "@lucide/svelte/icons/pin";
@@ -27,6 +28,8 @@
     edit?: () => void;
     history?: () => void;
     delete?: () => void;
+    /** Start selecting several messages, this one first. */
+    select?: () => void;
   }
 
   let { msg, quickReaction, actions, onClose }: {
@@ -66,6 +69,7 @@
     {#if actions.thread}<button onclick={() => run(actions.thread!)}><MessagesSquare size={20} />{tr("Reply in thread")}</button>{/if}
     {#if actions.copy}<button onclick={() => run(actions.copy!)}><Copy size={20} />{tr("Copy text")}</button>{/if}
     {#if actions.forward}<button onclick={() => run(actions.forward!)}><Forward size={20} />{tr("Forward")}</button>{/if}
+    {#if actions.select}<button onclick={() => run(actions.select!)}><SquareCheck size={20} />{tr("Select")}</button>{/if}
     {#if actions.pin}
       {@const pin = actions.pin}
       <button onclick={() => run(pin.toggle)}>

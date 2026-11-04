@@ -2,7 +2,12 @@
   import { nativeVideo } from "$lib/stores/nativeVideo.svelte";
 
   /** A camera or screen of a native call (Linux desktop), drawn from its JPEG frames. */
-  let { frames, mirror = false, contain = false }: { frames: string; mirror?: boolean; contain?: boolean } = $props();
+  let {
+    frames,
+    mirror = false,
+    contain = false,
+    onsize,
+  }: { frames: string; mirror?: boolean; contain?: boolean; /** The picture's size changed. */ onsize?: (w: number, h: number) => void } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
   $effect(() => {
@@ -13,6 +18,7 @@
       if (el.width !== bitmap.width || el.height !== bitmap.height) {
         el.width = bitmap.width;
         el.height = bitmap.height;
+        onsize?.(bitmap.width, bitmap.height);
       }
       ctx?.drawImage(bitmap, 0, 0);
     });

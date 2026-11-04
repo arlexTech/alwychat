@@ -15,7 +15,19 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use livekit::{PlatformAudio, options::TrackPublishOptions, prelude::*};
+use livekit::{
+    PlatformAudio,
+    e2ee::{
+        E2eeOptions, EncryptionType,
+        key_provider::{KeyDerivationAlgorithm, KeyProvider, KeyProviderOptions},
+    },
+    options::TrackPublishOptions,
+    prelude::*,
+    webrtc::{
+        audio_frame::AudioFrame,
+        audio_source::{AudioSourceOptions, RtcAudioSource, native::NativeAudioSource},
+    },
+};
 use serde::Serialize;
 use tokio::{sync::mpsc::UnboundedReceiver, task::JoinHandle};
 use tracing::warn;
@@ -151,6 +163,11 @@ fn apply_setup(audio: &PlatformAudio, setup: &AudioSetup) {
 
 struct Shared {
     deafened: bool,
+    /// Others' soundboard tracks silenced for us (the volume slider at 0: the platform audio
+    /// module mixes remote tracks itself, so there's no per-track volume).
+    soundboard_off: bool,
+    /// Who is speaking by our own measure (see `voice_meter`), by LiveKit identity.
+    voices: HashMap<String, Voice>,
     /// User IDs muted for us only.
     muted_for_me: HashSet<String>,
     /// Remote videos sent to the UI, by track SID.
@@ -167,8 +184,41 @@ pub struct NativeCall {
     mic: LocalAudioTrack,
     shared: Arc<Mutex<Shared>>,
     events: JoinHandle<()>,
+    meter: JoinHandle<()>,
     frames: FrameSink,
     sink: Sink,
+    keys: KeyProvider,
+    /// The runtime the call runs on: muting spawns LiveKit tasks, and the app calls `set_mic`
+    /// from outside any runtime (it panicked there).
+    runtime: tokio::runtime::Handle,
+    /// The soundboard's track (published on first use) and the sound playing on it.
+    soundboard: tokio::sync::Mutex<Option<(NativeAudioSource, Option<JoinHandle<()>>)>>,
+}
+
+/// Name of the soundboard's track (the webview uses the same).
+const SOUNDBOARD_TRACK: &str = "soundboard";
+
+/// Soundboard samples: 48 kHz mono.
+pub const SOUND_RATE: u32 = 48_000;
+
+/// End-to-end encryption of the call's media.
+pub struct Encryption {
+    /// Encrypt our media (others' is decrypted whenever they encrypt and we have their key).
+    pub encrypt: bool,
+    /// Keys known when joining: (LiveKit identity, index, raw key); later ones via `set_key`.
+    pub keys: Vec<(String, u8, Vec<u8>)>,
+}
+
+/// Media keys as Element Call uses them (per participant, HKDF from 32 random bytes, 256 slots).
+fn key_provider() -> KeyProvider {
+    KeyProvider::new(KeyProviderOptions {
+        ratchet_window_size: 10,
+        key_ring_size: 256,
+        key_derivation_algorithm: KeyDerivationAlgorithm::HKDF,
+        // Never give up on a key after failed frames (a new one may simply be on its way).
+        failure_tolerance: -1,
+        ..Default::default()
+    })
 }
 
 impl NativeCall {
@@ -177,6 +227,7 @@ impl NativeCall {
     pub async fn join(
         url: &str,
         token: &str,
+        encryption: Encryption,
         mic_on: bool,
         setup: AudioSetup,
         on_event: impl Fn(CallEvent) + Send + Sync + 'static,
@@ -187,7 +238,26 @@ impl NativeCall {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let audio = PlatformAudio::new().map_err(|e| format!("audio devices: {e}"))?;
         apply_setup(&audio, &setup);
-        let (room, rx) = Room::connect(url, token, RoomOptions::default())
+        let key_provider = key_provider();
+        for (identity, index, key) in encryption.keys {
+            key_provider.set_key(&identity.into(), index.into(), key);
+        }
+        let mut options = RoomOptions::default();
+        // `e2ee` rather than `encryption`: the latter also encrypts data packets, which Element
+        // Call doesn't expect. With `None`, our tracks go out in clear but encrypted ones from
+        // others are still decrypted.
+        #[allow(deprecated)]
+        {
+            options.e2ee = Some(E2eeOptions {
+                encryption_type: if encryption.encrypt {
+                    EncryptionType::Gcm
+                } else {
+                    EncryptionType::None
+                },
+                key_provider: key_provider.clone(),
+            });
+        }
+        let (room, rx) = Room::connect(url, token, options)
             .await
             .map_err(|e| format!("couldn't join the call: {e}"))?;
         let room = Arc::new(room);
@@ -209,6 +279,8 @@ impl NativeCall {
 
         let shared = Arc::new(Mutex::new(Shared {
             deafened: false,
+            soundboard_off: false,
+            voices: HashMap::new(),
             muted_for_me: HashSet::new(),
             watching: HashMap::new(),
             camera: None,
@@ -229,6 +301,12 @@ impl NativeCall {
         sink(CallEvent::Members {
             members: members(&room, &shared),
         });
+        let meter = tokio::spawn(voice_meter(
+            room.clone(),
+            mic.clone(),
+            shared.clone(),
+            sink.clone(),
+        ));
         let events = tokio::spawn(follow(
             room.clone(),
             rx,
@@ -242,12 +320,85 @@ impl NativeCall {
             mic,
             shared,
             events,
+            meter,
             frames,
             sink,
+            keys: key_provider,
+            soundboard: tokio::sync::Mutex::new(None),
+            runtime: tokio::runtime::Handle::current(),
         })
     }
 
+    /// Play a soundboard sound for everyone in the call (`samples`: 48 kHz mono), on its own
+    /// track so the microphone's noise suppression doesn't eat it. A new sound replaces the
+    /// one playing.
+    pub async fn play_sound(&self, samples: Vec<i16>) -> Result<(), String> {
+        let mut soundboard = self.soundboard.lock().await;
+        if soundboard.is_none() {
+            let source = NativeAudioSource::new(
+                AudioSourceOptions {
+                    echo_cancellation: false,
+                    noise_suppression: false,
+                    auto_gain_control: false,
+                },
+                SOUND_RATE,
+                1,
+                100,
+            );
+            let track = LocalAudioTrack::create_audio_track(
+                SOUNDBOARD_TRACK,
+                RtcAudioSource::Native(source.clone()),
+            );
+            self.room
+                .local_participant()
+                .publish_track(
+                    LocalTrack::Audio(track),
+                    TrackPublishOptions {
+                        source: TrackSource::Unknown,
+                        dtx: false,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| format!("couldn't publish the soundboard: {e}"))?;
+            *soundboard = Some((source, None));
+        }
+        let Some((source, playing)) = soundboard.as_mut() else {
+            return Ok(());
+        };
+        if let Some(task) = playing.take() {
+            task.abort();
+        }
+        let source = source.clone();
+        *playing = Some(tokio::spawn(async move {
+            // 10 ms frames; the source's queue paces them in real time.
+            const FRAME: usize = (SOUND_RATE / 100) as usize;
+            for chunk in samples.chunks(FRAME) {
+                let mut data = chunk.to_vec();
+                data.resize(FRAME, 0);
+                let frame = AudioFrame {
+                    data: data.into(),
+                    sample_rate: SOUND_RATE,
+                    num_channels: 1,
+                    samples_per_channel: FRAME as u32,
+                };
+                if let Err(e) = source.capture_frame(&frame).await {
+                    warn!("soundboard: {e}");
+                    return;
+                }
+            }
+        }));
+        Ok(())
+    }
+
+    /// A media key for `identity` (ours to encrypt with, or someone's to decrypt them).
+    pub fn set_key(&self, identity: &str, index: u8, key: Vec<u8>) {
+        self.keys
+            .set_key(&identity.to_owned().into(), index.into(), key);
+    }
+
     pub fn set_mic(&self, on: bool) {
+        let _runtime = self.runtime.enter();
         if on {
             self.mic.unmute();
         } else {
@@ -258,6 +409,12 @@ impl NativeCall {
     /// Hear nobody (the mic is the UI's business, as in the browser).
     pub fn set_deafened(&self, deafened: bool) {
         self.shared.lock().unwrap().deafened = deafened;
+        apply_audio(&self.room, &self.shared);
+    }
+
+    /// Hear others' soundboard sounds or not.
+    pub fn set_soundboard_off(&self, off: bool) {
+        self.shared.lock().unwrap().soundboard_off = off;
         apply_audio(&self.room, &self.shared);
     }
 
@@ -339,6 +496,10 @@ impl NativeCall {
 
     pub async fn leave(&self) {
         self.events.abort();
+        self.meter.abort();
+        if let Some((_, Some(playing))) = self.soundboard.lock().await.take() {
+            playing.abort();
+        }
         {
             let mut shared = self.shared.lock().unwrap();
             shared.camera = None;
@@ -356,6 +517,7 @@ impl NativeCall {
 impl Drop for NativeCall {
     fn drop(&mut self) {
         self.events.abort();
+        self.meter.abort();
         if let Ok(mut shared) = self.shared.lock() {
             shared.camera = None;
             shared.screen = None;
@@ -395,6 +557,99 @@ fn user_of(identity: &str) -> &str {
     }
 }
 
+/// Our own speaking measure for someone, else LiveKit's (sent by the server about twice a
+/// second and smoothed, so the ring lagged ~1 s behind the voice).
+fn speaking(shared: &Shared, identity: &str, server: bool) -> bool {
+    shared.voices.get(identity).map_or(server, |v| v.speaking)
+}
+
+#[derive(Clone, Copy)]
+struct Voice {
+    speaking: bool,
+    last_loud: std::time::Instant,
+}
+
+/// Audio level (0–1, WebRTC's `audioLevel`) above which someone counts as speaking, and how long
+/// the ring stays after the voice drops (so it doesn't flicker between words).
+const SPEAKING_LEVEL: f64 = 0.03;
+const SPEAKING_HOLD: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Measure everyone's voice 10 times a second from WebRTC's own audio levels (our microphone's
+/// source, each remote microphone's inbound stream) and send the members when someone starts
+/// or stops speaking.
+async fn voice_meter(
+    room: Arc<Room>,
+    mic: LocalAudioTrack,
+    shared: Arc<Mutex<Shared>>,
+    sink: Sink,
+) {
+    use livekit::webrtc::stats::RtcStats;
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tick.tick().await;
+        let mut levels: Vec<(String, f64)> = Vec::new();
+        let me = room.local_participant();
+        let level = if mic.is_muted() {
+            0.0
+        } else {
+            mic.get_stats()
+                .await
+                .ok()
+                .into_iter()
+                .flatten()
+                .find_map(|s| match s {
+                    RtcStats::MediaSource(m) if m.source.kind == "audio" => {
+                        Some(m.audio.audio_level)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0.0)
+        };
+        levels.push((me.identity().to_string(), level));
+        for participant in room.remote_participants().values() {
+            let mut level = 0.0f64;
+            for publication in participant.track_publications().values() {
+                if publication.source() != TrackSource::Microphone || publication.is_muted() {
+                    continue;
+                }
+                if let Some(RemoteTrack::Audio(track)) = publication.track() {
+                    for stat in track.get_stats().await.unwrap_or_default() {
+                        if let RtcStats::InboundRtp(r) = stat {
+                            level = level.max(r.inbound.audio_level);
+                        }
+                    }
+                }
+            }
+            levels.push((participant.identity().to_string(), level));
+        }
+        let now = std::time::Instant::now();
+        let mut changed = false;
+        {
+            let mut shared = shared.lock().unwrap();
+            for (identity, level) in levels {
+                let voice = shared.voices.entry(identity).or_insert(Voice {
+                    speaking: false,
+                    last_loud: now - SPEAKING_HOLD,
+                });
+                if level >= SPEAKING_LEVEL {
+                    voice.last_loud = now;
+                }
+                let speaking = now.duration_since(voice.last_loud) < SPEAKING_HOLD;
+                if speaking != voice.speaking {
+                    voice.speaking = speaking;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            sink(CallEvent::Members {
+                members: members(&room, &shared),
+            });
+        }
+    }
+}
+
 fn has_live_mic(mut publications: impl Iterator<Item = (TrackSource, bool)>) -> bool {
     publications.any(|(source, muted)| source == TrackSource::Microphone && !muted)
 }
@@ -418,7 +673,7 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
     let mut out = vec![CallMember {
         identity: me.identity().to_string(),
         is_local: true,
-        speaking: me.is_speaking(),
+        speaking: speaking(&shared, me.identity().as_str(), me.is_speaking()),
         mic_on: has_live_mic(
             me.track_publications()
                 .values()
@@ -435,7 +690,7 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
             CallMember {
                 identity: p.identity().to_string(),
                 is_local: false,
-                speaking: p.is_speaking(),
+                speaking: speaking(&shared, p.identity().as_str(), p.is_speaking()),
                 mic_on: has_live_mic(publications.values().map(|p| (p.source(), p.is_muted()))),
                 camera: video_key(&publications, TrackSource::Camera, &shared.watching),
                 screen: video_key(&publications, TrackSource::Screenshare, &shared.watching),
@@ -457,6 +712,8 @@ fn apply_audio(room: &Room, shared: &Mutex<Shared>) {
                 .contains(user_of(participant.identity().as_str()));
         for publication in participant.track_publications().values() {
             if let Some(RemoteTrack::Audio(track)) = publication.track() {
+                let silent =
+                    silent || (shared.soundboard_off && publication.name() == SOUNDBOARD_TRACK);
                 if silent {
                     track.disable();
                 } else {
@@ -484,6 +741,10 @@ async fn follow(
                     reason: format!("{reason:?}"),
                 });
                 return;
+            }
+            // Call media encryption per participant (missing key, decryption failing…).
+            RoomEvent::E2eeStateChanged { participant, state } => {
+                tracing::info!(who = %participant.identity(), ?state, "call encryption");
             }
             RoomEvent::Reconnecting => sink(CallEvent::Reconnecting),
             RoomEvent::Reconnected => sink(CallEvent::Connected),

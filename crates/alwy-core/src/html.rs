@@ -6,7 +6,8 @@ use ammonia::Builder;
 use matrix_sdk::ruma::events::room::message::{FormattedBody, MessageFormat};
 
 /// Tags and attributes from the Matrix spec's recommended allowlist (client-server API,
-/// "m.room.message msgtypes"), minus `img` until inline media is supported.
+/// "m.room.message msgtypes"). `img` only with an `mxc://` source (custom emoji, MSC2545),
+/// which the UI loads from the homeserver: never an outside address (tracking pixels).
 static SANITIZER: LazyLock<Builder<'static>> = LazyLock::new(|| {
     let mut b = Builder::empty();
     b.tags(HashSet::from([
@@ -47,6 +48,7 @@ static SANITIZER: LazyLock<Builder<'static>> = LazyLock::new(|| {
         "span",
         "details",
         "summary",
+        "img",
     ]))
     // Reply fallbacks duplicate the quoted message, which the UI already shows.
     .clean_content_tags(HashSet::from(["mx-reply"]))
@@ -58,14 +60,27 @@ static SANITIZER: LazyLock<Builder<'static>> = LazyLock::new(|| {
         "span",
         ["data-mx-color", "data-mx-bg-color", "data-mx-spoiler"],
     )
-    .url_schemes(HashSet::from(["http", "https", "ftp", "mailto", "magnet"]))
+    .add_tag_attributes(
+        "img",
+        ["src", "alt", "title", "width", "height", "data-mx-emoticon"],
+    )
+    .url_schemes(HashSet::from([
+        "http", "https", "ftp", "mailto", "magnet", "mxc",
+    ]))
     .link_rel(Some("noopener noreferrer"))
     // Only `language-*` classes on code blocks (for future syntax highlighting).
-    .attribute_filter(|_tag, attr, value| match attr {
-        "class" => value
+    .attribute_filter(|tag, attr, value| match (tag, attr) {
+        (_, "class") => value
             .split_whitespace()
             .all(|c| c.starts_with("language-"))
             .then_some(value.into()),
+        // Images only from the homeserver; links never to mxc:.
+        ("img", "src") => value.starts_with("mxc://").then_some(value.into()),
+        (_, "href") => (!value.starts_with("mxc:")).then_some(value.into()),
+        ("img", "width" | "height") => value
+            .parse::<u16>()
+            .ok()
+            .map(|n| n.min(256).to_string().into()),
         _ => Some(value.into()),
     });
     b
@@ -116,6 +131,11 @@ fn find_urls(text: &str) -> Vec<(usize, usize)> {
         from = end.max(start + 4);
     }
     found
+}
+
+/// Plain text as HTML (escaped, line breaks kept).
+pub(crate) fn escape_text(text: &str) -> String {
+    escape(text)
 }
 
 fn escape(text: &str) -> String {
@@ -219,5 +239,36 @@ mod tests {
     fn links_get_safe_rel() {
         let out = clean(r#"<a href="https://example.org">w</a>"#).unwrap();
         assert!(out.contains(r#"rel="noopener noreferrer""#));
+    }
+}
+
+#[cfg(test)]
+mod emoticon_tests {
+    use matrix_sdk::ruma::events::room::message::FormattedBody;
+
+    fn clean(html: &str) -> String {
+        super::formatted(Some(&FormattedBody::html(html))).unwrap_or_default()
+    }
+
+    #[test]
+    fn keeps_custom_emoji() {
+        let out = clean(
+            r#"hi <img data-mx-emoticon src="mxc://x.org/abc" alt=":blob:" title=":blob:" height="32">"#,
+        );
+        assert!(out.contains(r#"src="mxc://x.org/abc""#), "{out}");
+        assert!(out.contains("data-mx-emoticon"), "{out}");
+        assert!(out.contains(r#"height="32""#), "{out}");
+    }
+
+    #[test]
+    fn drops_outside_images_and_scripts() {
+        let out = clean(
+            r#"<img src="https://tracker.example/p.gif"><img src="mxc://x/y" onerror="alert(1)" height="9999">"#,
+        );
+        assert!(!out.contains("tracker"), "{out}");
+        assert!(!out.contains("onerror"), "{out}");
+        assert!(out.contains(r#"height="256""#), "{out}");
+        let link = clean(r#"<a href="mxc://x/y">x</a>"#);
+        assert!(!link.contains("mxc"), "{link}");
     }
 }

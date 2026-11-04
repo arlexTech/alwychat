@@ -35,6 +35,17 @@
   import TextQuote from "@lucide/svelte/icons/text-quote";
   import Type from "@lucide/svelte/icons/type";
   import X from "@lucide/svelte/icons/x";
+  import CopyIcon from "@lucide/svelte/icons/copy";
+  import ForwardIcon from "@lucide/svelte/icons/forward";
+  import Download from "@lucide/svelte/icons/download";
+  import { SvelteSet } from "svelte/reactivity";
+  import PhotoEditor from "./PhotoEditor.svelte";
+  import CameraView from "./CameraView.svelte";
+  import { viewOnce } from "$lib/stores/viewOnce.svelte";
+  import Timer from "@lucide/svelte/icons/timer";
+  import CountdownStrip from "./CountdownStrip.svelte";
+  import { emotes } from "$lib/stores/emotes.svelte";
+  import Pencil from "@lucide/svelte/icons/pencil";
   import EmojiPicker from "./EmojiPicker.svelte";
   import { geoUri, liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { tick, untrack } from "svelte";
@@ -43,8 +54,12 @@
     chatMediaHd,
     deleteMessage,
     discardPicked,
+    saveBlob,
+    sendSticker,
+    type Emote,
     editHistory,
     isAndroid,
+    setSecureScreen,
     takeKeyboardContent,
     editMessage,
     markRead,
@@ -184,7 +199,8 @@
   );
 
   // A 1:1 chat is titled with the nickname given to the other person, if any.
-  const title = $derived((room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);
+  // A name given to the chat (shared, Messenger's "chat name") wins; else the person's nickname.
+  const title = $derived(room.has_name ? room.name : (room.dm_user && chat.style?.nicknames[room.dm_user]) || room.name);
   // The chat's own quick reaction (shared by its members), 🔥 until someone picks one.
   const QUICK_REACTION = $derived(chat.style?.quick_reaction ?? DEFAULT_QUICK_REACTION);
 
@@ -203,7 +219,8 @@
   let viewer = $state<{ items: ViewerItem[]; index: number } | null>(null);
   /** Files picked, dropped or pasted, waiting for Send. */
   /** Attachments waiting in the composer: a browser File (desktop) or a picked file (Android). */
-  type Pending = { name: string; mime: string; url: string | null; file?: File; picked?: Picked };
+  type Pending = { name: string; mime: string; url: string | null; file?: File; picked?: Picked; viewOnce?: boolean };
+  const canViewOnce = (p: Pending) => (p.mime.startsWith("image/") && p.mime !== "image/gif") || p.mime.startsWith("video/");
   let pending = $state<Pending[]>([]);
   let dragging = $state(false);
   let sendingFiles = $state(false);
@@ -220,7 +237,8 @@
   });
   /** This chat's HD choice: null = app default. */
   let chatHd = $state<boolean | null>(null);
-  let confirmDelete = $state<MessageEntry | null>(null);
+  /** Messages to delete once confirmed (one, or a selection). */
+  let confirmDelete = $state<MessageEntry[] | null>(null);
   let history = $state<{ revisions: Revision[] | null; error: string | null } | null>(null);
 
   // Android back closes these before the chat itself.
@@ -260,8 +278,12 @@
   /** The draft's reply target, until that message is loaded. */
   let draftReply: string | null = null;
 
+  // Only a different chat resets the view: the chat list sends a fresh copy of the same chat
+  // whenever it changes (unread count, latest message…), which used to close chat settings
+  // and reset the composer right after opening a chat.
+  const roomId = $derived(room.id);
   $effect(() => {
-    const id = room.id;
+    const id = roomId;
     threadRoot = null;
     if (thread) {
       untrack(() => mention.reset(id, !room.is_dm));
@@ -364,11 +386,32 @@
     | { kind: "unread"; key: string }
     | { kind: "start"; key: string };
 
+  // Disappearing messages: an expired one leaves the view on time, whether or not its deletion
+  // reached the server yet (only messages sent since the timer was turned on).
+  let clock = $state(Date.now());
+  $effect(() => {
+    if (!chat.style?.disappearing) return;
+    const t = setInterval(() => (clock = Date.now()), 15_000);
+    return () => clearInterval(t);
+  });
+  const expired = (msg: MessageEntry) => {
+    const d = chat.style?.disappearing;
+    return !!d && msg.timestamp >= d.since && msg.timestamp + d.timer_ms <= clock;
+  };
+
+  /** "5 min", "1 h", "1 day"… */
+  function disappearLabel(ms: number) {
+    if (ms < 3_600_000) return tr("{n} min", { n: Math.round(ms / 60_000) });
+    if (ms < 86_400_000) return tr("{n} h", { n: Math.round(ms / 3_600_000) });
+    return trn(Math.round(ms / 86_400_000), "{n} day", "{n} days");
+  }
+
   const rows = $derived.by(() => {
     const out: Row[] = [];
     for (const e of tl.entries) {
       switch (e.type) {
         case "message": {
+          if (expired(e)) break;
           const prev = out.at(-1);
           if (prev?.kind === "message" && joinsAlbum(prev.album?.at(-1) ?? prev.msg, e)) {
             prev.album = [...(prev.album ?? [prev.msg]), e];
@@ -415,6 +458,8 @@
     const ca = a.content;
     const cb = b.content;
     if (ca.kind !== "image" || cb.kind !== "image" || a.sender !== b.sender || b.reply_to) return false;
+    // A view-once photo stays on its own (an album would show it).
+    if (ca.view_once || cb.view_once) return false;
     if (ca.gallery && cb.gallery) return ca.gallery.id === cb.gallery.id;
     return !ca.caption && !cb.caption && b.timestamp - a.timestamp < BURST_GAP_MS;
   }
@@ -454,7 +499,10 @@
       // A thread with no replies yet has nothing to read (the root belongs to the chat).
       const last = tl.entries.findLast((e) => e.type === "message");
       if (thread && (!last || (last.type === "message" && last.item_id === thread))) return;
-      if (document.hasFocus() && scroller && Math.abs(scroller.scrollTop) < 40) {
+      // Android's WebView doesn't always report focus (back from a notification…): there,
+      // being on screen is what counts.
+      const looking = isAndroid ? document.visibilityState === "visible" : document.hasFocus();
+      if (looking && scroller && Math.abs(scroller.scrollTop) < 40) {
         markRead(target).catch(() => {});
       }
     }, 600);
@@ -477,8 +525,8 @@
     event?.preventDefault();
     const body = draft.trim();
     if (pending.length && !editing) return sendAttachments(body);
-    if (!body) return;
     if (editing) return saveEdit(editing, body);
+    if (!body) return;
     if (tl.focused) await tl.latest();
     stopTyping(room.id);
     const reply = replyTo?.item_id ?? null;
@@ -491,7 +539,7 @@
     autosize();
     scroller.scrollTo({ top: 0, behavior: "smooth" });
     try {
-      await sendMessage(target, body, reply, mentions);
+      await sendMessage(target, body, reply, mentions, emotes.usedIn(body));
     } catch (e) {
       sendError = String(e);
       draft ||= body;
@@ -547,6 +595,34 @@
     }
   }
 
+  // ── Editing a photo before sending (optional) ──
+  /** The waiting photo being edited (its place in `pending`). */
+  let editingPhoto = $state<number | null>(null);
+  const editable = (p: Pending) => !!p.url && p.mime.startsWith("image/") && p.mime !== "image/gif";
+
+  async function photoEdited(i: number, jpeg: Blob) {
+    editingPhoto = null;
+    const old = pending[i];
+    if (!old) return;
+    const name = old.name.replace(/\.[^.]+$/, "") + ".jpg";
+    try {
+      let next: Pending;
+      if (isAndroid) {
+        // The Android webview can't hand raw bytes over: saved as a waiting file instead.
+        const picked = await saveBlob(name, jpeg);
+        next = { name, mime: "image/jpeg", url: pickedMediaUrl(picked.path), picked };
+      } else {
+        const file = new File([jpeg], name, { type: "image/jpeg" });
+        next = { name, mime: "image/jpeg", url: URL.createObjectURL(file), file };
+      }
+      pending[i] = next;
+      if (old.file && old.url) URL.revokeObjectURL(old.url);
+      if (old.picked) void discardPicked(old.picked);
+    } catch (e) {
+      sendError = String(e);
+    }
+  }
+
   function removePending(i: number) {
     const [p] = pending.splice(i, 1);
     if (p?.file && p.url) URL.revokeObjectURL(p.url);
@@ -571,14 +647,14 @@
     sendingFiles = true;
     try {
       if (text && files.length > 1) await sendMessage(target, text, null);
-      const isPhoto = (f: Pending) => f.mime.startsWith("image/") && f.mime !== "image/gif";
+      const isPhoto = (f: Pending) => f.mime.startsWith("image/") && f.mime !== "image/gif" && !f.viewOnce;
       const photos = files.filter(isPhoto).length;
       const galleryId = photos > 1 ? crypto.randomUUID() : null;
       let index = 0;
       // One at a time: the send queue keeps them in order and the album stays together.
       for (const f of files) {
         const gallery = galleryId && isPhoto(f) ? { id: galleryId, index: index++, count: photos } : null;
-        const meta = { caption: files.length === 1 ? text : null, gallery };
+        const meta = { caption: files.length === 1 ? text : null, gallery, viewOnce: !!f.viewOnce };
         if (f.picked) await sendPicked(target, f.picked, meta);
         else if (f.file) await sendFile(target, f.file, meta);
       }
@@ -628,6 +704,8 @@
     await tick();
     autosize();
     if (body === editableText(msg)) return;
+    // Text can't be emptied (that's deleting); a photo's caption can.
+    if (!body && !("caption" in msg.content)) return;
     try {
       await editMessage(target, msg.item_id, body, mentions);
     } catch (e) {
@@ -655,16 +733,61 @@
 
   function editableText(msg: MessageEntry) {
     const c = msg.content;
+    if ("caption" in c) return c.caption ?? "";
     return "body" in c ? c.body : "";
   }
 
-  async function doDelete(msg: MessageEntry) {
+  async function doDelete(msgs: MessageEntry[]) {
     confirmDelete = null;
-    try {
-      await deleteMessage(target, msg.item_id);
-    } catch (e) {
-      sendError = String(e);
+    for (const msg of msgs) {
+      try {
+        await deleteMessage(target, msg.item_id);
+      } catch (e) {
+        sendError = String(e);
+      }
     }
+  }
+
+  // ── Selecting several messages (Copy, Forward, Save, Delete together) ──
+  /** Selected rows (their first message's ID); null = not selecting. */
+  let selected = $state<SvelteSet<string> | null>(null);
+  $effect(() => {
+    if (selected) return closeOnBack(() => (selected = null));
+  });
+  /** The selected messages in timeline order (an album counts with all its photos). */
+  const selection = $derived.by((): MessageEntry[] => {
+    if (!selected) return [];
+    return rows.flatMap((r) => (r.kind === "message" && selected!.has(r.msg.item_id) ? (r.album ?? [r.msg]) : []));
+  });
+  function startSelect(msg: MessageEntry) {
+    selected = new SvelteSet([msg.item_id]);
+  }
+  function toggleSelect(msg: MessageEntry) {
+    if (!selected) return;
+    if (selected.has(msg.item_id)) selected.delete(msg.item_id);
+    else selected.add(msg.item_id);
+    if (!selected.size) selected = null;
+  }
+  const selectable = (m: MessageEntry) => m.item_id.startsWith("$") && !["redacted", "unable_to_decrypt"].includes(m.content.kind);
+  const selectionActions = $derived.by(() => {
+    const items = selection;
+    const texts = items.map(messageText).filter((t): t is string => !!t);
+    const forwardable =
+      items.length > 0 &&
+      items.every((m) => m.item_id.startsWith("$") && !["redacted", "unable_to_decrypt", "unsupported", "poll", "sticker"].includes(m.content.kind));
+    const visual = items.filter((m) => m.content.kind === "image" || m.content.kind === "video");
+    return {
+      copy: texts.length ? () => copyText(texts.join("\n\n")) : undefined,
+      forward: forwardable ? () => (forwardIds = items.map((m) => m.item_id)) : undefined,
+      save: visual.length ? () => saveVisualMedia(visual) : undefined,
+      delete: items.length && items.every((m) => m.can_delete) ? () => (confirmDelete = items) : undefined,
+    };
+  });
+  /** Run a selection action, then leave selecting (Forward closes it once sent). */
+  function selectionDo(action: (() => void) | undefined) {
+    if (!action) return;
+    action();
+    selected = null;
   }
 
   async function showHistory(msg: MessageEntry) {
@@ -676,7 +799,25 @@
     }
   }
 
+  /** The view-once message on screen (Android: no screenshots meanwhile). */
+  let onceOpen = $state(false);
+  $effect(() => {
+    if (!isAndroid || !onceOpen) return;
+    void setSecureScreen(true).catch(() => {});
+    return () => void setSecureScreen(!!prefs.settings?.hide_in_switcher).catch(() => {});
+  });
+
   function openMedia(msgs: MessageEntry[], index: number) {
+    const once = msgs.length === 1 ? msgs[0] : null;
+    const oc = once?.content;
+    if (once && (oc?.kind === "image" || oc?.kind === "video") && oc.view_once) {
+      // Others' only, once: shown now, then never again (the sender's app deletes it).
+      if (once.is_own || viewOnce.opened.has(once.item_id)) return;
+      viewOnce.open(target, once.item_id);
+      onceOpen = true;
+      viewer = { items: [{ media: oc.media, kind: oc.kind, caption: oc.caption }], index: 0 };
+      return;
+    }
     const items: ViewerItem[] = [];
     for (const m of msgs) {
       const c = m.content;
@@ -855,7 +996,8 @@
           : undefined,
       edit: msg.can_edit ? () => startEdit(msg) : undefined,
       history: msg.is_edited && remote ? () => showHistory(msg) : undefined,
-      delete: msg.can_delete ? () => (confirmDelete = msg) : undefined,
+      delete: msg.can_delete ? () => (confirmDelete = [msg]) : undefined,
+      select: selectable(msg) ? () => startSelect(msg) : undefined,
     };
   }
 
@@ -901,6 +1043,23 @@
     fileInput.click();
   }
 
+  // ── The in-app camera: its shot waits in the composer like a picked photo ──
+  let cameraOpen = $state(false);
+
+  async function addShot(blob: Blob, name: string) {
+    try {
+      if (isAndroid) {
+        const picked = await saveBlob(name, blob);
+        const url = picked.mime.startsWith("image/") ? pickedMediaUrl(picked.path) : null;
+        pending.push({ name, mime: picked.mime, url, picked });
+      } else {
+        addFiles([new File([blob], name, { type: blob.type })]);
+      }
+    } catch (e) {
+      sendError = String(e);
+    }
+  }
+
   /** Android: the camera app; the photo or video lands in the composer like a picked one. */
   async function takePhoto(kind: "photo" | "video") {
     try {
@@ -918,6 +1077,24 @@
     // The phone's keyboard makes room for the panel.
     if (emojiOpen) input.blur();
     else input.focus();
+  }
+
+  // Custom emoji: the panel loads this chat's packs when it opens.
+  $effect(() => {
+    if (emojiOpen) void emotes.load(room.id);
+  });
+  /** A custom emoji goes in the text as `:code:` (sent as the image). */
+  function insertCustom(e: Emote) {
+    const before = draft.slice(0, input.selectionEnd ?? draft.length);
+    insertEmoji(`${before && !/\s$/.test(before) ? " " : ""}:${e.shortcode}: `);
+  }
+  async function sticker(e: Emote) {
+    emojiOpen = false;
+    try {
+      await sendSticker(target, e.url, e.body ?? e.shortcode, e.info);
+    } catch (err) {
+      sendError = String(err);
+    }
   }
 
   function insertEmoji(emoji: string) {
@@ -1112,6 +1289,15 @@
 </script>
 
 <header class="chat-header">
+  {#if selected}
+  {@const a = selectionActions}
+  <button class="back" onclick={() => (selected = null)} aria-label={tr("Cancel")}><X size={24} /></button>
+  <strong class="title select-count">{trn(selected.size, "{n} selected", "{n} selected")}</strong>
+  <button class="chat-menu-button" disabled={!a.copy} onclick={() => selectionDo(a.copy)} aria-label={tr("Copy text")} title={tr("Copy text")}><CopyIcon size={20} /></button>
+  <button class="chat-menu-button" disabled={!a.forward} onclick={() => selectionDo(a.forward)} aria-label={tr("Forward")} title={tr("Forward")}><ForwardIcon size={20} /></button>
+  <button class="chat-menu-button" disabled={!a.save} onclick={() => selectionDo(a.save)} aria-label={tr("Save to gallery")} title={tr("Save to gallery")}><Download size={20} /></button>
+  <button class="chat-menu-button danger" disabled={!a.delete} onclick={() => selectionDo(a.delete)} aria-label={tr("Delete")} title={tr("Delete")}><Trash2 size={20} /></button>
+  {:else}
   <button class="back" onclick={onBack} aria-label={tr("Back")}><ChevronLeft size={26} /></button>
   {#if thread}
   <span class="title thread-title">
@@ -1123,7 +1309,9 @@
     <Avatar name={room.name} mxc={room.avatar} size={40} saved={saved.is(room.id)} />
     <span class="title">
       <strong>{title}</strong>
-      {#if status}
+      {#if chat.style?.disappearing && !thread}
+        <span class="sub"><Timer size={12} /> {tr("Disappearing messages: {time}", { time: disappearLabel(chat.style.disappearing.timer_ms) })}</span>
+      {:else if status}
         <span class="sub" class:online={presence.online(room.dm_user)}>{status}</span>
       {:else if room.is_encrypted}
         <span class="sub"><Lock size={12} /> {tr("End-to-end encrypted")}</span>
@@ -1133,7 +1321,11 @@
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label={tr("Voice call")}><Phone size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label={tr("Video call")}><Video size={22} /></button>
   {/if}
+  {/if}
 </header>
+{#if chat.style?.countdowns.length && !thread && !selected}
+  <CountdownStrip items={chat.style.countdowns} onManage={() => (chatMenuOpen = true)} />
+{/if}
 {#if historyOpen && !thread}
   {#key room.id}<TimelineStrip roomId={room.id} onClose={() => (historyOpen = false)} onJump={(id) => void showMessage(id)} />{/key}
 {/if}
@@ -1246,7 +1438,20 @@
 
     {#each rows as row (row.key)}
       {#if row.kind === "message"}
-        <div data-event={row.msg.item_id}>
+        {@const isSelected = !!selected?.has(row.msg.item_id)}
+        <div data-event={row.msg.item_id} class="msg-row" class:selecting={!!selected} class:selected={isSelected}>
+          {#if selected}
+            <!-- While selecting, a tap anywhere on the row picks it (the bubble's own taps wait). -->
+            <button
+              class="select-hit"
+              disabled={!selectable(row.msg)}
+              onclick={() => toggleSelect(row.msg)}
+              aria-pressed={isSelected}
+              aria-label={isSelected ? tr("Unselect") : tr("Select")}
+            >
+              <span class="select-mark">{#if isSelected}<Check size={14} strokeWidth={3} />{/if}</span>
+            </button>
+          {/if}
           <!-- One message that fails to draw mustn't take the whole conversation with it. -->
           <svelte:boundary onerror={(e) => console.warn("message", row.msg.item_id, e)}>
           <MessageBubble
@@ -1261,7 +1466,7 @@
             onJumpTo={jumpTo}
             onUnlock={() => (encryption.sheetOpen = true)}
             onEdit={() => startEdit(row.msg)}
-            onDelete={() => (confirmDelete = row.msg)}
+            onDelete={() => (confirmDelete = [row.msg])}
             onHistory={() => showHistory(row.msg)}
             album={row.album}
             onOpenMedia={(i) => openMedia(row.album ?? [row.msg], i)}
@@ -1272,6 +1477,7 @@
             roomId={target}
             onThread={thread ? undefined : () => (threadRoot = row.msg.item_id)}
             onForward={actionsFor(row.msg, row.album).forward}
+            onSelect={selectable(row.msg) ? () => startSelect(row.msg) : undefined}
             onLongPress={() => (actionFor = { msg: row.msg, album: row.album })}
           />
           {#snippet failed()}<p class="broken">{tr("Couldn't show this message")}</p>{/snippet}
@@ -1308,7 +1514,7 @@
   {#if editing}
     <div class="replying editing" transition:fly={{ y: 8, duration: 160 }}>
       <div>
-        <strong>{tr("Editing message")}</strong>
+        <strong>{"caption" in editing.content ? tr("Editing caption") : tr("Editing message")}</strong>
         <span>{editableText(editing)}</span>
       </div>
       <button type="button" onclick={cancelEdit} aria-label={tr("Cancel edit")}>×</button>
@@ -1328,6 +1534,20 @@
         <div class="pending-item">
           {#if p.url}<img src={p.url} alt="" />{:else}<span class="pending-file">{p.mime.startsWith("video/") ? "🎬" : "📄"}<small>{p.name}</small></span>{/if}
           <button type="button" onclick={() => removePending(i)} aria-label={tr("Remove {name}", { name: p.name })}>×</button>
+          {#if editable(p)}
+            <button type="button" class="edit-photo" onclick={() => (editingPhoto = i)} aria-label={tr("Edit photo")} title={tr("Edit photo")}><Pencil size={13} /></button>
+          {/if}
+          {#if canViewOnce(p)}
+            <button
+              type="button"
+              class="view-once"
+              class:on={p.viewOnce}
+              onclick={() => (pending[i] = { ...p, viewOnce: !p.viewOnce })}
+              aria-pressed={!!p.viewOnce}
+              aria-label={tr("View once")}
+              title={p.viewOnce ? tr("View once: on") : tr("View once: off")}
+            >1</button>
+          {/if}
         </div>
       {/each}
     </div>
@@ -1397,7 +1617,7 @@
         <CirclePlus size={26} />
       </button>
       {#if isAndroid}
-        <button type="button" class="attach" onclick={() => takePhoto("photo")} aria-label={tr("Take a photo")}><Camera size={24} /></button>
+        <button type="button" class="attach" onclick={() => (cameraOpen = true)} aria-label={tr("Take a photo")}><Camera size={24} /></button>
       {/if}
       <button type="button" class="attach" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
       <button type="button" class="attach mic" onclick={startVoice} aria-label={tr("Record a voice message")}><Mic size={24} /></button>
@@ -1443,7 +1663,7 @@
     {/if}
   </div>
   {#if emojiOpen}
-    <div transition:fly={{ y: 20, duration: 160 }}><EmojiPicker onPick={insertEmoji} /></div>
+    <div transition:fly={{ y: 20, duration: 160 }}><EmojiPicker onPick={insertEmoji} packs={emotes.packs} onCustom={insertCustom} onSticker={sticker} /></div>
   {/if}
   {/if}
 </form>
@@ -1454,7 +1674,7 @@
   <div class="attach-sheet" role="menu" transition:fly={{ y: 40, duration: 200 }}>
     <span class="grabber"></span>
     {#if isAndroid}
-      <button type="button" onclick={() => sheet(() => takePhoto("photo"))}><Camera size={22} />{tr("Take photo")}</button>
+      <button type="button" onclick={() => sheet(() => (cameraOpen = true))}><Camera size={22} />{tr("Take photo")}</button>
       <button type="button" onclick={() => sheet(() => takePhoto("video"))}><Video size={22} />{tr("Record video")}</button>
     {/if}
     <button type="button" onclick={() => sheet(() => (isAndroid ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />{tr("Photo & video library")}</button>
@@ -1468,7 +1688,7 @@
 {#if toast}<div class="toast" transition:fly={{ y: 12, duration: 180 }}>{toast}</div>{/if}
 
 {#if viewer}
-  <MediaViewer items={viewer.items} index={viewer.index} onClose={() => (viewer = null)} />
+  <MediaViewer items={viewer.items} index={viewer.index} onClose={() => ((viewer = null), (onceOpen = false))} />
 {/if}
 {#if searchOpen}
   <ChatSearchPage roomId={room.id} onPick={showMessage} onClose={() => (searchOpen = false)} />
@@ -1495,11 +1715,19 @@
   </button>
 {/if}
 
+{#if cameraOpen}
+  <CameraView onShot={(blob, name) => void addShot(blob, name)} onClose={() => (cameraOpen = false)} onFallback={isAndroid ? () => takePhoto("photo") : undefined} />
+{/if}
+{#if editingPhoto !== null && pending[editingPhoto]?.url}
+  {@const i = editingPhoto}
+  <PhotoEditor src={pending[i].url!} onCancel={() => (editingPhoto = null)} onDone={(jpeg) => photoEdited(i, jpeg)} />
+{/if}
+
 {#if confirmDelete}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="backdrop" transition:fade={{ duration: 120 }} onclick={() => (confirmDelete = null)}></div>
   <div class="dialog" role="alertdialog" aria-labelledby="del-title" transition:fly={{ y: 16, duration: 180 }}>
-    <h3 id="del-title">{tr("Delete this message?")}</h3>
+    <h3 id="del-title">{confirmDelete.length > 1 ? trn(confirmDelete.length, "Delete {n} message?", "Delete {n} messages?") : tr("Delete this message?")}</h3>
     <p>{tr("It will be removed for everyone in this chat.")}</p>
     <div class="dialog-buttons">
       <button onclick={() => (confirmDelete = null)}>{tr("Cancel")}</button>
@@ -1545,6 +1773,57 @@
   }
   .thread-title {
     flex: 1;
+  }
+  /* Selecting messages: a tap target over each row, with its check circle on the left. */
+  .msg-row {
+    position: relative;
+  }
+  .msg-row.selecting {
+    padding-left: 36px;
+    transition: padding 0.18s var(--ease, ease);
+  }
+  .msg-row.selected {
+    background: color-mix(in srgb, var(--accent-a) 14%, transparent);
+  }
+  .select-hit {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    padding: 0 0 0 10px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .select-hit:disabled {
+    cursor: default;
+  }
+  .select-mark {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--muted);
+    color: #fff;
+  }
+  .select-hit[aria-pressed="true"] .select-mark {
+    border-color: transparent;
+    background: var(--accent);
+  }
+  .select-hit:disabled .select-mark {
+    opacity: 0.3;
+  }
+  .select-count {
+    flex: 1;
+    font-size: 1.05rem;
+  }
+  .chat-menu-button:disabled {
+    opacity: 0.35;
+  }
+  .chat-menu-button.danger:not(:disabled) {
+    color: var(--danger, #e5484d);
   }
   .chat-header {
     position: relative;
@@ -2419,6 +2698,25 @@
     text-overflow: ellipsis;
     font-size: 0.65rem;
     text-align: center;
+  }
+  .pending-item .view-once {
+    top: auto;
+    right: auto;
+    bottom: 3px;
+    left: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    border: 1.5px dashed rgb(255 255 255 / 0.85);
+  }
+  .pending-item .view-once.on {
+    background: var(--accent);
+    border-style: solid;
+  }
+  .pending-item .edit-photo {
+    top: auto;
+    bottom: 3px;
+    display: grid;
+    place-items: center;
   }
   .pending-item button {
     position: absolute;

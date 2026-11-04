@@ -11,11 +11,13 @@
   import VoiceSettings from "./VoiceSettings.svelte";
   import logo from "$lib/assets/logo.svg";
   import { updates } from "$lib/stores/updates.svelte";
+  import ProgressBar from "./ProgressBar.svelte";
   import { clock } from "$lib/stores/clock.svelte";
   import FolderPage from "./FolderPage.svelte";
   import PinPad from "./PinPad.svelte";
   import { appLock } from "$lib/stores/applock.svelte";
-  import { setAppLock, unlockApp } from "$lib/backend";
+  import { setAppLock, unlockApp, autostartGet, autostartSet, isWeb } from "$lib/backend";
+  import { ALL_DOWNLOADS, nativeApp } from "$lib/nativeApp.svelte";
   import ChevronUp from "@lucide/svelte/icons/chevron-up";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Plus from "@lucide/svelte/icons/plus";
@@ -47,10 +49,14 @@
     setOwnAvatar,
     type NotificationRules,
     testPush,
+    unifiedPush,
+    useUnifiedPush,
+    type UnifiedPushStatus,
     type PushTestResult,
   } from "$lib/backend";
   import { me } from "$lib/stores/me.svelte";
   import AvatarEdit from "./AvatarEdit.svelte";
+  import EmotesPage from "./EmotesPage.svelte";
   import BlockedPage from "./BlockedPage.svelte";
   import DevicesPage from "./DevicesPage.svelte";
   import SecurityPage from "./SecurityPage.svelte";
@@ -79,7 +85,7 @@
   }
 
   // ── Account pages ──
-  let sub = $state<"devices" | "security" | "blocked" | null>(null);
+  let sub = $state<"devices" | "security" | "blocked" | "emotes" | null>(null);
   /** The settings page open on top of the main list. */
   let section = $state<"status" | "notifications" | "voice" | "privacy" | "appearance" | "chats" | "about" | null>(null);
   // Wide screens show the list and a section side by side (Discord): one is always open.
@@ -126,6 +132,31 @@
     }
   }
 
+  // ── Push service (Android): Google's Firebase, or a UnifiedPush app (ntfy…) ──
+  let up = $state<UnifiedPushStatus | null>(null);
+  let upBusy = $state(false);
+  $effect(() => {
+    if (section === "notifications" && isAndroid) void unifiedPush().then((s) => (up = s)).catch(() => {});
+  });
+  async function choosePush(distributor: string | null) {
+    upBusy = true;
+    error = null;
+    try {
+      await useUnifiedPush(distributor);
+      // The distributor answers with an endpoint a moment later.
+      for (let i = 0; i < 20; i++) {
+        up = await unifiedPush();
+        if (!distributor || up?.endpoint) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      await setupPush(settings?.notifications ?? true);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      upBusy = false;
+    }
+  }
+
   // ── Push test (Android) ──
   let pushTest = $state<PushTestResult | "running" | { error: string } | null>(null);
   async function runPushTest() {
@@ -141,7 +172,7 @@
     if (!("permission" in t)) return [{ label: tr("The test couldn't run"), ok: false, hint: t.error }];
     const steps: Step[] = [
       { label: tr("Allowed to show notifications"), ok: t.permission, hint: t.permission ? undefined : tr("Turn on “New messages” above, or allow AlwyChat in Android's settings.") },
-      { label: tr("Push available in this app"), ok: t.token, hint: t.token ? undefined : tr("This build has no Firebase setup: notifications only arrive while AlwyChat is open.") },
+      { label: tr("Push available in this app"), ok: t.token, hint: t.token ? undefined : tr("No push service ready (Firebase or a UnifiedPush app): notifications only arrive while AlwyChat is open.") },
     ];
     if (!t.token) return steps;
     steps.push({ label: tr("Your server knows this phone"), ok: !!t.registered, hint: t.registered ? undefined : "The registration didn't stick; try again in a moment." });
@@ -331,8 +362,20 @@
     }
   }
 
+  /** Computers: opens with the computer (null: not offered here). */
+  let autostart = $state<boolean | null>(null);
+  async function setAutostart(on: boolean) {
+    try {
+      await autostartSet(on);
+      autostart = on;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   onMount(() => {
     if (!prefs.settings) prefs.load().catch((e) => (error = String(e)));
+    if (isTauri && !isAndroid) autostartGet().then((on) => (autostart = on), () => {});
     void refreshSystem();
     // Coming back from Android's settings pages: show what the user changed there.
     const onVisible = () => document.visibilityState === "visible" && refreshSystem();
@@ -535,6 +578,25 @@
         </form>
       </div>
     {/if}
+    {#if isAndroid && up}
+      <h3 class="section">{tr("Push service")}</h3>
+      <label class="toggle">
+        <span><strong>{tr("Google (Firebase)")}</strong><small>{tr("Through your server's AlwyChat gateway and Google.")}</small></span>
+        <input type="radio" name="push-service" checked={!up.current} disabled={upBusy} onchange={() => choosePush(null)} />
+      </label>
+      {#each up.distributors as d (d.id)}
+        <label class="toggle">
+          <span>
+            <strong>{d.name}</strong>
+            <small>{up.current === d.id ? (up.endpoint ? tr("UnifiedPush, no Google · ready") : tr("UnifiedPush, no Google · registering…")) : tr("UnifiedPush, no Google: works with any Matrix server")}</small>
+          </span>
+          <input type="radio" name="push-service" checked={up.current === d.id} disabled={upBusy} onchange={() => choosePush(d.id)} />
+        </label>
+      {/each}
+      {#if !up.distributors.length}
+        <p class="hint">{tr("For notifications without Google (or on a server without AlwyChat's gateway), install a UnifiedPush app such as ntfy, then choose it here.")}</p>
+      {/if}
+    {/if}
     {#if isAndroid}
       <h3 class="section">{tr("Test")}</h3>
       <button class="m-btn plain wide-btn" disabled={pushTest === "running"} onclick={runPushTest}>
@@ -692,12 +754,22 @@
       {/each}
       <li><button class="folder-name new" onclick={() => (folderEdit = "new")}><Plus size={18} />{tr("New folder")}</button></li>
     </ul>
+    <h3 class="section">{tr("Emoji & stickers")}</h3>
+    <button class="m-row" onclick={() => (sub = "emotes")}>
+      <span class="m-text"><strong>{tr("My emoji & stickers")}</strong><small>{tr("Add your own, use them anywhere")}</small></span><ChevronRight size={18} />
+    </button>
     <h3 class="section">{tr("Media")}</h3>
     {#each media as t (t.key)}{@render row(t)}{/each}
     {#if !isAndroid}
       <label class="toggle">
         <span><strong>{tr("Enter sends")}</strong><small>{settings.enter_sends ? tr("Shift+Enter adds a new line.") : tr("Enter adds a new line, Ctrl+Enter sends.")}</small></span>
         <input type="checkbox" role="switch" checked={settings.enter_sends} onchange={() => toggle("enter_sends")} />
+      </label>
+    {/if}
+    {#if autostart !== null}
+      <label class="toggle">
+        <span><strong>{tr("Open when the computer starts")}</strong><small>{tr("AlwyChat starts in the background, so messages and calls reach you.")}</small></span>
+        <input type="checkbox" role="switch" checked={autostart} onchange={(e) => setAutostart(e.currentTarget.checked)} />
       </label>
     {/if}
     {/if}
@@ -713,12 +785,33 @@
       <p>{tr("Server: {server}", { server: server })}</p>
       <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button></p>
     </div>
+    {#if isWeb}
+      {@const app = nativeApp()}
+      <h3 class="section">{tr("Apps")}</h3>
+      {#if app}
+        <button class="m-btn" onclick={() => openExternal(app.url)}>{tr("Download AlwyChat for {system}", { system: app.system })}</button>
+      {/if}
+      <p class="m-hint">
+        {tr("The app gets notifications even when it's closed, and updates itself.")}
+        <button class="link" onclick={() => openExternal(ALL_DOWNLOADS)}>{tr("All downloads")}</button>
+      </p>
+    {/if}
     {#if isTauri}
       <h3 class="section">{tr("Updates")}</h3>
       {#if updates.available}
         <button class="m-btn" disabled={updates.stage === "downloading" || updates.stage === "installing"} onclick={() => updates.install()}>
           {tr("Update to AlwyChat {version}", { version: updates.available.version })}
         </button>
+        {#if updates.stage === "downloading"}
+          <div class="update-progress">
+            <ProgressBar value={updates.progress} label={tr("Download progress")} />
+            <p class="m-hint">{updates.progress === null ? tr("Downloading…") : tr("Downloading… {percent}%", { percent: Math.round(updates.progress * 100) })}</p>
+          </div>
+        {:else if updates.stage === "installing"}
+          <p class="m-hint">{isAndroid ? tr("Confirm the installation") : tr("Installing, AlwyChat restarts…")}</p>
+        {:else if updates.stage === "needs-permission"}
+          <p class="m-hint">{tr("Allow AlwyChat to install updates, then tap here again")}</p>
+        {/if}
       {:else}
         <button class="m-btn" disabled={updates.stage === "checking"} onclick={() => updates.check()}>
           {updates.stage === "checking" ? tr("Checking…") : tr("Check for updates")}
@@ -726,7 +819,7 @@
         {#if updates.upToDate}<p class="m-hint">{tr("You have the latest version.")}</p>{/if}
       {/if}
       {#if updates.error}<p class="m-hint">{updates.error}</p>{/if}
-      <p class="m-hint">{tr("AlwyChat installed from GitHub updates itself: it checks a few times a day and asks before installing.")}</p>
+      <p class="m-hint">{tr("This version of AlwyChat updates itself: it checks a few times a day and asks before installing.")}</p>
     {/if}
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
@@ -751,6 +844,8 @@
   <SecurityPage onClose={() => (sub = null)} />
 {:else if sub === "blocked"}
   <BlockedPage onClose={() => (sub = null)} />
+{:else if sub === "emotes"}
+  <EmotesPage onClose={() => (sub = null)} />
 {/if}
 {#if folderEdit}
   <FolderPage folder={folderEdit === "new" ? null : folderEdit} onClose={() => (folderEdit = null)} />
@@ -834,6 +929,10 @@
   }
   .kw {
     padding: 5px 8px 5px 12px;
+  }
+  .update-progress {
+    max-width: 360px;
+    margin-top: 12px;
   }
   .about p {
     margin: 4px 4px;
@@ -1101,5 +1200,10 @@
   }
   .error {
     color: var(--danger);
+  }
+  .hint {
+    margin: 4px 16px 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
   }
 </style>

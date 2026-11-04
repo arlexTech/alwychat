@@ -26,7 +26,7 @@ use tracing::warn;
 
 use crate::{Error, Result};
 
-pub use crate::names::{NICKNAMES, QUICK_REACTION, THEME};
+pub use crate::names::{COUNTDOWNS, NICKNAMES, QUICK_REACTION, THEME};
 
 /// Everything the chat view needs to look the way its members chose.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -38,8 +38,44 @@ pub struct ChatStyle {
     pub nicknames: BTreeMap<String, String>,
     /// `mxc://` background image, shown instead of the theme's scenery.
     pub wallpaper: Option<String>,
+    /// Disappearing messages timer, if on.
+    pub disappearing: Option<crate::disappearing::Disappearing>,
+    /// Shared dates: countdowns and "days together" (`com.alwy.chat.room.countdowns`).
+    pub countdowns: Vec<Countdown>,
     /// Whether our power level allows changing these.
     pub can_edit: bool,
+}
+
+/// A date shown in the chat: a countdown to it, or the days since it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Countdown {
+    pub id: String,
+    pub title: String,
+    /// Local calendar date, `YYYY-MM-DD`.
+    pub date: String,
+    /// "until" (counts down) or "since" (counts up).
+    pub kind: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+    /// Comes back every year (birthdays, anniversaries).
+    #[serde(default)]
+    pub yearly: bool,
+}
+
+#[derive(Deserialize, Default)]
+struct CountdownsContent {
+    #[serde(default)]
+    items: Vec<Countdown>,
+}
+
+/// A date the UI can trust: `YYYY-MM-DD` with a real month and day.
+fn valid_date(date: &str) -> bool {
+    let parts: Vec<&str> = date.split('-').collect();
+    matches!(parts.as_slice(), [y, m, d]
+        if y.len() == 4 && m.len() == 2 && d.len() == 2
+        && y.parse::<u16>().is_ok()
+        && m.parse::<u8>().is_ok_and(|m| (1..=12).contains(&m))
+        && d.parse::<u8>().is_ok_and(|d| (1..=31).contains(&d)))
 }
 
 #[derive(Deserialize)]
@@ -79,16 +115,39 @@ impl crate::Core {
             let on_style = on_style.clone();
             async move {
                 let kind = event.get_field::<String>("type").ok().flatten();
-                if kind
-                    .as_deref()
-                    .is_some_and(|k| k == QUICK_REACTION || k == THEME || k == NICKNAMES)
-                    || kind.as_deref() == Some("m.room.power_levels")
+                if kind.as_deref().is_some_and(|k| {
+                    k == QUICK_REACTION
+                        || k == THEME
+                        || k == NICKNAMES
+                        || k == crate::names::DISAPPEARING
+                        || k == crate::names::COUNTDOWNS
+                }) || kind.as_deref() == Some("m.room.power_levels")
                 {
                     on_style(chat_style(&room).await);
                 }
             }
         });
         client.event_handler_drop_guard(handle)
+    }
+
+    /// Replace the chat's shared dates (everyone in it sees them).
+    pub async fn set_countdowns(&self, room_id: &str, items: Vec<Countdown>) -> Result<()> {
+        let room = self.room(room_id)?;
+        let items: Vec<Countdown> = items
+            .into_iter()
+            .filter(|c| valid_date(&c.date) && matches!(c.kind.as_str(), "until" | "since"))
+            .map(|mut c| {
+                c.title = c.title.trim().chars().take(80).collect();
+                c.emoji = c
+                    .emoji
+                    .filter(|e| !e.trim().is_empty() && e.chars().count() <= 8);
+                c
+            })
+            .take(20)
+            .collect();
+        room.send_state_event_raw(COUNTDOWNS, "", json!({ "items": items }))
+            .await?;
+        Ok(())
     }
 
     pub async fn set_quick_reaction(&self, room_id: &str, emoji: Option<String>) -> Result<()> {
@@ -153,10 +212,12 @@ impl crate::Core {
 }
 
 async fn chat_style(room: &Room) -> ChatStyle {
-    let (quick, theme, nicknames) = tokio::join!(
+    let (quick, theme, nicknames, disappearing, countdowns) = tokio::join!(
         fetch::<QuickReactionContent>(room, QUICK_REACTION, ""),
         fetch::<ThemeContent>(room, THEME, ""),
         fetch::<NicknamesContent>(room, NICKNAMES, ""),
+        crate::disappearing::read(room),
+        fetch::<CountdownsContent>(room, COUNTDOWNS, ""),
     );
     let log = |what: &str, e: &Error| warn!("couldn't read the chat's {what}: {e}");
     let can_edit = match room.power_levels().await {
@@ -186,6 +247,17 @@ async fn chat_style(room: &Room) -> ChatStyle {
             .ok()
             .flatten()
             .map(|c| c.nicknames)
+            .unwrap_or_default(),
+        disappearing: disappearing.ok().flatten(),
+        countdowns: countdowns
+            .ok()
+            .flatten()
+            .map(|c| {
+                c.items
+                    .into_iter()
+                    .filter(|c| valid_date(&c.date))
+                    .collect()
+            })
             .unwrap_or_default(),
         can_edit,
     }
@@ -233,4 +305,15 @@ async fn set_own_room_name(room: &Room, nickname: Option<String>) -> Result<()> 
     room.send_state_event_raw("m.room.member", me.as_str(), Value::Object(member))
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod countdown_tests {
+    #[test]
+    fn dates() {
+        assert!(super::valid_date("2026-11-03"));
+        assert!(!super::valid_date("2026-13-03"));
+        assert!(!super::valid_date("3 nov"));
+        assert!(!super::valid_date("2026-1-3"));
+    }
 }

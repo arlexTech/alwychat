@@ -40,6 +40,8 @@ pub struct RoomSummary {
     pub is_dm: bool,
     /// The other person of a 1:1 chat (for the nickname shown as its title).
     pub dm_user: Option<String>,
+    /// The chat has its own name (a 1:1 chat named by its people, shown instead of nicknames).
+    pub has_name: bool,
     /// People in the room's call right now (MatrixRTC), for call badges and voice channels.
     pub in_call: Vec<CallMember>,
     /// A voice channel (Element Call "video room"): opening it joins the call.
@@ -122,28 +124,59 @@ pub(crate) async fn stream_chat_list(
         Box::new(new_filter_deduplicate_versions()),
     ])));
 
+    let (fill, to_fill) = tokio::sync::mpsc::unbounded_channel();
     let mut mapper = Mapper {
         client,
         listened: HashSet::new(),
+        fill,
     };
-    let mut stream = std::pin::pin!(stream);
-    while let Some(diffs) = stream.next().await {
-        let mut out = Vec::with_capacity(diffs.len());
-        for diff in diffs {
-            out.push(mapper.diff(diff).await);
+    let list = async move {
+        let mut stream = std::pin::pin!(stream);
+        while let Some(diffs) = stream.next().await {
+            let mut out = Vec::with_capacity(diffs.len());
+            for diff in diffs {
+                out.push(mapper.diff(diff).await);
+            }
+            if let Some(ListDiff::Reset { values }) = out.first() {
+                tracing::debug!(rooms = values.len(), "chat list reset");
+            }
+            sink(out);
         }
-        if let Some(ListDiff::Reset { values }) = out.first() {
-            tracing::debug!(rooms = values.len(), "chat list reset");
-        }
-        sink(out);
-    }
+    };
+    futures_util::future::join(list, fill_latest_events(to_fill)).await;
     Ok(())
 }
+
+/// Chats are sorted by their latest message, computed from the messages cached for them: a
+/// chat with none cached (quiet since the cache was made) would sink to the bottom of the list
+/// until opened. Load one page of its history in the background instead, one chat at a time.
+async fn fill_latest_events(mut rooms: tokio::sync::mpsc::UnboundedReceiver<Room>) {
+    while let Some(room) = rooms.recv().await {
+        // Give the SDK a moment to compute it from what is cached.
+        crate::rt::sleep(std::time::Duration::from_millis(300)).await;
+        if !matches!(room.latest_event(), LatestEventValue::None) {
+            continue;
+        }
+        match room.event_cache().await {
+            Ok((cache, _handles)) => {
+                if let Err(e) = cache.pagination().run_backwards_once(FILL_EVENTS).await {
+                    warn!(room = %room.room_id(), "can't load its latest messages: {e}");
+                }
+            }
+            Err(e) => warn!(room = %room.room_id(), "no event cache: {e}"),
+        }
+    }
+}
+
+/// Events loaded for a chat without a known latest message.
+const FILL_EVENTS: u16 = 20;
 
 struct Mapper {
     client: Client,
     /// Rooms whose latest event we asked the SDK to compute (it's lazy).
     listened: HashSet<matrix_sdk::ruma::OwnedRoomId>,
+    /// Joined rooms without a latest event, to load a page of history for.
+    fill: tokio::sync::mpsc::UnboundedSender<Room>,
 }
 
 impl Mapper {
@@ -196,6 +229,11 @@ impl Mapper {
         {
             warn!(room = %room.room_id(), "can't compute latest event: {e}");
         }
+        if room.state() == RoomState::Joined
+            && matches!(room.latest_event(), LatestEventValue::None)
+        {
+            let _ = self.fill.send(room.clone());
+        }
         summarize(room).await
     }
 }
@@ -223,6 +261,7 @@ async fn summarize(room: &Room) -> RoomSummary {
         name,
         avatar,
         is_dm,
+        has_name: room.name().is_some_and(|n| !n.trim().is_empty()),
         dm_user: is_dm
             .then(|| {
                 room.direct_targets()

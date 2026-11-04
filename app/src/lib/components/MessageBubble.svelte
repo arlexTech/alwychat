@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { viewOnce } from "$lib/stores/viewOnce.svelte";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import FileText from "@lucide/svelte/icons/file-text";
   import Download from "@lucide/svelte/icons/download";
@@ -6,6 +7,8 @@
   import PinOff from "@lucide/svelte/icons/pin-off";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Forward from "@lucide/svelte/icons/forward";
+  import SquareCheck from "@lucide/svelte/icons/square-check";
+  import MediaImage from "./MediaImage.svelte";
   import History from "@lucide/svelte/icons/history";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SmilePlus from "@lucide/svelte/icons/smile-plus";
@@ -21,7 +24,7 @@
   import MapPin from "@lucide/svelte/icons/map-pin";
   import { liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { clockTime, messageStamp } from "$lib/format";
-  import { eventMediaUrl } from "$lib/media";
+  import { eventMediaUrl, mediaUrl } from "$lib/media";
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
   import VoicePlayer from "./VoicePlayer.svelte";
@@ -51,6 +54,7 @@
     onLongPress,
     onThread,
     onForward,
+    onSelect,
     album = null,
     wide = false,
   }: {
@@ -80,6 +84,8 @@
     onThread?: () => void;
     /** Forward to another chat (absent when the message can't be forwarded). */
     onForward?: () => void;
+    /** Start selecting several messages, this one first. */
+    onSelect?: () => void;
     /** Whether it's pinned; null when we can't pin in this chat. */
     pinned?: boolean | null;
     onPin?: (pin: boolean) => void;
@@ -95,6 +101,10 @@
   const ALBUM_CELLS = 4;
   const albumMedia = $derived(
     (album ?? []).flatMap((m) => (m.content.kind === "image" ? [m.content.media] : [])),
+  );
+  /** Album photos' blurry previews, by media key. */
+  const albumBlur = $derived(
+    new Map((album ?? []).flatMap((m) => (m.content.kind === "image" ? [[m.content.media, m.content.blurhash] as const] : []))),
   );
   /** Read receipts sit under the album's last photo. */
   const seenBy = $derived(album?.at(-1)?.seen_by ?? msg.seen_by);
@@ -146,20 +156,43 @@
   });
 
   /** Sanitised HTML from the core, when the message has a formatted version. */
-  const html = $derived("html" in c ? c.html : null);
+  // Custom emoji (MSC2545) come as <img src="mxc://…">: loaded from the homeserver through the
+  // app's media protocol (the core only lets mxc:// images through).
+  // The SDK's own clean-up drops the `data-mx-emoticon` marker: an image whose alt text is
+  // ":name:" is a custom emoji too (that's how they're written everywhere).
+  const html = $derived(
+    "html" in c && c.html
+      ? c.html
+          .replace(/<img(?![^>]*data-mx-emoticon)(?=[^>]*\balt=":[\p{L}\p{N}_-]+:")/gu, "<img data-mx-emoticon")
+          .replace(/src="(mxc:\/\/[^"]+)"/g, (_, mxc: string) => `src="${mediaUrl(mxc, 96) ?? ""}" loading="lazy"`)
+      : null,
+  );
+  /** Only custom emoji (and spaces): shown big, like a message of emoji. */
+  const onlyCustomEmoji = $derived(
+    !!html && html.includes("data-mx-emoticon") && !html.replace(/<img[^>]*>/g, "").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, "").trim(),
+  );
 
   /** Preview box for photos/videos/stickers, keeping the aspect ratio. */
   const box = $derived.by(() => {
     if (album && album.length > 1) return { w: PREVIEW_MAX, h: albumMedia.length === 2 ? PREVIEW_MAX / 2 : PREVIEW_MAX };
     if (c.kind !== "image" && c.kind !== "video" && c.kind !== "sticker") return null;
     const max = c.kind === "sticker" ? 160 : PREVIEW_MAX;
-    const w = c.width ?? 4;
-    const h = c.height ?? 3;
-    const k = Math.min(1, max / Math.max(w, h));
+    // Without a size in the message (HEIC photos, some apps), the photo's own size once loaded;
+    // until then a full-width 4:3 box (never the tiny 4×3 px "photo" it used to assume).
+    const w0 = c.width ?? natural?.w ?? 4000;
+    const h0 = c.height ?? natural?.h ?? 3000;
+    // Very long screenshots and panoramas aren't drawn as thin strips: like Messenger, the
+    // bubble keeps between 2.5:1 and 1:2.5 and crops the rest (the viewer shows it whole).
+    const ratio = Math.min(2.5, Math.max(0.4, w0 / h0));
+    const w = ratio >= 1 ? max : max * ratio;
+    const h = ratio >= 1 ? max / ratio : max;
+    // Small images (stickers, icons) aren't blown up past their own size.
+    const k = Math.min(1, Math.max(w0, h0) / max);
     return { w: Math.max(80, Math.round(w * k)), h: Math.max(60, Math.round(h * k)) };
   });
   let mediaLoaded = $state(false);
-  let mediaFailed = $state(false);
+  /** The loaded photo's size (used when the message doesn't give one). */
+  let natural = $state<{ w: number; h: number } | null>(null);
 
   // Links open in the browser; spoilers reveal on click.
   function onTextClick(event: MouseEvent) {
@@ -179,17 +212,18 @@
   }
 
   const muted = $derived(["redacted", "unable_to_decrypt", "unsupported"].includes(c.kind));
-  const big = $derived(msg.only_emojis && c.kind === "text" && !msg.reply_to);
-  /** Photos, videos, albums and stickers are drawn without a bubble background. */
+  const big = $derived((msg.only_emojis || onlyCustomEmoji) && c.kind === "text" && !msg.reply_to);
+  /** Photos, videos, albums and stickers are drawn without a bubble background (not a
+   * view-once one: it's an envelope in a bubble). */
   const bare = $derived(
-    ((c.kind === "image" || c.kind === "video") && !text && !msg.reply_to) || c.kind === "sticker",
+    ((c.kind === "image" || c.kind === "video") && !c.view_once && !text && !msg.reply_to) || c.kind === "sticker",
   );
   const remote = $derived(msg.item_id.startsWith("$"));
   const canReact = $derived(!muted && remote);
   const albumSize = $derived(album && album.length > 1 ? album.length : 0);
   const canSaveToGallery = $derived(albumSize > 0 || ((c.kind === "image" || c.kind === "video") && !muted));
   const hasMenu = $derived(
-    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || !!onForward || (!!onThread && remote && msg.can_reply),
+    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || !!onForward || !!onSelect || (!!onThread && remote && msg.can_reply),
   );
 
   // Right-click (desktop) or long-press (touch) opens the same menu as ⋯.
@@ -385,13 +419,31 @@
           <div class="album" class:two={albumMedia.length === 2} class:three={albumMedia.length === 3} style:width="{box?.w}px" style:aspect-ratio="{box?.w} / {box?.h}">
             {#each albumMedia.slice(0, ALBUM_CELLS) as media, i (media)}
               <button class="cell" onclick={() => afterTap(() => onOpenMedia(i))} aria-label={tr("Open photo {value} of {length}", { value: i + 1, length: albumMedia.length })}>
-                <img src={eventMediaUrl(media, true)} alt="" decoding="async" loading="lazy" />
+                <MediaImage src={eventMediaUrl(media, true)} blurhash={albumBlur.get(media)} lazy />
                 {#if i === ALBUM_CELLS - 1 && albumMedia.length > ALBUM_CELLS}
                   <span class="more">+{albumMedia.length - ALBUM_CELLS}</span>
                 {/if}
               </button>
             {/each}
           </div>
+        {:else if (c.kind === "image" || c.kind === "video") && c.view_once}
+          {@const opened = viewOnce.opened.has(msg.item_id)}
+          <button
+            class="view-once"
+            class:closed={msg.is_own || opened}
+            disabled={msg.is_own || opened || !!msg.send_state}
+            onclick={() => afterTap(() => onOpenMedia(0))}
+          >
+            <span class="once-icon">1</span>
+            <span class="file-meta">
+              <strong>{c.kind === "video" ? tr("Video") : tr("Photo")}</strong>
+              <small>
+                {#if msg.is_own}{tr("View once · deleted when opened")}
+                {:else if opened}{tr("Opened")}
+                {:else}{tr("View once · tap to open")}{/if}
+              </small>
+            </span>
+          </button>
         {:else if box && (c.kind === "image" || c.kind === "video" || c.kind === "sticker")}
           <button
             class="media"
@@ -401,15 +453,12 @@
             onclick={() => c.kind !== "sticker" && afterTap(() => onOpenMedia(0))}
             aria-label={c.kind === "video" ? tr("Play video") : c.kind === "image" ? tr("Open photo") : c.body}
           >
-            {#if mediaFailed}
-              <span class="media-error">{tr("{value} Couldn't load", { value: c.kind === "video" ? "🎬" : "📷" })}</span>
-            {:else if c.kind !== "video" || c.has_thumbnail}
-              <img
+            {#if c.kind !== "video" || c.has_thumbnail}
+              <MediaImage
                 src={eventMediaUrl(c.media, true)}
+                blurhash={"blurhash" in c ? c.blurhash : null}
                 alt={c.kind === "sticker" ? c.body : ""}
-                decoding="async"
-                onload={() => (mediaLoaded = true)}
-                onerror={() => (mediaFailed = true)}
+                onload={(w, h) => ((mediaLoaded = true), (natural = { w, h }))}
               />
             {/if}
             {#if c.kind === "video"}
@@ -520,6 +569,7 @@
             <button onclick={() => pick(onThread)}><MessagesSquare size={16} />{tr("Reply in thread")}</button>
           {/if}
           {#if onForward}<button onclick={() => pick(onForward)}><Forward size={16} />{tr("Forward")}</button>{/if}
+          {#if onSelect}<button onclick={() => pick(onSelect)}><SquareCheck size={16} />{tr("Select")}</button>{/if}
           {#if msg.can_edit}<button onclick={() => pick(onEdit)}><Pencil size={16} />{tr("Edit")}</button>{/if}
           {#if msg.is_edited && remote}<button onclick={() => pick(onHistory)}><History size={16} />{tr("Edit history")}</button>{/if}
           {#if msg.can_delete}<button class="danger" onclick={() => pick(onDelete)}><Trash2 size={16} />{tr("Delete")}</button>{/if}
@@ -641,6 +691,7 @@
     background: var(--incoming, var(--surface-2));
     overflow-wrap: anywhere;
     line-height: 1.35;
+    -webkit-user-select: text;
     user-select: text;
     touch-action: pan-y;
     transition:
@@ -961,6 +1012,19 @@
     padding: 0;
     background: none;
   }
+  /* Custom emoji sit in the text like emoji; other inline images stay small. */
+  .text :global(img[data-mx-emoticon]) {
+    height: 1.5em;
+    width: auto;
+    max-width: 6em;
+    vertical-align: -0.35em;
+    object-fit: contain;
+  }
+  .text :global(img:not([data-mx-emoticon])) {
+    max-width: 100%;
+    max-height: 240px;
+    border-radius: 8px;
+  }
   .bubble.has-media:not(.bare) {
     padding: 4px;
   }
@@ -983,35 +1047,8 @@
     background: var(--surface-hover);
     cursor: pointer;
   }
-  .media:not(.loaded) {
-    background: linear-gradient(90deg, var(--surface-2), var(--surface-hover), var(--surface-2));
-    background-size: 200% 100%;
-    animation: shimmer 1.2s infinite linear;
-  }
-  @keyframes shimmer {
-    to {
-      background-position: -200% 0;
-    }
-  }
-  .media img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    opacity: 0;
-    transition: opacity 0.25s var(--ease);
-  }
-  .media.loaded img {
-    opacity: 1;
-  }
   .bare .media {
     background-color: transparent;
-  }
-  .media-error {
-    display: grid;
-    place-items: center;
-    height: 100%;
-    font-size: 0.85rem;
-    color: var(--muted);
   }
   .play {
     position: absolute;
@@ -1246,7 +1283,7 @@
     cursor: pointer;
     overflow: hidden;
   }
-  .cell img {
+  .cell :global(img) {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -1254,7 +1291,7 @@
     object-fit: cover;
     transition: transform 0.2s var(--ease);
   }
-  .cell:hover img {
+  .cell:hover :global(img) {
     transform: scale(1.04);
   }
   .more {
@@ -1312,5 +1349,35 @@
       user-select: none;
       -webkit-touch-callout: none;
     }
+  }
+  .view-once {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 200px;
+    padding: 10px 14px;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .view-once:disabled {
+    cursor: default;
+  }
+  .once-icon {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 2px dashed currentColor;
+    font-weight: 700;
+  }
+  .view-once.closed .once-icon {
+    border-style: solid;
+    opacity: 0.6;
   }
 </style>
