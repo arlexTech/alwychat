@@ -70,6 +70,16 @@ if $test; then
   export CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 fi
 version="0.1.$patch"
+# A test build installs over the app on the phone, which may come from GitHub's beta (versions
+# 0.2.<build>, above every 0.1.x published here): then it takes that version instead, so it
+# installs over it and GitHub's next build still updates it.
+if $test; then
+  beta=$(curl -fsSL --max-time 10 https://github.com/arlexTech/alwychat/releases/download/beta/latest-android.json 2>/dev/null |
+    python3 -c "import json,sys; print(json.load(sys.stdin)['version'])" 2>/dev/null || true)
+  if [ -n "$beta" ] && python3 -c "import sys; t=lambda v: tuple(map(int, v.split('.'))); sys.exit(0 if t(sys.argv[1]) > t(sys.argv[2]) else 1)" "$beta" "$version"; then
+    version=$beta
+  fi
+fi
 [ -n "$notes" ] || notes="AlwyChat $version ($commit)"
 config="{\"version\":\"$version\"}"
 echo "Building $version ($commit)"

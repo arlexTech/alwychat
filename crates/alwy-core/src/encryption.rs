@@ -554,7 +554,14 @@ impl crate::Core {
         request
             .start_sas()
             .await
-            .map_err(|e| Error::Encryption(e.to_string()))?;
+            .map_err(|e| Error::Encryption(e.to_string()))?
+            // Not started (the request isn't at a stage where emoji can begin): say so instead
+            // of a button that does nothing.
+            .ok_or_else(|| {
+                Error::Encryption(
+                    "the other device isn't ready for emoji yet, try again in a moment".into(),
+                )
+            })?;
         Ok(())
     }
 

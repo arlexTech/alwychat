@@ -1001,5 +1001,8 @@
   "The app gets notifications even when it's closed, and updates itself.": "L'app reçoit les notifications même fermée, et se met à jour toute seule.",
   "Not now": "Plus tard",
   "Apps": "Applications",
-  "All downloads": "Tous les téléchargements"
+  "All downloads": "Tous les téléchargements",
+  "Verification stopped": "Vérification arrêtée",
+  "Verified ✨": "Vérifié ✨",
+  "Your other device is verified: it can now read your encrypted messages.": "Ton autre appareil est vérifié : il peut maintenant lire tes messages chiffrés."
 }

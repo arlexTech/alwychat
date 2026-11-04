@@ -10,6 +10,9 @@ import {
 class Encryption {
   status = $state<EncryptionStatus | null>(null);
   verification = $state<VerificationUpdate | null>(null);
+  /** The verification on screen was asked for by another device: we're vouching for it (we
+   * were already verified), not being verified. */
+  helping = $state(false);
   /** The unlock sheet is open. */
   sheetOpen = $state(false);
 
@@ -32,8 +35,11 @@ class Encryption {
       (status) => (this.status = status),
       (update) => {
         this.verification = update;
-        // Another device asked to verify us: bring the sheet up.
-        if (update.state === "incoming") this.sheetOpen = true;
+        if (update.state === "incoming") {
+          // Another device asked to verify: bring the sheet up.
+          this.helping = !this.locked;
+          this.sheetOpen = true;
+        } else if (update.state === "requested") this.helping = false;
       },
     );
     // Phones have a camera to scan the other device's code; computers rarely, they show theirs.

@@ -251,7 +251,7 @@ impl Core {
             return Ok(Some(account(&client).await));
         }
         let path = self.data_dir.join(SESSION_FILE);
-        let mut stored: StoredSession = match crate::files::read(&path).await {
+        let mut stored: StoredSession = match crate::files::read_sealed(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
@@ -276,14 +276,14 @@ impl Core {
         let store_dir = stored.store_dir.clone();
         if store_dir.contains(['/', '\\']) || store_dir.contains("..") {
             warn!("unexpected store folder in session file, discarding it");
-            crate::files::remove_file(&path).await?;
+            crate::files::remove_sealed(&path).await?;
             return Ok(None);
         }
         // (In a browser the store is IndexedDB, which can't be looked at synchronously.)
         #[cfg(not(target_family = "wasm"))]
         if !self.data_dir.join(&store_dir).join(CRYPTO_DB).exists() {
             warn!("session file without encryption store, discarding it");
-            crate::files::remove_file(&path).await?;
+            crate::files::remove_sealed(&path).await?;
             return Ok(None);
         }
 
@@ -695,7 +695,7 @@ impl Core {
         #[cfg(not(target_family = "wasm"))]
         self.remove_store_dirs().await?;
         // The previous session's keychain entry.
-        if let Ok(bytes) = crate::files::read(self.data_dir.join(SESSION_FILE)).await
+        if let Ok(bytes) = crate::files::read_sealed(&self.data_dir.join(SESSION_FILE)).await
             && let Ok(old) = serde_json::from_slice::<StoredSession>(&bytes)
         {
             let account = keychain_account(&old.user);
@@ -703,7 +703,7 @@ impl Core {
         }
         // A new sign-in starts without the previous person's app lock.
         self.set_app_lock(None).await?;
-        match crate::files::remove_file(self.data_dir.join(SESSION_FILE)).await {
+        match crate::files::remove_sealed(&self.data_dir.join(SESSION_FILE)).await {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
         }
@@ -791,7 +791,7 @@ fn persist(path: &Path, client: &Client, passphrase: &str, store_dir: &str) -> s
             refresh_token: None,
         };
     }
-    crate::files::write_private_now(path, &serde_json::to_vec(&stored).expect("serializable"))
+    crate::files::write_sealed(path, &serde_json::to_vec(&stored).expect("serializable"))
         .inspect_err(|e| {
             warn!("couldn't save session: {e}");
         })

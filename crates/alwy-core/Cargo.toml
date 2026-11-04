@@ -47,6 +47,8 @@ matrix-sdk = { workspace = true, features = ["indexeddb", "js"] }
 matrix-sdk-ui = { workspace = true, features = ["js"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 wasm-bindgen = "0.2"
+# Sealing the web session (src/web/sealed.js is async).
+wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
 
 [lints]

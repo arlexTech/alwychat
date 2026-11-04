@@ -117,6 +117,20 @@
   {:else if v?.state === "confirmed"}
     <h2 id="unlock-title">{tr("Waiting for your other device…")}</h2>
     <div class="spinner"></div>
+  {:else if v?.state === "cancelled" && !encryption.locked}
+    <!-- Before "all set": on an already verified device, a stopped verification fell through to
+         it and looked like success. -->
+    <h2 id="unlock-title">{tr("Verification stopped")}</h2>
+    <p>{v.reason}</p>
+    <div class="buttons">
+      <button class="primary" onclick={close}>{tr("Close")}</button>
+    </div>
+  {:else if v?.state === "done" && encryption.helping}
+    <h2 id="unlock-title">{tr("Verified ✨")}</h2>
+    <p>{tr("Your other device is verified: it can now read your encrypted messages.")}</p>
+    <div class="buttons">
+      <button class="primary" onclick={close}>{tr("Done")}</button>
+    </div>
   {:else if v?.state === "done" || (status && !encryption.locked && !encryption.backupMissing)}
     <h2 id="unlock-title">{tr("You're all set ✨")}</h2>
     <p>{tr("This device is verified. Older messages will unlock as their keys arrive.")}</p>

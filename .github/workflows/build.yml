@@ -67,7 +67,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest${PLATFORM:+-$PLATFORM}.json"
           elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
-            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
+            version="0.2.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
           else
             exit 0
           fi
@@ -182,7 +182,7 @@ jobs:
           fi
           gh release view beta >/dev/null 2>&1 || gh release create beta --prerelease --title "Beta" --notes "Building…"
           py=$(command -v python3 || command -v python)
-          "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}" "$PLATFORM"
+          "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.2.${{ github.run_number }}" "Beta 0.2.${{ github.run_number }}" "$PLATFORM"
           gh release upload beta out/* --clobber
 
   android:
@@ -209,7 +209,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest${PLATFORM:+-$PLATFORM}.json"
           elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
-            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
+            version="0.2.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
           else
             exit 0
           fi
@@ -314,7 +314,7 @@ jobs:
           gh release delete beta --yes || true
           gh release create beta --prerelease --title "Beta" --notes "Building…"
           py=$(command -v python3 || command -v python)
-          "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}" "$PLATFORM"
+          "$py" .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.2.${{ github.run_number }}" "Beta 0.2.${{ github.run_number }}" "$PLATFORM"
           gh release upload beta out/* --clobber
 
   web:
@@ -332,7 +332,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"; feed="$repo/latest/download/latest${PLATFORM:+-$PLATFORM}.json"
           elif [[ "$GITHUB_REF" == refs/heads/beta ]]; then
-            version="0.1.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
+            version="0.2.${{ github.run_number }}"; feed="$repo/download/beta/latest${PLATFORM:+-$PLATFORM}.json"
           else
             exit 0
           fi
@@ -441,7 +441,7 @@ jobs:
           path: out
           merge-multiple: true
       - name: Combined manifest
-        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.1.${{ github.run_number }}" "Beta 0.1.${{ github.run_number }}"
+        run: python3 .github/scripts/update-manifest.py out "https://github.com/${{ github.repository }}/releases/download/beta" "0.2.${{ github.run_number }}" "Beta 0.2.${{ github.run_number }}"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -452,4 +452,4 @@ jobs:
           if [ -f out/AlwyChat-web.zip ]; then upload+=(out/AlwyChat-web.zip); fi
           gh release upload beta "${upload[@]}" --clobber
           gh release edit beta --prerelease --title "Beta (updates itself)" \
-            --notes "Version 0.1.${{ github.run_number }}, built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): every change as soon as it's made. Installed from a -autoupdate file, AlwyChat updates itself to each new build."
+            --notes "Version 0.2.${{ github.run_number }}, built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): every change as soon as it's made. Installed from a -autoupdate file, AlwyChat updates itself to each new build."
