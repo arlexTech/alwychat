@@ -3,7 +3,9 @@
 # Every push to the `beta` branch updates the rolling `beta` pre-release (the README's Beta
 # columns, releases/download/beta/<name>): each platform publishes its files and its own update
 # manifest (latest-<platform>.json) as soon as it's built, in this order: Android, Linux,
-# Windows, macOS (each waits for the previous one's job, never for a slower platform's build).
+# Windows (each waits for the previous one's job, never for a slower platform's build).
+# No macOS build any more (2026-11-05): macOS runners are the costly ones; the steps below still
+# know macOS, so it can come back as a matrix entry.
 # The combined latest.json comes last. Secrets TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] sign the
 # desktop updates; Android checks its own signing key.
 #
@@ -41,12 +43,6 @@ jobs:
             os: windows-latest
             platform: windows
             after: Linux
-          - name: macOS
-            os: macos-latest
-            platform: macos
-            after: Windows
-            args: --target universal-apple-darwin
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write

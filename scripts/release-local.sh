@@ -152,9 +152,13 @@ skip_ui='"build":{"beforeBuildCommand":""}'
 # make the builds wait for each other. Linux keeps the usual target/ (shared with dev builds).
 split="$root/target/split"
 
+# Test builds update from GitHub's beta (like the apps everyone installs), not from this folder.
+android_feed="$RELEASE_URL/latest-android.json"
+$test && android_feed="https://github.com/arlexTech/alwychat/releases/download/beta/latest-android.json"
+
 build_android() {
   rm -rf src-tauri/gen/android/app/build/outputs/apk
-  CARGO_TARGET_DIR="$split/android" ALWY_UPDATE_FEED="$RELEASE_URL/latest-android.json" \
+  CARGO_TARGET_DIR="$split/android" ALWY_UPDATE_FEED="$android_feed" \
     pnpm tauri android build --apk --target aarch64 --config "{\"version\":\"$version\",$skip_ui}"
   cp "$(find src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)" "$out/alwychat-$version-$commit.apk"
 }

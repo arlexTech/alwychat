@@ -17,7 +17,7 @@ Find your device in the table and click the file next to it.
 | 🐧 **Linux**, Debian / Ubuntu / Mint | [.deb](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-amd64.deb) | [.deb](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-amd64-autoupdate.deb) | [.deb](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-amd64.deb) | [.deb](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-amd64-autoupdate.deb) |
 | 🐧 **Linux**, Fedora / openSUSE | [.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) | [.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64-autoupdate.rpm) | [.rpm](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64.rpm) | [.rpm](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64-autoupdate.rpm) |
 | 🪟 **Windows** 10 / 11 | Not yet | Not yet | [.exe](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-windows-x64-setup.exe) | [.exe](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-windows-x64-autoupdate-setup.exe) |
-| 🍏 **macOS** | Not yet | Not yet | [.dmg](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-macos.dmg) | [.dmg](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-macos-autoupdate.dmg) |
+| 🍏 **macOS** | Not yet | Not yet | Not yet | Not yet |
 | 🍎 **iPhone / iPad** | Not yet | Not yet | Not yet | Not yet |
 
 🌐 **Web browser**: AlwyChat also runs in a browser, hosted on your own server. See [how to host it](#web-version).

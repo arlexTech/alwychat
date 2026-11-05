@@ -4,10 +4,9 @@
 
 name: iOS
 
+# Only when started by hand (Actions → iOS → Run workflow): it needs a macOS runner, the
+# costly kind, so it no longer runs on every push (2026-11-05).
 on:
-  push:
-    branches: [main, ios-ci]
-    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:
