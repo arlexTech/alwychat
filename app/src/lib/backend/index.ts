@@ -901,6 +901,18 @@ export const setArchived = (roomId: string, archived: boolean) =>
   invoke<void>("set_archived", { roomId, archived });
 export const setMuted = (roomId: string, muted: boolean) =>
   invoke<void>("set_muted", { roomId, muted });
+/** Timed mutes (room → end, ms) and muted spaces (see core mutes.rs). */
+export interface Mutes {
+  rooms: Record<string, number>;
+  spaces: Record<string, { until: number | null; rooms: string[] }>;
+}
+export const getMutes = () => invoke<Mutes>("mutes");
+export const applyMutes = () => invoke<Mutes>("apply_mutes");
+/** `until`: ms since 1970, or null = until turned back on. */
+export const muteRoom = (roomId: string, until: number | null) => invoke<void>("mute_room", { roomId, until });
+export const unmuteRoom = (roomId: string) => invoke<void>("unmute_room", { roomId });
+export const muteSpace = (spaceId: string, until: number | null) => invoke<void>("mute_space", { spaceId, until });
+export const unmuteSpace = (spaceId: string) => invoke<void>("unmute_space", { spaceId });
 export const setMarkedUnread = (roomId: string, unread: boolean) =>
   invoke<void>("set_marked_unread", { roomId, unread });
 

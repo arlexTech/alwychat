@@ -24,6 +24,7 @@ pub mod links;
 pub mod manage;
 pub mod media;
 pub mod mentions;
+pub mod mutes;
 pub mod names;
 pub mod notifications;
 pub mod pins;

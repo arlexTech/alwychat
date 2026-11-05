@@ -174,6 +174,11 @@
     items={visual.map((i) => ({ media: i.media!, kind: i.kind as "image" | "video", caption: null }))}
     index={viewer}
     onClose={() => (viewer = null)}
+    onShow={(i) => {
+      const id = visual[i]?.event_id;
+      viewer = null;
+      if (id) onShow(id);
+    }}
   />
 {/if}
 {#if fileFor}

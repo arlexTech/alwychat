@@ -107,7 +107,7 @@ fn child(room: SpaceRoom) -> SpaceChild {
 }
 
 impl crate::Core {
-    async fn space_service(&self) -> Result<Arc<SpaceService>> {
+    pub(crate) async fn space_service(&self) -> Result<Arc<SpaceService>> {
         if let Some(service) = self.with_active(|a| a.spaces.clone())? {
             return Ok(service);
         }

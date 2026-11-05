@@ -35,6 +35,15 @@ export function shortTime(ms: number | null | undefined, now = Date.now()): stri
   return fullDate.format(d);
 }
 
+/** When something ends (a mute): 14:30 · Fri 14:30 · 12 Mar 14:30. */
+export function laterTime(ms: number, now = Date.now()): string {
+  const d = new Date(ms);
+  const t = time.format(d);
+  if (d.toDateString() === new Date(now).toDateString()) return t;
+  if (ms - now < 6 * 86_400_000) return `${weekday.format(d)} ${t}`;
+  return `${date.format(d)} ${t}`;
+}
+
 /** Two-letter initials for avatar fallbacks. */
 export function initials(name: string): string {
   const words = name.replace(/^[@#!]/, "").trim().split(/\s+/).filter(Boolean);

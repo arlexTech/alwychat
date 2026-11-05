@@ -1,4 +1,7 @@
 <script lang="ts">
+  import MuteChooser from "./MuteChooser.svelte";
+  import { mutes } from "$lib/stores/mutes.svelte";
+  import { laterTime } from "$lib/format";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import Bell from "@lucide/svelte/icons/bell";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -146,6 +149,14 @@
     world_readable: tr("Anyone"),
   };
   const kind = $derived(room.is_space ? "space" : room.is_dm ? "chat" : "group");
+
+  /** "Off" asks for how long. */
+  let muting = $state(false);
+  /** Another mode ends a timed mute first (its end would otherwise switch it back later). */
+  async function notifyMode(mode: "default" | "all" | "mentions") {
+    if (mutes.roomUntil(room.id)) await mutes.unmuteRoom(room.id);
+    await setNotifyMode(room.id, mode);
+  }
 </script>
 
 {#if part === "header"}
@@ -222,15 +233,19 @@
   {#if (all || part === "notify") && !room.is_space}
     {#if all}<h3 class="m-section">{tr("Notifications")}</h3>{/if}
     <div class="m-seg">
-      <button class:on={!room.notify_custom} onclick={() => act(() => setNotifyMode(room.id, "default"))}>{tr("Default")}</button>
-      <button class:on={room.notify_custom && room.notify === "all"} onclick={() => act(() => setNotifyMode(room.id, "all"))}>{tr("All")}</button>
-      <button class:on={room.notify_custom && room.notify === "mentions"} onclick={() => act(() => setNotifyMode(room.id, "mentions"))}>{tr("Mentions")}</button>
-      <button class:on={room.notify_custom && room.notify === "mute"} onclick={() => act(() => setNotifyMode(room.id, "mute"))}>{tr("Off")}</button>
+      <button class:on={!room.notify_custom} onclick={() => act(() => notifyMode("default"))}>{tr("Default")}</button>
+      <button class:on={room.notify_custom && room.notify === "all"} onclick={() => act(() => notifyMode("all"))}>{tr("All")}</button>
+      <button class:on={room.notify_custom && room.notify === "mentions"} onclick={() => act(() => notifyMode("mentions"))}>{tr("Mentions")}</button>
+      <button class:on={room.notify_custom && room.notify === "mute"} onclick={() => (muting = true)}>{tr("Off")}</button>
     </div>
+    {@const until = mutes.roomUntil(room.id)}
     <p class="m-hint"><Bell size={12} />
-      {room.notify === "all" ? tr("Every message notifies you.") : room.notify === "mentions" ? tr("Only mentions and your keywords notify you.") : tr("No notifications or unread badge.")}
+      {room.notify === "all" ? tr("Every message notifies you.") : room.notify === "mentions" ? tr("Only mentions and your keywords notify you.") : until ? tr("No notifications or unread badge until {time}.", { time: laterTime(until) }) : tr("No notifications or unread badge.")}
       {#if !room.notify_custom}{tr("(Your default for {value}.)", { value: room.is_dm ? "1:1 chats" : "groups" })}{/if}
     </p>
+    {#if muting}
+      <MuteChooser title={tr("Mute {name}", { name: room.name })} onPick={(until) => act(() => mutes.muteRoom(room.id, until))} onClose={() => (muting = false)} />
+    {/if}
   {/if}
 
   {#if (all || part === "privacy") && !room.is_dm}

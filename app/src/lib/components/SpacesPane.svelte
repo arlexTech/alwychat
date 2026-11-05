@@ -1,10 +1,15 @@
 <script lang="ts">
   import { tr, trn } from "$lib/i18n/index.svelte";
   import { onDestroy } from "svelte";
-  import { fly } from "svelte/transition";
+  import { fade, fly } from "svelte/transition";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Settings from "@lucide/svelte/icons/settings";
+  import Bell from "@lucide/svelte/icons/bell";
+  import BellOff from "@lucide/svelte/icons/bell-off";
+  import MuteChooser from "./MuteChooser.svelte";
+  import { mutes } from "$lib/stores/mutes.svelte";
+  import { laterTime } from "$lib/format";
   import Plus from "@lucide/svelte/icons/plus";
   import Users from "@lucide/svelte/icons/users";
   import { onBack } from "$lib/back.svelte";
@@ -36,7 +41,27 @@
   import CreateRoomPage from "./CreateRoomPage.svelte";
   import { nav } from "$lib/stores/nav.svelte";
 
-  let { selectedId, onSelect }: { selectedId: string | null; onSelect: (roomId: string) => void } = $props();
+  let {
+    selectedId,
+    onSelect,
+    onRowMenu,
+  }: {
+    selectedId: string | null;
+    onSelect: (roomId: string) => void;
+    /** Right-click / long-press on a chat: the chat list's menu (pin, mute…). */
+    onRowMenu?: (event: MouseEvent, room: RoomSummary) => void;
+  } = $props();
+  /** "Mute for…" open for this space. */
+  let mutingSpace = $state<Ref | null>(null);
+  /** Long-press / right-click menu on a space (in the list, or its name when open). */
+  let spaceMenu = $state<(Ref & { x: number; y: number }) | null>(null);
+  function openSpaceMenu(event: MouseEvent, space: Ref) {
+    event.preventDefault();
+    spaceMenu = { ...space, x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 140) };
+  }
+  $effect(() => {
+    if (spaceMenu) return onBack(() => (spaceMenu = null));
+  });
 
   type Ref = { id: string; name: string; avatar: string | null };
   /** Spaces opened, outermost first (sub-spaces push onto it). */
@@ -266,11 +291,17 @@
     {/if}
     {#each spaces.list as space (space.id)}
       {@const unread = unreadIn(space.rooms)}
-      <button class="space" onclick={() => (path = [{ id: space.id, name: space.name, avatar: space.avatar }])}>
+      <button
+        class="space"
+        onclick={() => (path = [{ id: space.id, name: space.name, avatar: space.avatar }])}
+        oncontextmenu={(e) => openSpaceMenu(e, { id: space.id, name: space.name, avatar: space.avatar })}
+      >
         <Avatar name={space.name} mxc={space.avatar} size={48} square />
         <span class="text">
           <strong>{space.name}</strong>
-          <small>{trn(space.rooms.length, "{n} chat", "{n} chats")}{spaces.spaceShown(space.id) ? tr(" · also in Chats") : ""}</small>
+          <small>
+            {#if mutes.space(space.id)}<BellOff size={12} />{/if}{trn(space.rooms.length, "{n} chat", "{n} chats")}{spaces.spaceShown(space.id) ? tr(" · also in Chats") : ""}
+          </small>
         </span>
         {#if unread}<span class="badge">{unread}</span>{/if}
         <ChevronRight size={18} />
@@ -283,12 +314,15 @@
     <header>
       <button class="icon" onclick={() => (path = path.slice(0, -1))} aria-label={tr("Back")}><ChevronLeft size={22} /></button>
       <Avatar name={current.name} mxc={current.avatar} size={32} square />
-      <strong class="title">{current.name}</strong>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <strong class="title" oncontextmenu={(e) => path.length === 1 && openSpaceMenu(e, current)}>
+        {#if path.length === 1 && mutes.space(current.id)}<BellOff size={15} />{/if}{current.name}
+      </strong>
       <button class="icon" onclick={() => (settingsFor = current)} aria-label={tr("Space settings")}><Settings size={20} /></button>
     </header>
     {#if error}<p class="state error">{error}</p>{/if}
     {#each joinedChats as room (room.id)}
-      <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} />
+      <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} oncontextmenu={onRowMenu && ((e) => onRowMenu(e, room))} />
     {/each}
     {#if voiceChannels.length || canAdd}
       <h4 class="with-action">
@@ -334,7 +368,7 @@
               <ChevronRight size={18} />
             </button>
           {:else if room}
-            <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} />
+            <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} oncontextmenu={onRowMenu && ((e) => onRowMenu(e, room))} />
           {:else}
             <div class="joinable">
               <Avatar name={child.name} mxc={child.avatar} size={44} />
@@ -402,6 +436,30 @@
   </Page>
 {/if}
 
+{#if spaceMenu}
+  {@const menu = spaceMenu}
+  {@const muted = mutes.space(menu.id)}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="menu-catcher" onclick={() => (spaceMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (spaceMenu = null))}></div>
+  <div class="row-menu" style:left="{menu.x}px" style:top="{menu.y}px" transition:fade={{ duration: 100 }}>
+    {#if muted}
+      <button onclick={() => ((spaceMenu = null), void mutes.unmuteSpace(menu.id).catch((e) => (error = String(e))))}>
+        <Bell size={16} />{muted.until ? tr("Unmute space (muted until {time})", { time: laterTime(muted.until) }) : tr("Unmute space")}
+      </button>
+    {:else}
+      <button onclick={() => ((spaceMenu = null), (mutingSpace = menu))}><BellOff size={16} />{tr("Mute space…")}</button>
+    {/if}
+    <button onclick={() => ((spaceMenu = null), (settingsFor = menu))}><Settings size={16} />{tr("Space settings")}</button>
+  </div>
+{/if}
+{#if mutingSpace}
+  {@const space = mutingSpace}
+  <MuteChooser
+    title={tr("Mute the space {name}", { name: space.name })}
+    onPick={(until) => void mutes.muteSpace(space.id, until).catch((e) => (error = String(e)))}
+    onClose={() => (mutingSpace = null)}
+  />
+{/if}
 {#if settingsFor}
   {@const space = settingsFor}
   <SpaceSettingsPage
@@ -478,6 +536,7 @@
     white-space: nowrap;
   }
   .text small :global(svg) {
+    margin-right: 4px;
     vertical-align: -1px;
   }
   em {
@@ -520,6 +579,43 @@
     cursor: pointer;
   }
   .icon:hover {
+    background: var(--surface-hover);
+  }
+  .title :global(svg) {
+    margin-right: 6px;
+    color: var(--muted);
+    vertical-align: -2px;
+  }
+  .menu-catcher {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+  }
+  .row-menu {
+    position: fixed;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  }
+  .row-menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .row-menu button:hover {
     background: var(--surface-hover);
   }
   h4 {

@@ -1685,6 +1685,45 @@ async fn set_muted(
     core.set_muted(&room_id, muted).await
 }
 
+/// Timed mutes and muted spaces (see alwy_core::mutes).
+#[tauri::command]
+async fn mutes(core: State<'_, AppCore>) -> alwy_core::Result<alwy_core::mutes::Mutes> {
+    core.mutes().await
+}
+
+#[tauri::command]
+async fn apply_mutes(core: State<'_, AppCore>) -> alwy_core::Result<alwy_core::mutes::Mutes> {
+    core.apply_mutes().await
+}
+
+#[tauri::command]
+async fn mute_room(
+    core: State<'_, AppCore>,
+    room_id: String,
+    until: Option<u64>,
+) -> alwy_core::Result<()> {
+    core.mute_room(&room_id, until).await
+}
+
+#[tauri::command]
+async fn unmute_room(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<()> {
+    core.unmute_room(&room_id).await
+}
+
+#[tauri::command]
+async fn mute_space(
+    core: State<'_, AppCore>,
+    space_id: String,
+    until: Option<u64>,
+) -> alwy_core::Result<()> {
+    core.mute_space(&space_id, until).await
+}
+
+#[tauri::command]
+async fn unmute_space(core: State<'_, AppCore>, space_id: String) -> alwy_core::Result<()> {
+    core.unmute_space(&space_id).await
+}
+
 #[tauri::command]
 async fn set_marked_unread(
     core: State<'_, AppCore>,
@@ -2685,6 +2724,12 @@ pub fn run() {
             set_pinned,
             set_archived,
             set_muted,
+            mutes,
+            apply_mutes,
+            mute_room,
+            unmute_room,
+            mute_space,
+            unmute_space,
             set_marked_unread,
             close_chat,
             load_older,
@@ -3222,6 +3267,12 @@ mod android {
                 return String::new();
             }
         }
+        // A push is also the moment to end mutes whose time is up (the app may be closed).
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = core.apply_mutes().await {
+                tracing::warn!("push: mutes: {e}");
+            }
+        });
         match core.push_notification(&room_id, &event_id).await {
             Ok(Some(n)) => serde_json::to_string(&n).unwrap_or_default(),
             Ok(None) => String::new(),

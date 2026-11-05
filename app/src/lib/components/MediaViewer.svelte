@@ -9,7 +9,18 @@
   import { saveToGallery } from "$lib/save";
 
   type Item = { media: string; kind: "image" | "video"; caption: string | null };
-  let { items, index: start = 0, onClose }: { items: Item[]; index?: number; onClose: () => void } = $props();
+  let {
+    items,
+    index: start = 0,
+    onClose,
+    onShow,
+  }: {
+    items: Item[];
+    index?: number;
+    onClose: () => void;
+    /** "Show in chat" for the photo on screen (shared media: jump to its message). */
+    onShow?: (index: number) => void;
+  } = $props();
 
   // The album position starts where the user clicked, then the viewer owns it.
   let index = $state(untrack(() => start));
@@ -256,6 +267,7 @@
   </div>
 
   <div class="bar" onclick={(e) => e.stopPropagation()}>
+    {#if onShow}<button onclick={() => onShow(index)}>{tr("Show in chat")}</button>{/if}
     <button onclick={() => save(false)} disabled={saving}>{saving ? tr("Saving…") : tr("Save")}</button>
     {#if items.length > 1}
       <button onclick={() => save(true)} disabled={saving}>{tr("Save all ({length})", { length: items.length })}</button>

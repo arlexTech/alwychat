@@ -23,6 +23,8 @@ name!(MEDIA_PREFS, "room.media_prefs");
 // Global account data.
 name!(SAVED_MESSAGES, "saved_messages");
 name!(CHAT_LIST, "chat_list");
+// Timed mutes and muted spaces (mutes.rs).
+name!(MUTES, "mutes");
 // In a photo's content: the album it belongs to.
 name!(GALLERY, "gallery");
 // In a photo's or video's content: show it once (view_once.rs).

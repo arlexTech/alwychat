@@ -41,7 +41,6 @@
     systemStatus,
     setArchived,
     setMarkedUnread,
-    setMuted,
     setPinned,
     type Account,
     type Folder,
@@ -81,6 +80,9 @@
   import WifiOff from "@lucide/svelte/icons/wifi-off";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import X from "@lucide/svelte/icons/x";
+  import MuteChooser from "./MuteChooser.svelte";
+  import { mutes } from "$lib/stores/mutes.svelte";
+  import { laterTime } from "$lib/format";
   import { appOffer, nativeApp } from "$lib/nativeApp.svelte";
   import { openExternal } from "$lib/backend";
   import { pickedMediaUrl } from "$lib/media";
@@ -142,6 +144,8 @@
   });
   /** Right-click menu on a chat row. */
   let rowMenu = $state<{ room: RoomSummary; x: number; y: number } | null>(null);
+  /** "Mute for…" open for this chat. */
+  let muting = $state<RoomSummary | null>(null);
   let actionError = $state<string | null>(null);
   /** The open chat's shared theme colours. */
   const theme = $derived(themeById(chat.style?.theme));
@@ -253,6 +257,7 @@
     );
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
     updates.start();
+    mutes.start();
     presence.start();
     call.listen();
     void calls.start();
@@ -364,7 +369,7 @@
 
     {#if tab === "spaces"}
       <div class="rows">
-        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} />
+        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} onRowMenu={openRowMenu} />
       </div>
     {:else if tab === "calls"}
       <div class="rows">
@@ -512,6 +517,18 @@
   <SettingsPage userId={account.user_id} onClose={() => (settingsOpen = false)} {onSignOut} />
 {/if}
 
+{#if muting}
+  {@const room = muting}
+  <MuteChooser
+    title={tr("Mute {name}", { name: room.name })}
+    onPick={(until) =>
+      void mutes
+        .muteRoom(room.id, until)
+        .then(() => chatList.patch(room.id, { is_muted: true }))
+        .catch((e) => (actionError = String(e)))}
+    onClose={() => (muting = null)}
+  />
+{/if}
 {#if rowMenu}
   {@const r = rowMenu.room}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -520,9 +537,14 @@
     <button onclick={() => rowAction((c) => setPinned(c.id, !c.is_favourite), (c) => ({ is_favourite: !c.is_favourite, is_archived: false }))}>
       {#if r.is_favourite}<PinOff size={16} />{tr("Unpin")}{:else}<Pin size={16} />{tr("Pin")}{/if}
     </button>
-    <button onclick={() => rowAction((c) => setMuted(c.id, !c.is_muted), (c) => ({ is_muted: !c.is_muted }))}>
-      {#if r.is_muted}<Bell size={16} />{trc("chat", "Unmute")}{:else}<BellOff size={16} />{trc("chat", "Mute")}{/if}
-    </button>
+    {#if r.is_muted}
+      {@const until = mutes.roomUntil(r.id)}
+      <button onclick={() => rowAction((c) => mutes.unmuteRoom(c.id), () => ({ is_muted: false }))}>
+        <Bell size={16} />{until ? tr("Unmute (muted until {time})", { time: laterTime(until) }) : trc("chat", "Unmute")}
+      </button>
+    {:else}
+      <button onclick={() => ((muting = r), (rowMenu = null))}><BellOff size={16} />{trc("chat", "Mute")}…</button>
+    {/if}
     <button
       onclick={() =>
         rowAction(

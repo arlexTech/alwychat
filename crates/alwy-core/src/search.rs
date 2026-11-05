@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS backfill (
     done INTEGER NOT NULL DEFAULT 0,
     events INTEGER NOT NULL DEFAULT 0
 );
+-- Encrypted messages we couldn't read yet (their key hadn't arrived: a new device fetches keys
+-- from the backup a little after the first sync). Indexed once the key comes.
+CREATE TABLE IF NOT EXISTS utd (
+    event_id TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    raw TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS utd_session ON utd (room_id, session_id);
 ";
 
 /// What a message is, for filters and the shared media tabs.
@@ -317,12 +326,47 @@ impl SearchIndex {
         };
         db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
             .map_err(sql)?;
+        // Indexes made before undecrypted messages were kept had skipped them for good: walk
+        // the history once more (already indexed messages are only counted again).
+        let had_utd = db
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'utd'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(sql)?
+            .is_some();
         db.execute_batch(SCHEMA).map_err(sql)?;
+        if !had_utd {
+            db.execute("UPDATE backfill SET done = 0, token = NULL, events = 0", [])
+                .map_err(sql)?;
+        }
         Ok(Self {
             db: Mutex::new(db),
             priority: Mutex::default(),
             running: Default::default(),
         })
+    }
+
+    /// Messages still waiting for their key: all of them, or those of one key.
+    fn undecrypted_rows(&self, key: Option<(&str, &str)>) -> Result<Vec<(String, String)>> {
+        let db = self.db.lock().unwrap();
+        let rows = match key {
+            Some((room, session)) => db
+                .prepare("SELECT room_id, raw FROM utd WHERE room_id = ?1 AND session_id = ?2")
+                .and_then(|mut q| {
+                    q.query_map(params![room, session], |r| Ok((r.get(0)?, r.get(1)?)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                }),
+            None => db
+                .prepare("SELECT room_id, raw FROM utd ORDER BY rowid DESC LIMIT 2000")
+                .and_then(|mut q| {
+                    q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                }),
+        };
+        rows.map_err(sql)
     }
 
     /// Apply events (one transaction). Returns how many were already indexed.
@@ -331,6 +375,15 @@ impl SearchIndex {
         let tx = db.transaction().map_err(sql)?;
         let mut known = 0;
         for raw in events {
+            if let Some((event_id, session_id)) = undecrypted(raw) {
+                tx.execute(
+                    "INSERT OR IGNORE INTO utd (event_id, room_id, session_id, raw)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![event_id, room_id, session_id, raw.json().get()],
+                )
+                .map_err(sql)?;
+                continue;
+            }
             let Some(change) = change_of(raw) else {
                 continue;
             };
@@ -355,6 +408,8 @@ impl SearchIndex {
                     if inserted == 0 {
                         known += 1;
                     }
+                    tx.execute("DELETE FROM utd WHERE event_id = ?1", params![m.event_id])
+                        .map_err(sql)?;
                 }
                 Change::Replace {
                     target,
@@ -940,6 +995,73 @@ impl crate::Core {
     }
 }
 
+/// An encrypted event that wasn't decrypted: its event ID and Megolm session.
+fn undecrypted(raw: &Raw<AnySyncTimelineEvent>) -> Option<(String, String)> {
+    if raw.get_field::<String>("type").ok()??.as_str() != "m.room.encrypted" {
+        return None;
+    }
+    let event_id = raw.get_field::<String>("event_id").ok()??;
+    let content: Value = raw.get_field("content").ok()??;
+    let session_id = content["session_id"].as_str()?.to_owned();
+    Some((event_id, session_id))
+}
+
+/// Try again the messages that couldn't be read (all, or those of the keys just received),
+/// and index the ones that open now. Asking also fetches missing keys from the backup.
+async fn retry_undecrypted(
+    client: &Client,
+    index: &Arc<SearchIndex>,
+    keys: Option<Vec<(String, String)>>,
+) {
+    let rows = match keys {
+        None => index.undecrypted_rows(None),
+        Some(keys) => {
+            let mut rows = Vec::new();
+            for (room, session) in &keys {
+                match index.undecrypted_rows(Some((room, session))) {
+                    Ok(found) => rows.extend(found),
+                    Err(e) => return warn!("search: undecrypted messages: {e}"),
+                }
+            }
+            Ok(rows)
+        }
+    };
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(e) => return warn!("search: undecrypted messages: {e}"),
+    };
+    let mut opened = 0usize;
+    for (room_id, json) in rows {
+        let Some(room) = OwnedRoomId::try_from(room_id.as_str())
+            .ok()
+            .and_then(|id| client.get_room(&id))
+        else {
+            continue;
+        };
+        let Ok(raw) = Raw::<AnySyncTimelineEvent>::from_json_string(json) else {
+            continue;
+        };
+        let Ok(event) = room.decrypt_event(&raw.cast_unchecked(), None).await else {
+            continue;
+        };
+        if matches!(
+            event.kind,
+            matrix_sdk::deserialized_responses::TimelineEventKind::UnableToDecrypt { .. }
+        ) {
+            continue;
+        }
+        let decrypted = event.raw().clone();
+        let index = index.clone();
+        let applied = crate::rt::blocking(move || index.apply(&room_id, &[&decrypted])).await;
+        if matches!(applied, Ok(Ok(_))) {
+            opened += 1;
+        }
+    }
+    if opened > 0 {
+        info!(opened, "search: indexed messages whose key arrived");
+    }
+}
+
 /// Open the index and keep it fed from sync (called once per signed-in client).
 pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchIndex>> {
     let index = match SearchIndex::open(store_dir) {
@@ -949,6 +1071,23 @@ pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchInd
             return None;
         }
     };
+    // Keys arriving later (backup download, forwarded keys): index what they open.
+    let keyed = index.clone();
+    let keys_client = client.clone();
+    crate::rt::spawn(async move {
+        use futures_util::StreamExt;
+        let Some(mut stream) = keys_client.encryption().room_keys_received_stream().await else {
+            return;
+        };
+        while let Some(batch) = stream.next().await {
+            let Ok(batch) = batch else { continue };
+            let keys = batch
+                .into_iter()
+                .map(|k| (k.room_id.to_string(), k.session_id))
+                .collect();
+            retry_undecrypted(&keys_client, &keyed, Some(keys)).await;
+        }
+    });
     let live = index.clone();
     client.add_event_handler(move |event: Raw<AnySyncTimelineEvent>, room: Room| {
         let index = live.clone();
@@ -1085,6 +1224,8 @@ async fn backfill(client: &Client, index: &Arc<SearchIndex>) -> Result<()> {
         }
     }
     info!("search backfill complete");
+    // Messages read before their key had arrived.
+    retry_undecrypted(client, index, None).await;
     Ok(())
 }
 
@@ -1177,6 +1318,29 @@ mod tests {
         // Already indexed: counted as known (the catch-up stops there).
         index.apply("!r:x", &[&msg("$4", "x")]).unwrap();
         assert_eq!(index.apply("!r:x", &[&msg("$4", "x")]).unwrap(), 1);
+    }
+
+    #[test]
+    fn undecrypted_waits_for_its_key() {
+        let index = index();
+        let encrypted = raw(serde_json::json!({
+            "type": "m.room.encrypted", "event_id": "$e", "sender": "@a:x", "origin_server_ts": 1,
+            "content": { "algorithm": "m.megolm.v1.aes-sha2", "ciphertext": "AAA", "session_id": "S1",
+                         "sender_key": "K", "device_id": "D" }
+        }));
+        index.apply("!r:x", &[&encrypted]).unwrap();
+        let waiting = index.undecrypted_rows(Some(("!r:x", "S1"))).unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert!(
+            index
+                .undecrypted_rows(Some(("!r:x", "S2")))
+                .unwrap()
+                .is_empty()
+        );
+        // Decrypted later: indexed, and no longer waiting.
+        index.apply("!r:x", &[&msg("$e", "photo du chat")]).unwrap();
+        assert_eq!(found(&index, "chat"), vec!["$e"]);
+        assert!(index.undecrypted_rows(None).unwrap().is_empty());
     }
 
     #[test]
