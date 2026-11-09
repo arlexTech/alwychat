@@ -21,6 +21,7 @@ pub mod error;
 mod files;
 mod html;
 pub mod links;
+pub mod logs;
 pub mod manage;
 pub mod media;
 pub mod mentions;

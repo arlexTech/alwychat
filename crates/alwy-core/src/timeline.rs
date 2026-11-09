@@ -89,6 +89,9 @@ pub struct MessageEntry {
     pub reply_to: Option<ReplyPreview>,
     pub reactions: Vec<Reaction>,
     pub send_state: Option<SendState>,
+    /// Not sent because these people, verified before, reset their encryption since: sending
+    /// anyway accepts that (`send_despite_identity_changes`).
+    pub identity_changed: Vec<String>,
     /// People (not us) whose latest read receipt is on this message.
     pub seen_by: Vec<Reader>,
     /// Mentions us (or @room), per our push rules.
@@ -632,6 +635,32 @@ impl crate::Core {
 
     /// Delete (redact) a message for everyone.
     /// Send a message that failed again (and resume the chat's queue, paused by the failure).
+    /// A message stopped because people we had verified reset their encryption: accept their
+    /// new identity (withdraw our verification, as Element does) and send it.
+    pub async fn send_despite_identity_changes(
+        &self,
+        room_id: &str,
+        item_id: &str,
+        users: &[String],
+    ) -> Result<()> {
+        let encryption = self.client()?.encryption();
+        for user in users {
+            let user = matrix_sdk::ruma::OwnedUserId::try_from(user.as_str())
+                .map_err(|_| Error::Encryption(format!("not a user ID: {user}")))?;
+            if let Some(identity) = encryption
+                .get_user_identity(&user)
+                .await
+                .map_err(|e| Error::Encryption(e.to_string()))?
+            {
+                identity
+                    .withdraw_verification()
+                    .await
+                    .map_err(|e| Error::Encryption(e.to_string()))?;
+            }
+        }
+        self.retry_send(room_id, item_id).await
+    }
+
     pub async fn retry_send(&self, room_id: &str, item_id: &str) -> Result<()> {
         let timeline = self.timeline(room_id)?;
         let TimelineEventItemId::TransactionId(txn) = parse_item_id(item_id)? else {
@@ -914,10 +943,16 @@ impl Mapper {
                         text,
                     }
                 });
+                let mut identity_changed = Vec::new();
                 let send_state = match event.send_state() {
                     Some(EventSendState::NotSentYet { .. }) => Some(SendState::Sending),
                     Some(EventSendState::SendingFailed { error, .. }) => {
                         warn!("message not sent: {error}");
+                        if let matrix_sdk::QueueWedgeError::IdentityViolations { users } =
+                            matrix_sdk::QueueWedgeError::from(&**error)
+                        {
+                            identity_changed = users.iter().map(ToString::to_string).collect();
+                        }
                         Some(SendState::Failed)
                     }
                     _ => None,
@@ -941,6 +976,7 @@ impl Mapper {
                     reply_to,
                     reactions,
                     send_state,
+                    identity_changed,
                     seen_by: event
                         .read_receipts()
                         .keys()

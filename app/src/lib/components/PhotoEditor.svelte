@@ -446,7 +446,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    padding: 10px calc(12px + var(--window-controls)) 10px 12px;
   }
   header strong {
     flex: 1;

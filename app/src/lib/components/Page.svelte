@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { getContext, setContext } from "svelte";
+  import { getContext, setContext, untrack } from "svelte";
 
   /**
    * How pages sit on a wide screen (900 px+; phones always get full-screen pages):
@@ -34,13 +34,14 @@
   // A side panel makes the chats layout narrower rather than covering the chat.
   $effect(() => {
     if (layout !== "panel") return;
-    sidePanels.open++;
+    // untrack: `++` also reads it, and the effect would re-run itself without end.
+    untrack(() => sidePanels.open++);
     return () => void sidePanels.open--;
   });
 </script>
 
 <div class="page {layout}" role="dialog" aria-modal="true" aria-label={title} transition:fly={{ x: 48, duration: 220 }}>
-  <header>
+  <header data-tauri-drag-region="deep">
     <button class="back" onclick={onClose} aria-label={tr("Back")}><ArrowLeft size={22} /></button>
     <h2>{title}</h2>
   </header>
@@ -71,7 +72,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    padding: 10px calc(12px + var(--window-controls)) 10px 12px;
     border-bottom: 1px solid var(--border);
   }
   h2 {

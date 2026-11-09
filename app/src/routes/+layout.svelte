@@ -3,6 +3,8 @@
   import { prefs } from "$lib/stores/prefs.svelte";
   import { appLock } from "$lib/stores/applock.svelte";
   import LockScreen from "$lib/components/LockScreen.svelte";
+  import TitleBar from "$lib/components/TitleBar.svelte";
+  import { hasTitlebar } from "$lib/backend";
 
   prefs.load().catch(() => {});
   appLock.start().catch(() => {});
@@ -16,6 +18,7 @@
 {:else if appLock.locked}
   <LockScreen />
 {/if}
+{#if hasTitlebar}<TitleBar />{/if}
 
 <style>
   /* Until we know whether the app is locked, nothing shows. */

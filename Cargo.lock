@@ -117,6 +117,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -138,6 +139,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.119",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -152,6 +154,7 @@ dependencies = [
  "alwy-core",
  "base64 0.22.1",
  "jni 0.22.4",
+ "libc",
  "ndk-context",
  "paranoid-android",
  "percent-encoding",
@@ -165,6 +168,7 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tracing",
  "tracing-subscriber",
@@ -7487,6 +7491,22 @@ dependencies = [
  "thiserror 2.0.21",
  "url",
  "windows",
+ "zbus 5.19.0",
+]
+
+[[package]]
+name = "tauri-plugin-single-instance"
+version = "2.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "726b6da0dd5bd1344f84f4108a622c07d01923baacb5c803a605189672c5352f"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
  "zbus 5.19.0",
 ]
 

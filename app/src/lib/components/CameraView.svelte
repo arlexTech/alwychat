@@ -315,7 +315,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    padding: max(12px, env(safe-area-inset-top)) calc(12px + var(--window-controls)) 12px 12px;
   }
   .rec {
     padding: 4px 10px;

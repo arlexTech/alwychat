@@ -6,6 +6,8 @@ import {
   type VerificationUpdate,
 } from "$lib/backend";
 
+const NUDGE_KEY = "alwychat.recoveryNudgeAfter";
+
 /** Whether this device can read encrypted history, and any emoji verification in progress. */
 class Encryption {
   status = $state<EncryptionStatus | null>(null);
@@ -28,6 +30,23 @@ class Encryption {
   get backupMissing() {
     const s = this.status;
     return !!s && s.device_verified && s.recovery === "incomplete";
+  }
+
+  /** The account has no recovery at all (a new account): offer to set it up, at most once a
+   * week once dismissed. Without it, losing every device loses the encrypted history. */
+  get noRecovery() {
+    const s = this.status;
+    if (!s || !s.device_verified || s.recovery !== "disabled") return false;
+    void this.#nudgeTick; // depend on dismissals
+    return Date.now() > Number(localStorage.getItem(NUDGE_KEY) ?? 0);
+  }
+  /** Bumped to recompute `noRecovery` after a dismissal (localStorage isn't reactive). */
+  #nudgeTick = $state(0);
+
+  /** "Not now": ask again in a week. */
+  dismissRecovery() {
+    localStorage.setItem(NUDGE_KEY, String(Date.now() + 7 * 24 * 3600 * 1000));
+    this.#nudgeTick++;
   }
 
   async start() {

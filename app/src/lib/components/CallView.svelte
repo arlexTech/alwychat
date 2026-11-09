@@ -230,7 +230,6 @@
   $effect(() => {
     if (immersive) return onBack(() => (immersive = false));
   });
-  const canShareScreen = $derived(!isAndroid && (call.native || !!navigator.mediaDevices?.getDisplayMedia));
 
   const person = (t: (typeof call.tiles)[number]) => ({
     userId: t.userId,
@@ -263,11 +262,7 @@
   <div class="notice" transition:fly={{ y: -16, duration: 180 }}>{call.notice}</div>
 {/if}
 {#if call.active && call.minimized}
-  <button class="pill" onclick={() => (call.minimized = false)} transition:fly={{ y: -16, duration: 180 }}>
-    <span class="dot"></span>
-    <span class="pill-name">{call.roomName}</span>
-    <span class="pill-count">{tr("{length} in call", { length: call.tiles.length })}</span>
-  </button>
+  <!-- Closed: the controls are in CallDock. -->
 {:else if call.active && call.pip}
   <!-- Android picture-in-picture: one picture filling the small window, like phone apps. -->
   {@const main = pipMain}
@@ -303,7 +298,7 @@
   </div>
 {:else if call.active}
   <div class="call" class:side={call.sideChat} transition:fade={{ duration: 160 }}>
-    <header>
+    <header data-tauri-drag-region="deep">
       <button class="icon" onclick={() => (call.minimized = true)} aria-label={tr("Back to chats")}><ChevronDown size={24} /></button>
       <div class="title">
         <strong>{call.roomName}</strong>
@@ -507,7 +502,7 @@
       <button class="ctl" class:on={call.camOn} onclick={() => call.toggleCamera()} aria-label={call.camOn ? tr("Turn camera off") : tr("Turn camera on")}>
         {#if call.camOn}<Video size={24} />{:else}<VideoOff size={24} />{/if}
       </button>
-      {#if canShareScreen}
+      {#if call.canShareScreen}
         <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label={tr("Share screen")}><MonitorUp size={24} /></button>
       {/if}
       <button class="ctl hangup" onclick={() => call.leave()} aria-label={tr("Leave call")}><PhoneOff size={24} /></button>
@@ -605,6 +600,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    padding-right: var(--window-controls);
   }
   .title {
     display: flex;
@@ -1039,47 +1035,6 @@
   .hangup {
     background: var(--danger);
     color: white;
-  }
-  .pill {
-    position: fixed;
-    top: 10px;
-    left: 50%;
-    z-index: 60;
-    translate: -50% 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    max-width: calc(100vw - 24px);
-    padding: 8px 16px;
-    border: none;
-    border-radius: 999px;
-    background: #1f9d48;
-    color: white;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
-    cursor: pointer;
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: white;
-    animation: blink 1.2s ease-in-out infinite alternate;
-  }
-  @keyframes blink {
-    to {
-      opacity: 0.3;
-    }
-  }
-  .pill-name {
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pill-count {
-    opacity: 0.85;
-    font-size: 0.85rem;
-    white-space: nowrap;
   }
   .notice {
     position: fixed;

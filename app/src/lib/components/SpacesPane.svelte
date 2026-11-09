@@ -234,11 +234,11 @@
 
   async function enterVoice(child: SpaceChild, room: RoomSummary | null) {
     error = null;
-    if (room) return void call.join(room, false, false);
+    if (room) return void call.join(room, false, false, true);
     joining = child.id;
     try {
       await joinRoom(child.id, child.via);
-      await call.join(await arrival(child.id), false, false);
+      await call.join(await arrival(child.id), false, false, true);
     } catch (e) {
       error = tr("Couldn't join: {e}", { e: e });
     } finally {

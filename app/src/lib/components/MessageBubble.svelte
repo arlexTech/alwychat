@@ -20,7 +20,7 @@
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import { fade, scale, slide } from "svelte/transition";
-  import { isAndroid, openExternal, retrySend, type MessageEntry, type Reaction } from "$lib/backend";
+  import { isAndroid, openExternal, retrySend, sendDespiteIdentityChanges, type MessageEntry, type Reaction } from "$lib/backend";
   import MapPin from "@lucide/svelte/icons/map-pin";
   import { liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { clockTime, messageStamp } from "$lib/format";
@@ -353,9 +353,15 @@
   let retrying = $state(false);
   async function retry() {
     retrying = true;
-    await retrySend(roomId, msg.item_id).catch(() => {});
+    // Stopped by encryption resets: retrying alone would stop again; accept them first.
+    const send = msg.identity_changed.length
+      ? sendDespiteIdentityChanges(roomId, msg.item_id, msg.identity_changed)
+      : retrySend(roomId, msg.item_id);
+    await send.catch(() => {});
     retrying = false;
   }
+  /** "Margot", from "@margot:server" (the bubble has no member list). */
+  const changedNames = $derived(msg.identity_changed.map((id) => id.slice(1).split(":")[0]).join(", "));
 </script>
 
 <div class="row" class:own class:wide class:mine={msg.is_own} class:first class:last>
@@ -368,9 +374,9 @@
       {/if}
     </div>
   {:else if showSender && !msg.is_own}
-    <div class="avatar-slot">
-      {#if last}<Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={28} />{/if}
-    </div>
+    <!-- Only keeps the room: the photo is in `.line`, level with the bubble's bottom whatever
+         sits under it (reactions, "seen by"). -->
+    <div class="avatar-slot"></div>
   {/if}
 
   <div class="stack">
@@ -384,6 +390,9 @@
     {/if}
 
     <div class="line">
+      {#if !wide && showSender && !msg.is_own && last}
+        <span class="side-avatar"><Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={28} /></span>
+      {/if}
       {#if swipeX > 0}
         <span class="swipe-reply" style:opacity={Math.min(1, swipeX / SWIPE_REPLY)} style:scale={swipeX >= SWIPE_REPLY ? 1.15 : 0.8 + (swipeX / SWIPE_REPLY) * 0.2}><Reply size={16} /></span>
       {/if}
@@ -618,7 +627,13 @@
       <span class="when" transition:slide={{ duration: 140 }}>{messageStamp(msg.timestamp)}</span>
     {/if}
 
-    {#if msg.send_state === "failed"}
+    {#if msg.send_state === "failed" && msg.identity_changed.length}
+      <span class="status error">
+        {tr("Not sent: {names} reset their encryption (new device or lost keys). Make sure it's really them. ·", { names: changedNames })}
+        <button class="status-action" disabled={retrying} onclick={retry}>{retrying ? tr("Sending…") : tr("Send anyway")}</button> ·
+        <button class="status-action" onclick={onDelete}>{tr("Delete")}</button>
+      </span>
+    {:else if msg.send_state === "failed"}
       <span class="status error">
         {tr("Not sent ·")}
         <button class="status-action" disabled={retrying} onclick={retry}>{retrying ? tr("Retrying…") : tr("Retry")}</button> ·
@@ -653,6 +668,12 @@
   .avatar-slot {
     flex: none;
     width: 28px;
+  }
+  .side-avatar {
+    position: absolute;
+    bottom: 0;
+    left: -36px;
+    display: flex;
   }
   .stack {
     display: flex;
@@ -1134,6 +1155,16 @@
     .actions:not(.open) {
       display: none;
     }
+  }
+  /* A chat theme makes the surfaces see-through for its panels; these float over messages. */
+  :global(.chat-pane.scenic) .menu,
+  :global(.chat-pane.scenic) .picker,
+  :global(.chat-pane.scenic) .any-emoji,
+  :global(.chat-pane.scenic) .actions > button {
+    --surface: #15181f;
+    --surface-2: #1c2029;
+    --surface-hover: #2a2f3b;
+    --border: #2c3240;
   }
   .menu {
     position: absolute;

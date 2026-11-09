@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coreTexts } from "$lib/coreText";
   import { tr, trc } from "$lib/i18n/index.svelte";
   import Settings from "@lucide/svelte/icons/settings";
   import MessageCircle from "@lucide/svelte/icons/message-circle";
@@ -38,6 +39,11 @@
     startSearchBackfill,
     onOpenRoom,
     setupPush,
+    logUi,
+    roomSummary,
+    lastCrash,
+    dismissCrash,
+    notificationLabels,
     systemStatus,
     setArchived,
     setMarkedUnread,
@@ -54,6 +60,7 @@
   import { profiles } from "$lib/stores/profiles.svelte";
   import { call } from "$lib/stores/call.svelte";
   import CallView from "./CallView.svelte";
+  import CallDock from "./CallDock.svelte";
   import PersonMenu from "./PersonMenu.svelte";
   import UserPage from "./UserPage.svelte";
   import IncomingCall from "./IncomingCall.svelte";
@@ -84,6 +91,10 @@
   import { mutes } from "$lib/stores/mutes.svelte";
   import { laterTime } from "$lib/format";
   import { appOffer, nativeApp } from "$lib/nativeApp.svelte";
+  import Bug from "@lucide/svelte/icons/bug";
+  import ReportPage from "./ReportPage.svelte";
+  import SecurityPage from "./SecurityPage.svelte";
+  import KeyRound from "@lucide/svelte/icons/key-round";
   import { openExternal } from "$lib/backend";
   import { pickedMediaUrl } from "$lib/media";
   import ForwardPage from "./ForwardPage.svelte";
@@ -173,7 +184,14 @@
   });
 
   const myName = $derived(me.profile?.name ?? account.display_name ?? account.user_id.slice(1).split(":")[0]);
-  const selected = $derived(chatList.rooms.find((r) => r.id === selectedId) ?? null);
+  /** An opened chat the list hides (an upgraded chat's older version, for its history). */
+  let outside = $state<RoomSummary | null>(null);
+  $effect(() => {
+    const id = selectedId;
+    if (!id || outside?.id === id || chatList.rooms.some((r) => r.id === id)) return;
+    roomSummary(id).then((r) => selectedId === id && (outside = r), () => {});
+  });
+  const selected = $derived(chatList.rooms.find((r) => r.id === selectedId) ?? (outside?.id === selectedId ? outside : null));
 
   // Archived chats only appear under "Archived" (and in search).
   const matches: Record<Filter, (r: RoomSummary) => boolean> = {
@@ -281,9 +299,12 @@
             const status = await systemStatus().catch(() => null);
             if (status && !status.notifications) await systemStatus("notifications").catch(() => {});
           }
-          await setupPush(s.notifications);
+          await pushSetup(s.notifications);
         })
         .catch((e) => console.warn("push setup failed", e));
+    if (isAndroid) notificationLabels(androidNotificationLabels()).catch(() => {});
+    // A crash last time (Rust panic or Android Java crash): offer to report it.
+    lastCrash().then((c) => (crashReport = !!c), () => {});
     return () => {
       void stopOpenRoom.then((stop) => stop());
       chatList.reset();
@@ -291,6 +312,36 @@
       encryption.reset();
     };
   });
+
+  /** Register push; on failure (offline, server unreachable) try again a bit later. */
+  async function pushSetup(enabled: boolean, attempt = 0) {
+    try {
+      await setupPush(enabled);
+    } catch (e) {
+      void logUi(`push setup failed (attempt ${attempt + 1}): ${e}`);
+      if (attempt < 8) setTimeout(() => void pushSetup(enabled, attempt + 1), Math.min(30_000 * 2 ** attempt, 600_000));
+    }
+  }
+
+  /** The last run crashed: banner offering a report; `reporting`: the report page is open. */
+  let crashReport = $state(false);
+  let reporting = $state(false);
+  /** Security & recovery, opened from the "Set up recovery" banner. */
+  let securityOpen = $state(false);
+
+  /** Texts of Android's message notifications (shown by Kotlin, maybe without the UI). */
+  function androidNotificationLabels(): Record<string, string> {
+    const labels: Record<string, string> = {
+      you: tr("You"),
+      reply: tr("Reply"),
+      read: tr("Mark as read"),
+      message: tr("Message"),
+      not_sent: tr("Not sent: {text}", { text: "%s" }),
+    };
+    // The core's English texts (sender / preview), translated.
+    for (const [english, text] of Object.entries(coreTexts())) labels[`text:${english}`] = text;
+    return labels;
+  }
 
   // Opening a chat clears its notification.
   $effect(() => {
@@ -306,7 +357,7 @@
 
 <div class="shell" class:has-selection={selected} class:call-side={call.sideChat} class:side-panel={sidePanels.open > 0}>
   <aside class="list-pane">
-    <header>
+    <header data-tauri-drag-region="deep">
       <button class="me" onclick={() => (settingsOpen = true)} aria-label={tr("Settings")} title={tr("Settings")}>
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
@@ -347,6 +398,16 @@
         </span>
       </button>
     {/if}
+    {#if crashReport}
+      <div class="unlock-banner app-offer" transition:fade>
+        <span class="update-icon"><Bug size={18} /></span>
+        <button class="app-offer-text" onclick={() => ((reporting = true), (crashReport = false))}>
+          <strong>{tr("AlwyChat closed unexpectedly")}</strong>
+          <small>{tr("Tap to send a report and help fix it")}</small>
+        </button>
+        <button class="icon app-offer-close" onclick={() => ((crashReport = false), dismissCrash().catch(() => {}))} aria-label={tr("Not now")} title={tr("Not now")}><X size={18} /></button>
+      </div>
+    {/if}
     {#if appOffer.shown}
       {@const app = nativeApp()}
       {#if app}
@@ -365,6 +426,16 @@
         <span>🔒</span>
         <span><strong>{tr("Unlock your messages")}</strong><small>{tr("Verify this device to read encrypted history")}</small></span>
       </button>
+    {/if}
+    {#if encryption.noRecovery}
+      <div class="unlock-banner app-offer" transition:fade>
+        <span class="update-icon"><KeyRound size={18} /></span>
+        <button class="app-offer-text" onclick={() => (securityOpen = true)}>
+          <strong>{tr("Set up recovery")}</strong>
+          <small>{tr("So you never lose your messages if you lose this device")}</small>
+        </button>
+        <button class="icon app-offer-close" onclick={() => encryption.dismissRecovery()} aria-label={tr("Not now")} title={tr("Not now")}><X size={18} /></button>
+      </div>
     {/if}
 
     {#if tab === "spaces"}
@@ -438,6 +509,7 @@
     </div>
     {/if}
 
+    <CallDock />
     <nav class="tabbar">
       <button class:active={tab === "chats"} onclick={() => (tab = "chats")}>
         <span class="tab-icon"><MessageCircle size={22} />{#if chatsUnread}<span class="dot">{chatsUnread}</span>{/if}</span>
@@ -474,7 +546,7 @@
     {:else if selected}
       <ChatView room={selected} onBack={closeChat} />
     {:else}
-      <div class="placeholder">
+      <div class="placeholder" data-tauri-drag-region="deep">
         <img src={logo} alt="" width="72" height="72" />
         <span>{tr("Select a chat to start messaging")}</span>
       </div>
@@ -572,6 +644,8 @@
 
 <CallView />
 {#if call.menu}<PersonMenu />{/if}
+{#if reporting}<ReportPage crashed onClose={() => (reporting = false)} />{/if}
+{#if securityOpen}<SecurityPage onClose={() => (securityOpen = false)} />{/if}
 {#if call.profile}
   <UserPage
     userId={call.profile}
@@ -717,8 +791,15 @@
   }
   .chat-pane.scenic > :global(header) {
     border-bottom-color: transparent;
-    background: rgb(0 0 0 / 0.18);
-    backdrop-filter: blur(12px);
+    /* No backdrop blur: over a scene it dropped scrolling and typing to ~20 fps on desktop. */
+    background: rgb(0 0 0 / 0.3);
+  }
+  /* The scene's drawing has many blur filters: its own layer, so it's drawn once and not
+     again on every frame the chat above it moves. */
+  .scene-wrap,
+  .wallpaper {
+    transform: translateZ(0);
+    will-change: transform;
   }
   .chat-pane.scenic > :global(form) {
     border-top-color: transparent;
@@ -993,6 +1074,9 @@
   @media (max-width: 720px) {
     .shell {
       grid-template-columns: minmax(0, 1fr);
+    }
+    header {
+      padding-right: calc(16px + var(--window-controls));
     }
     .chat-pane {
       display: none;

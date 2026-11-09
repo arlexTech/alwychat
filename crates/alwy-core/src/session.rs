@@ -210,6 +210,7 @@ pub(crate) struct Active {
 impl Core {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         let data_dir = data_dir.into();
+        crate::logs::watch_crashes(&data_dir);
         Self {
             settings: Arc::new(Mutex::new(crate::settings::Settings::load(&data_dir))),
             on_notification: Arc::default(),
@@ -710,11 +711,30 @@ impl Core {
     }
 }
 
+/// The server really ended the session: the token is unknown, or the refresh token was
+/// rejected. A refresh that failed otherwise (network, the auth server restarting) is not a
+/// sign-out: treating it as one signed people out over a passing hiccup.
 fn is_unknown_token(e: &matrix_sdk::HttpError) -> bool {
-    matches!(
-        e.client_api_error_kind(),
-        Some(matrix_sdk::ruma::api::error::ErrorKind::UnknownToken { .. })
-    ) || matches!(e, matrix_sdk::HttpError::RefreshToken(_))
+    use matrix_sdk::{
+        HttpError, RefreshTokenError,
+        authentication::oauth::{
+            OAuthError,
+            error::{BasicErrorResponseType, RequestTokenError},
+        },
+    };
+    match e {
+        HttpError::RefreshToken(RefreshTokenError::RefreshTokenRequired) => true,
+        HttpError::RefreshToken(RefreshTokenError::OAuth(error)) => matches!(
+            &**error,
+            OAuthError::RefreshToken(RequestTokenError::ServerResponse(response))
+                if *response.error() == BasicErrorResponseType::InvalidGrant
+        ),
+        HttpError::RefreshToken(_) => false,
+        _ => matches!(
+            e.client_api_error_kind(),
+            Some(matrix_sdk::ruma::api::error::ErrorKind::UnknownToken { .. })
+        ),
+    }
 }
 
 enum Server<'a> {

@@ -76,6 +76,11 @@ class ClearArgs {
   lateinit var roomId: String
 }
 
+@InvokeArg
+class LabelsArgs {
+  var labels: Map<String, String> = emptyMap()
+}
+
 /**
  * What stops AlwyChat from notifying: the notification permission, battery optimisation
  * (the system freezes the app in the background) and restricted background data.
@@ -359,6 +364,23 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
       if (args.secure) activity.window.addFlags(flag) else activity.window.clearFlags(flag)
       invoke.resolve()
     }
+  }
+
+  /** Notification texts in the app's language (PushService.label), for when the UI isn't running. */
+  @Command
+  fun notificationLabels(invoke: Invoke) {
+    val args = invoke.parseArgs(LabelsArgs::class.java)
+    val edit = activity.getSharedPreferences(PushService.LABELS, Context.MODE_PRIVATE).edit().clear()
+    for ((key, value) in args.labels) edit.putString(key, value)
+    edit.apply()
+    invoke.resolve()
+  }
+
+  /** A message notified by the running app (no push): shown like a pushed one. */
+  @Command
+  fun showMessage(invoke: Invoke) {
+    PushService.show(activity, invoke.getArgs())
+    invoke.resolve()
   }
 
   @Command

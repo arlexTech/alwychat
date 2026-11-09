@@ -65,6 +65,14 @@ class MainActivity : TauriActivity() {
     runOnUiThread { pipParams()?.let { runCatching { setPictureInPictureParams(it) } } }
   }
 
+  // An app, not a web page: no pinch zoom (the photo viewer zooms by itself).
+  override fun onWebViewCreate(webView: android.webkit.WebView) {
+    super.onWebViewCreate(webView)
+    webView.settings.setSupportZoom(false)
+    webView.settings.builtInZoomControls = false
+    webView.settings.displayZoomControls = false
+  }
+
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
     // Before Android 12 (no auto-enter): going home during a call shrinks the app.
@@ -112,6 +120,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    Crashes.watch(this)
     // The UI is dark: light status/navigation bar icons on a transparent bar.
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),

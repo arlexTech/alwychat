@@ -33,8 +33,14 @@ class UnifiedPushService : UpService() {
       return
     }
     val n = json.optJSONObject("notification") ?: json
-    val roomId = n.optString("room_id").ifEmpty { return }
-    val eventId = n.optString("event_id").ifEmpty { return }
+    val roomId = n.optString("room_id")
+    val eventId = n.optString("event_id")
+    // No event: only the unread count changed, so something was read on another device.
+    if (roomId.isEmpty() || eventId.isEmpty()) {
+      val unread = n.optJSONObject("counts")?.opt("unread")?.toString()
+      PushService.clearRead(applicationContext, unread)
+      return
+    }
     PushService.handle(applicationContext, roomId, eventId)
   }
 

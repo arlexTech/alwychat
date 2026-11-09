@@ -1,12 +1,8 @@
 <script lang="ts">
   import { tr } from "$lib/i18n/index.svelte";
   import MessageSquare from "@lucide/svelte/icons/message-square";
-  import Mic from "@lucide/svelte/icons/mic";
   import MicOff from "@lucide/svelte/icons/mic-off";
-  import Headphones from "@lucide/svelte/icons/headphones";
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
-  import PhoneOff from "@lucide/svelte/icons/phone-off";
-  import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Volume2 from "@lucide/svelte/icons/volume-2";
   import VolumeX from "@lucide/svelte/icons/volume-x";
   import type { RoomSummary } from "$lib/backend";
@@ -98,18 +94,6 @@
         </li>
       {/each}
     </ul>
-  {/if}
-  {#if connected}
-    <div class="controls">
-      <button class:off={!call.micOn} onclick={() => call.toggleMic()} aria-label={call.micOn ? tr("Mute") : tr("Unmute")} title={call.micOn ? tr("Mute") : tr("Unmute")}>
-        {#if call.micOn}<Mic size={18} />{:else}<MicOff size={18} />{/if}
-      </button>
-      <button class:off={call.deafened} onclick={() => call.toggleDeafen()} aria-label={call.deafened ? tr("Undeafen") : tr("Deafen")} title={call.deafened ? tr("Undeafen") : tr("Deafen")}>
-        {#if call.deafened}<HeadphoneOff size={18} />{:else}<Headphones size={18} />{/if}
-      </button>
-      <button onclick={() => (call.minimized = false)} aria-label={tr("Open the call")} title={tr("Open the call")}><Maximize2 size={17} /></button>
-      <button class="leave" onclick={() => call.leave()} aria-label={tr("Leave")} title={tr("Leave")}><PhoneOff size={18} /></button>
-    </div>
   {/if}
 </div>
 
@@ -223,31 +207,6 @@
   }
   .person small {
     font-size: 0.75rem;
-  }
-  .controls {
-    display: flex;
-    gap: 6px;
-    padding: 0 10px 10px 56px;
-  }
-  .controls button {
-    display: grid;
-    width: 36px;
-    height: 32px;
-    place-items: center;
-    border: none;
-    border-radius: 10px;
-    background: var(--surface-2);
-    color: var(--text);
-    cursor: pointer;
-  }
-  .controls button.off {
-    background: #fff;
-    color: #111;
-  }
-  .controls .leave {
-    margin-left: auto;
-    background: var(--danger);
-    color: #fff;
   }
   li :global(svg) {
     flex: none;

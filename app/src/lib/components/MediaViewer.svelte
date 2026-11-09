@@ -34,7 +34,7 @@
     resetZoom();
   }
 
-  // Zoom (photos): pinch, wheel, double tap / double click; drag to move around when zoomed.
+  // Zoom (photos and videos): pinch, wheel, double tap / double click; drag to move around when zoomed.
   // Coordinates are relative to the screen's centre, where the photo is centred.
   let zoom = $state(1);
   let panX = $state(0);
@@ -70,7 +70,7 @@
     clampPan();
   }
   function wheel(e: WheelEvent) {
-    if (item?.kind !== "image") return;
+    if (!item) return;
     e.preventDefault();
     zoomAt(zoom * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
   }
@@ -109,7 +109,7 @@
   function down(e: PointerEvent) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (item?.kind === "image" && pointers.size === 2) {
+    if (item && pointers.size === 2) {
       // Two fingers: pinch, never a swipe.
       const [a, b] = [...pointers.values()];
       pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom, midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, panX, panY };
@@ -253,7 +253,15 @@
               {#await playableUrl(eventMediaUrl(it.media))}
                 <div class="video-placeholder">…</div>
               {:then url}
-                <video src={url} controls autoplay onclick={(e) => e.stopPropagation()}></video>
+                <video
+                  src={url}
+                  controls
+                  autoplay
+                  class:zooming
+                  style:transform={zoom > 1 ? `translate(${panX}px, ${panY}px) scale(${zoom})` : undefined}
+                  onclick={(e) => e.stopPropagation()}
+                  ondblclick={toggleZoom}
+                ></video>
               {:catch}
                 <div class="video-placeholder">{tr("Couldn't load the video")}</div>
               {/await}
@@ -327,11 +335,13 @@
     box-sizing: border-box;
     padding: 64px 4vw 72px;
   }
-  img {
+  img,
+  video {
     transition: transform 0.2s var(--ease, ease-out);
     will-change: transform;
   }
-  img.zooming {
+  img.zooming,
+  video.zooming {
     transition: none;
   }
   img,
@@ -355,34 +365,45 @@
   .bar {
     position: absolute;
     top: 12px;
-    right: 12px;
+    right: calc(12px + var(--window-controls));
     z-index: 1;
     display: flex;
     gap: 8px;
+  }
+  /* Dark frosted pills: readable over a bright or zoomed-in photo too. */
+  .bar button,
+  .nav,
+  .counter {
+    background: rgb(0 0 0 / 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.1);
   }
   .bar button {
     padding: 8px 14px;
     border: none;
     border-radius: 999px;
-    background: rgb(255 255 255 / 0.12);
     color: white;
     cursor: pointer;
   }
-  .bar button:hover {
-    background: rgb(255 255 255 / 0.2);
+  .bar button:hover,
+  .nav:hover {
+    background: rgb(0 0 0 / 0.75);
   }
   .footer {
     position: absolute;
     left: 0;
     right: 0;
     bottom: 16px;
+    z-index: 1;
     pointer-events: none;
   }
   .caption,
   .status {
     margin: 6px 24px 0;
-    color: rgb(255 255 255 / 0.85);
+    color: rgb(255 255 255 / 0.9);
     text-align: center;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 0.9);
   }
   .status {
     font-size: 0.85rem;
@@ -395,15 +416,11 @@
     height: 48px;
     border: none;
     border-radius: 50%;
-    background: rgb(255 255 255 / 0.12);
     color: white;
     display: grid;
     place-items: center;
     cursor: pointer;
     translate: 0 -50%;
-  }
-  .nav:hover {
-    background: rgb(255 255 255 / 0.22);
   }
   /* Phones swipe instead. */
   @media (hover: none) {
@@ -419,9 +436,13 @@
   }
   .counter {
     position: absolute;
-    top: 20px;
-    left: 20px;
-    color: rgb(255 255 255 / 0.8);
+    top: 12px;
+    left: 12px;
+    z-index: 1;
+    padding: 8px 14px;
+    border-radius: 999px;
+    color: white;
     font-size: 0.9rem;
+    pointer-events: none;
   }
 </style>

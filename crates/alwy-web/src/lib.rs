@@ -144,6 +144,12 @@ pub fn start() {
     std::panic::set_hook(Box::new(|info| {
         web_sys::console::error_1(&JsValue::from_str(&format!("AlwyChat crashed: {info}")));
     }));
+    // Kept in memory for "Report a problem".
+    use tracing_subscriber::prelude::*;
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("info,matrix_sdk=warn"))
+        .with(alwy_core::logs::layer())
+        .try_init();
 }
 
 /// Register the UI's event handler and connect the core's events to it.
@@ -308,6 +314,7 @@ async fn handwritten(cmd: &str, args: &Args) -> Option<Reply> {
         "log_ui_error" => {
             if let Ok(message) = args.get::<String>("message") {
                 web_sys::console::error_1(&JsValue::from_str(&format!("ui: {message}")));
+                tracing::error!(target: "ui", "{message}");
             }
             infallible(())
         }

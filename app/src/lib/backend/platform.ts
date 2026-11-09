@@ -5,6 +5,7 @@ import * as core from "@tauri-apps/api/core";
 import * as events from "@tauri-apps/api/event";
 import * as opener from "@tauri-apps/plugin-opener";
 import { version } from "../../../package.json";
+import { tr } from "$lib/i18n/index.svelte";
 
 export const isTauri = core.isTauri();
 
@@ -27,7 +28,7 @@ const listeners = new Map<string, Set<Handler>>();
 
 let webCore: Promise<WebCore> | null = null;
 function web(): Promise<WebCore> {
-  webCore ??= wasmLoader!().then(async (mod) => {
+  webCore ??= oneTab().then(() => wasmLoader!()).then(async (mod) => {
     await mod.default();
     mod.setEventHandler((name: string, payload: unknown) => {
       for (const handler of listeners.get(name) ?? []) handler({ payload });
@@ -36,6 +37,55 @@ function web(): Promise<WebCore> {
     return mod;
   });
   return webCore;
+}
+
+/**
+ * Only one tab may run the core: two would share the browser's encryption store (IndexedDB),
+ * which breaks encryption. The tab holding the "alwychat-core" lock runs it; another tab
+ * shows "open in another tab" and can take over (the first one then reloads and waits).
+ */
+function oneTab(): Promise<void> {
+  if (!navigator.locks) return Promise.resolve();
+  const channel = new BroadcastChannel("alwychat-tab");
+  return new Promise((ready) => {
+    const hold = () =>
+      navigator.locks.request("alwychat-core", () => {
+        overlay?.remove();
+        ready();
+        // Asked to hand over: reloading ends this tab's core and frees the lock.
+        channel.onmessage = (e) => e.data === "take-over" && location.reload();
+        return new Promise<void>(() => {}); // held while the page lives
+      });
+    let overlay: HTMLElement | null = null;
+    void navigator.locks.query().then((state) => {
+      if (!state.held?.some((l) => l.name === "alwychat-core")) return void hold();
+      overlay = elsewhere(() => {
+        channel.postMessage("take-over");
+        void hold();
+      });
+    });
+  });
+}
+
+/** Full-page "AlwyChat is open in another tab", with "Use it here". */
+function elsewhere(useHere: () => void): HTMLElement {
+  const page = document.createElement("div");
+  page.setAttribute("style", "position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;background:var(--bg,#0e1014);color:var(--text,#eee);font:16px system-ui,sans-serif;text-align:center");
+  const title = document.createElement("strong");
+  title.textContent = tr("AlwyChat is open in another tab");
+  const hint = document.createElement("p");
+  hint.setAttribute("style", "margin:0;max-width:380px;color:var(--muted,#999)");
+  hint.textContent = tr("It can only run in one tab at a time, to keep your encryption keys safe.");
+  const button = document.createElement("button");
+  button.setAttribute("style", "padding:10px 20px;border:none;border-radius:999px;background:var(--accent-a,#5b5bd6);color:#fff;font:inherit;cursor:pointer");
+  button.textContent = tr("Use it here");
+  button.onclick = () => {
+    button.disabled = true;
+    useHere();
+  };
+  page.append(title, hint, button);
+  document.body.append(page);
+  return page;
 }
 
 /** media-sw.js serves /_media/… (the apps' media:// scheme) with bytes from the core. Media

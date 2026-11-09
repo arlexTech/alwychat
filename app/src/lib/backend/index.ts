@@ -8,6 +8,12 @@ export const hasBackend = isTauri || isWeb;
 export { isTauri, isWeb };
 
 export const isAndroid = /Android/.test(navigator.userAgent);
+/** Computer apps draw their own window buttons (TitleBar.svelte, decorations are off). */
+export const hasTitlebar = isTauri && !isAndroid && !/iPhone|iPad/.test(navigator.userAgent);
+export const windowMinimize = () => invoke<void>("plugin:window|minimize", { label: "main" });
+export const windowToggleMaximize = () => invoke<void>("plugin:window|toggle_maximize", { label: "main" });
+export const windowClose = () => invoke<void>("plugin:window|close", { label: "main" });
+export const windowIsMaximized = () => invoke<boolean>("plugin:window|is_maximized", { label: "main" });
 
 /** Take over Android's back gesture until the returned function is called (then the default runs). */
 export async function interceptBack(handler: () => void): Promise<() => Promise<void>> {
@@ -116,6 +122,8 @@ export const launchRoom = () => invoke<string | null>("launch_room");
 /** Push on/off for this device (Android); resolves to whether push is in use. */
 export const setupPush = (enabled: boolean) => invoke<boolean>("setup_push", { enabled });
 export const clearNotifications = (roomId: string) => invoke<void>("clear_notifications", { roomId });
+/** Android: notification texts in the app's language (keys in PushService.kt / NotificationAnswer.kt). */
+export const notificationLabels = (labels: Record<string, string>) => invoke<void>("notification_labels", { labels });
 
 export interface LatestMessage {
   sender_name: string | null;
@@ -149,6 +157,10 @@ export interface RoomSummary {
   unread_mentions: number;
   marked_unread: boolean;
   latest: LatestMessage | null;
+  /** Upgraded: the new version of this chat, where the conversation continues. */
+  successor: string | null;
+  /** The older version of this chat (earlier history). */
+  predecessor: string | null;
 }
 
 /** Mirror of eyeball-im's VectorDiff, as sent by alwy-core. */
@@ -274,6 +286,8 @@ export interface MessageEntry {
   reply_to: ReplyPreview | null;
   reactions: Reaction[];
   send_state: "sending" | "failed" | null;
+  /** Not sent: these people (verified before) reset their encryption since. */
+  identity_changed: string[];
   /** Others whose latest read receipt is this message. */
   seen_by: { name: string; avatar: string | null }[];
   /** Mentions us (or @room). */
@@ -654,6 +668,8 @@ export function openSpace(spaceId: string, onChildren: (children: SpaceChild[]) 
   return invoke<void>("open_space", { spaceId, onChildren: channel });
 }
 export const closeSpace = () => invoke<void>("close_space");
+/** A chat the list doesn't show (an upgraded chat's older version): a snapshot. */
+export const roomSummary = (roomId: string) => invoke<RoomSummary>("room_summary", { roomId });
 export const joinRoom = (roomId: string, via: string[]) => invoke<void>("join_room", { roomId, via });
 export const canAddToSpace = (spaceId: string) => invoke<boolean>("can_add_to_space", { spaceId });
 export const createVoiceChannel = (spaceId: string, name: string) =>
@@ -998,6 +1014,8 @@ export const roomMembers = (roomId: string) => invoke<Member[]>("room_members", 
 export const toggleReaction = (roomId: string, itemId: string, key: string) =>
   invoke<void>("toggle_reaction", { roomId, itemId, key });
 export const markRead = (roomId: string) => invoke<void>("mark_read", { roomId });
+/** A line in the app's log (target "ui"), for diagnosing. */
+export const logUi = (message: string) => invoke<void>("log_ui_error", { message }).catch(() => {});
 /** Open a link from a message in the system browser (never inside the app's webview). */
 export const openExternal = (url: string) => openUrl(url);
 
@@ -1191,6 +1209,12 @@ export const setNotificationRule = (rule: "room_mentions" | "invites", enabled: 
   invoke<void>("set_notification_rule", { rule, enabled });
 export const setKeyword = (keyword: string, add: boolean) => invoke<void>("set_keyword", { keyword, add });
 export const appVersion = () => getVersion();
+/** What the last crash left (Rust panic or Android Java crash), until sent or dismissed. */
+export const lastCrash = () => invoke<string | null>("last_crash");
+export const dismissCrash = () => invoke<void>("dismiss_crash");
+/** A problem report to a chat: `message`, plus the recent log as a file with `includeLog`. */
+export const sendReport = (roomId: string, message: string, includeLog: boolean) =>
+  invoke<void>("send_report", { roomId, message, includeLog });
 
 /** What another app shared with us (Android "Share" → AlwyChat), taken once. */
 export interface IncomingShare {
@@ -1218,6 +1242,9 @@ export const updateLiveLocation = (roomId: string, shareId: string, geoUri: stri
   invoke<void>("update_live_location", { roomId, shareId, geoUri });
 export const stopLiveLocation = (roomId: string) => invoke<void>("stop_live_location", { roomId });
 /** Send a message that failed again. */
+/** Accept the new encryption identity of `users` (they reset it) and send the message. */
+export const sendDespiteIdentityChanges = (roomId: string, itemId: string, users: string[]) =>
+  invoke<void>("send_despite_identity_changes", { roomId, itemId, users });
 export const retrySend = (roomId: string, itemId: string) => invoke<void>("retry_send", { roomId, itemId });
 
 export interface PushTestResult {

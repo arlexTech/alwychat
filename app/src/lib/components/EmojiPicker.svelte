@@ -101,6 +101,13 @@
 </div>
 
 <style>
+  /* Solid over a chat theme (which makes the surfaces see-through for its panels). */
+  :global(.chat-pane.scenic) .picker {
+    --surface: #15181f;
+    --surface-2: #1c2029;
+    --surface-hover: #2a2f3b;
+    --border: #2c3240;
+  }
   .picker {
     display: flex;
     flex-direction: column;

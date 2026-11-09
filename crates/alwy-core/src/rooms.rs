@@ -58,6 +58,10 @@ pub struct RoomSummary {
     pub unread_mentions: u64,
     pub marked_unread: bool,
     pub latest: Option<LatestMessage>,
+    /// The chat was upgraded (tombstone): its new version, where the conversation continues.
+    pub successor: Option<String>,
+    /// This chat is the upgrade of an older one, which holds the earlier history.
+    pub predecessor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -281,6 +285,8 @@ async fn summarize(room: &Room) -> RoomSummary {
         unread_mentions: room.num_unread_mentions(),
         marked_unread: room.is_marked_unread(),
         latest: latest_message(room, is_dm).await,
+        successor: room.successor_room().map(|s| s.room_id.to_string()),
+        predecessor: room.predecessor_room().map(|p| p.room_id.to_string()),
     }
 }
 
@@ -385,6 +391,12 @@ fn truncate(text: &str) -> String {
 }
 
 impl crate::Core {
+    /// One chat's summary, for a chat the list doesn't show (the older version of an
+    /// upgraded chat): a snapshot, not kept up to date.
+    pub async fn room_summary(&self, room_id: &str) -> Result<RoomSummary> {
+        Ok(summarize(&self.room(room_id)?).await)
+    }
+
     pub(crate) fn room(&self, room_id: &str) -> Result<Room> {
         let room_id = matrix_sdk::ruma::OwnedRoomId::try_from(room_id)
             .map_err(|_| crate::Error::UnknownRoom)?;

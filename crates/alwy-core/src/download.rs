@@ -28,6 +28,27 @@ pub async fn fetch_text(url: &str) -> Result<String> {
         .map_err(|e| Error::Download(e.to_string()))
 }
 
+/// Like `fetch_text`, but a missing file (404) is `None`: only real failures (offline,
+/// server error) are errors.
+pub async fn fetch_text_if_any(url: &str) -> Result<Option<String>> {
+    let response = client()?
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| Error::Download(e.to_string()))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|e| Error::Download(e.to_string()))?;
+    response
+        .text()
+        .await
+        .map(Some)
+        .map_err(|e| Error::Download(e.to_string()))
+}
+
 /// Download `url` into `path`, reporting (bytes so far, total if known). Not in a browser.
 #[cfg(not(target_family = "wasm"))]
 pub async fn download_to(

@@ -17,6 +17,7 @@
         "height": 720,
         "minWidth": 360,
         "minHeight": 480,
+        "decorations": false,
         "dragDropEnabled": false
       }
     ],
@@ -50,7 +51,16 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "template": "nsis/installer.nsi",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "nsis/header.bmp",
+        "sidebarImage": "nsis/sidebar.bmp",
+        "installMode": "currentUser"
+      }
+    }
   },
   "plugins": {
     "deep-link": {

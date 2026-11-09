@@ -17,6 +17,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -561,6 +562,18 @@ async fn stop_live_location(core: State<'_, AppCore>, room_id: String) -> alwy_c
     core.stop_live_location(&room_id).await
 }
 
+/// A message stopped by people's encryption reset: accept their new identity and send it.
+#[tauri::command]
+async fn send_despite_identity_changes(
+    core: State<'_, AppCore>,
+    room_id: String,
+    item_id: String,
+    users: Vec<String>,
+) -> alwy_core::Result<()> {
+    core.send_despite_identity_changes(&room_id, &item_id, &users)
+        .await
+}
+
 #[tauri::command]
 async fn retry_send(
     core: State<'_, AppCore>,
@@ -877,7 +890,8 @@ async fn pip_shape(app: tauri::AppHandle, wide: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// The argument the computer starts us with ("Open at startup"): start out of sight.
+/// The argument the computer starts us with ("Open at startup"): start out of sight
+/// (except on Windows, where the window opens).
 #[cfg(desktop)]
 const STARTUP_ARG: &str = "--startup";
 
@@ -1696,6 +1710,38 @@ async fn apply_mutes(core: State<'_, AppCore>) -> alwy_core::Result<alwy_core::m
     core.apply_mutes().await
 }
 
+/// A chat the list doesn't show (an upgraded chat's older version).
+#[tauri::command]
+async fn room_summary(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<alwy_core::rooms::RoomSummary> {
+    core.room_summary(&room_id).await
+}
+
+/// What the last crash left, offered as a problem report at start.
+#[tauri::command]
+async fn last_crash(core: State<'_, AppCore>) -> alwy_core::Result<Option<String>> {
+    Ok(core.last_crash().await)
+}
+
+#[tauri::command]
+async fn dismiss_crash(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.dismiss_crash().await;
+    Ok(())
+}
+
+/// Settings → About → Report a problem: a message and the recent log, sent to a chat.
+#[tauri::command]
+async fn send_report(
+    core: State<'_, AppCore>,
+    room_id: String,
+    message: String,
+    include_log: bool,
+) -> alwy_core::Result<()> {
+    core.send_report(&room_id, &message, include_log).await
+}
+
 #[tauri::command]
 async fn mute_room(
     core: State<'_, AppCore>,
@@ -2061,7 +2107,14 @@ async fn setup_push(
             let _ = core.remove_pusher(&endpoint).await;
         }
         // The homeserver offers no push gateway: notifications come from the running app.
-        if enabled && core.push_gateway().await.ok().flatten().is_none() {
+        if enabled
+            && core
+                .push_gateway()
+                .await
+                .map_err(|e| e.to_string())?
+                .is_none()
+        {
+            PUSH_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
             return Ok(false);
         }
         let token = match fcm_token(&app).await {
@@ -2356,6 +2409,29 @@ async fn clear_notifications(app: tauri::AppHandle, room_id: String) -> Result<(
     Ok(())
 }
 
+/// Android: the notification texts in the app's language (the Kotlin side shows
+/// notifications while the UI may not run).
+#[tauri::command]
+async fn notification_labels(
+    app: tauri::AppHandle,
+    labels: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>(
+                "notificationLabels",
+                serde_json::json!({ "labels": labels }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, labels);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg_attr(target_os = "android", allow(unused_variables))]
@@ -2366,17 +2442,38 @@ pub fn run() {
     #[cfg(target_os = "android")]
     android::init_logging();
     // ALWYCHAT_LOG_FILE: log to a file (e.g. when the app is launched by a test driver).
+    // Also kept in memory for "Report a problem" (alwy_core::logs).
     #[cfg(not(target_os = "android"))]
-    match std::env::var_os("ALWYCHAT_LOG_FILE").map(std::fs::File::create) {
-        Some(Ok(file)) => tracing_subscriber::fmt()
-            .with_env_filter(filter())
-            .with_ansi(false)
-            .with_writer(std::sync::Mutex::new(file))
-            .init(),
-        _ => tracing_subscriber::fmt().with_env_filter(filter()).init(),
+    {
+        use tracing_subscriber::prelude::*;
+        let registry = tracing_subscriber::registry()
+            .with(filter())
+            .with(alwy_core::logs::layer());
+        match std::env::var_os("ALWYCHAT_LOG_FILE").map(std::fs::File::create) {
+            Some(Ok(file)) => registry
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(std::sync::Mutex::new(file)),
+                )
+                .init(),
+            _ => registry.with(tracing_subscriber::fmt::layer()).init(),
+        }
     }
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // One AlwyChat per computer: a second launch (the launcher clicked while the first one
+    // sits in the tray, autostart plus a manual start…) only brings the first one back. Two
+    // would run two clients on one encryption store, which breaks encryption. Must be the
+    // first plugin.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        // (Autostart's own launch while already running shows nothing.)
+        if !args.iter().any(|a| a == STARTUP_ARG) {
+            show_window(app);
+        }
+    }));
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -2468,11 +2565,39 @@ pub fn run() {
             if focused || PUSH_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
+            // Android: the same conversation notification as a push (Reply, Mark as read, one
+            // per chat); a message already shown by a push isn't added twice.
+            #[cfg(target_os = "android")]
+            {
+                let handle = handle.clone();
+                let message = serde_json::json!({
+                    "room_id": n.room_id,
+                    "event_id": n.event_id,
+                    "title": n.sender_name,
+                    "sender": n.sender_name,
+                    "room_name": (!n.is_dm).then_some(n.room_name),
+                    "sent_at": n.sent_at,
+                    "body": n.body,
+                    "noisy": true,
+                });
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = handle
+                        .state::<android::System>()
+                        .0
+                        .run_mobile_plugin_async::<serde_json::Value>("showMessage", message)
+                        .await
+                    {
+                        tracing::warn!("couldn't show notification: {e}");
+                    }
+                });
+            }
+            #[cfg(not(target_os = "android"))]
             let title = if n.is_dm {
                 n.sender_name
             } else {
                 format!("{} · {}", n.sender_name, n.room_name)
             };
+            #[cfg(not(target_os = "android"))]
             if let Err(e) = handle
                 .notification()
                 .builder()
@@ -2519,7 +2644,9 @@ pub fn run() {
                 setup_tray(app)?;
             }
             app.manage(TrayHost(tray));
-            // Opened with the computer: straight to the tray (or the taskbar without one).
+            // Opened with the computer: on Windows the window opens, ready to use (like
+            // Discord); elsewhere straight to the tray (or the taskbar without one).
+            #[cfg(not(target_os = "windows"))]
             if std::env::args().any(|a| a == STARTUP_ARG)
                 && let Some(window) = app.get_webview_window("main")
             {
@@ -2631,6 +2758,7 @@ pub fn run() {
             message_activity,
             message_at,
             retry_send,
+            send_despite_identity_changes,
             subscribe_connection,
             resume_sync,
             send_location,
@@ -2701,6 +2829,7 @@ pub fn run() {
             use_unified_push,
             launch_room,
             clear_notifications,
+            notification_labels,
             set_quick_reaction,
             set_theme,
             upload_wallpaper,
@@ -2727,6 +2856,10 @@ pub fn run() {
             mutes,
             apply_mutes,
             mute_room,
+            last_crash,
+            room_summary,
+            dismiss_crash,
+            send_report,
             unmute_room,
             mute_space,
             unmute_space,
@@ -3125,6 +3258,7 @@ mod android {
         let _ = tracing_subscriber::registry()
             .with(filter)
             .with(paranoid_android::layer("AlwyChat"))
+            .with(alwy_core::logs::layer())
             .try_init();
     }
 
@@ -3172,6 +3306,40 @@ mod android {
             );
             let json = tauri::async_runtime::block_on(notification(dir.into(), room, event));
             jni::objects::JString::from_str(env, json)
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+    }
+
+    /// Which of these chats (one ID per line) were read elsewhere, one per line. Called when
+    /// the homeserver pushes a new unread count (`PushService.clearRead`).
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativePush_readChats<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        context: jni::objects::JObject<'c>,
+        data_dir: jni::objects::JString<'c>,
+        room_ids: jni::objects::JString<'c>,
+    ) -> jni::objects::JString<'c> {
+        env.with_env(|env| -> Result<_, jni::errors::Error> {
+            init_logging();
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            let (dir, rooms) = (data_dir.to_string(), room_ids.to_string());
+            let read = tauri::async_runtime::block_on(async move {
+                let core = super::shared_core(dir.into());
+                if !matches!(core.restore().await, Ok(Some(_))) {
+                    return String::new();
+                }
+                let rooms: Vec<String> = rooms.lines().map(str::to_owned).collect();
+                match core.read_chats(&rooms).await {
+                    Ok(read) => read.join("\n"),
+                    Err(e) => {
+                        tracing::warn!("push: read chats: {e}");
+                        String::new()
+                    }
+                }
+            });
+            jni::objects::JString::from_str(env, read)
         })
         .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
     }
@@ -3249,6 +3417,53 @@ mod android {
                 }
             });
             Ok(())
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+    }
+
+    /// Called by a message notification's "Reply" (`text` set) or "Mark as read" (`text`
+    /// empty), app maybe not running. Returns "" when done, else the error.
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativePush_answer<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        context: jni::objects::JObject<'c>,
+        data_dir: jni::objects::JString<'c>,
+        room_id: jni::objects::JString<'c>,
+        event_id: jni::objects::JString<'c>,
+        text: jni::objects::JString<'c>,
+    ) -> jni::objects::JString<'c> {
+        env.with_env(|env| -> Result<_, jni::errors::Error> {
+            init_logging();
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            let (dir, room, event, text) = (
+                data_dir.to_string(),
+                room_id.to_string(),
+                event_id.to_string(),
+                text.to_string(),
+            );
+            let error = tauri::async_runtime::block_on(async move {
+                let core = super::shared_core(dir.into());
+                match core.restore().await {
+                    Ok(Some(_)) => {}
+                    Ok(None) => return "signed out".to_owned(),
+                    Err(e) => return e.to_string(),
+                }
+                let done = if text.trim().is_empty() {
+                    core.read_from_notification(&room, &event).await
+                } else {
+                    core.reply_from_notification(&room, &event, &text).await
+                };
+                match done {
+                    Ok(()) => String::new(),
+                    Err(e) => {
+                        tracing::warn!("notification answer: {e}");
+                        e.to_string()
+                    }
+                }
+            });
+            jni::objects::JString::from_str(env, error)
         })
         .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
     }

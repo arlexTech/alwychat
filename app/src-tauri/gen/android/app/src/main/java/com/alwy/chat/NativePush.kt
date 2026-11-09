@@ -11,6 +11,9 @@ object NativePush {
 
   /** The notification for a pushed event as JSON (`PushNotification`), or "" for none. Blocks. */
   @JvmStatic
+  external fun readChats(context: Context, dataDir: String, roomIds: String): String
+
+  @JvmStatic
   external fun notification(context: Context, dataDir: String, roomId: String, eventId: String): String
 
   /**
@@ -19,6 +22,13 @@ object NativePush {
    */
   @JvmStatic
   external fun setEndpoint(context: Context, dataDir: String, endpoint: String, old: String)
+
+  /**
+   * A message notification's Reply (`text`) or Mark as read (`text` empty), up to `eventId`.
+   * Returns "" when done, else the error. Blocks.
+   */
+  @JvmStatic
+  external fun answer(context: Context, dataDir: String, roomId: String, eventId: String, text: String): String
 
   /** Decline the call rung by `eventId` (from the incoming-call notification). Blocks. */
   @JvmStatic

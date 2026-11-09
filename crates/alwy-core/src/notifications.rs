@@ -14,6 +14,9 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct MessageNotification {
     pub room_id: String,
+    pub event_id: String,
+    /// When it was sent (ms since 1970).
+    pub sent_at: u64,
     pub room_name: String,
     pub sender_name: String,
     pub body: String,
@@ -70,6 +73,8 @@ pub(crate) async fn install(
                     };
                     let message = MessageNotification {
                         room_id: room.room_id().to_string(),
+                        event_id: event.event_id().to_string(),
+                        sent_at: event.origin_server_ts().get().into(),
                         room_name: room
                             .cached_display_name()
                             .map(|n| n.to_string())

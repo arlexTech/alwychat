@@ -161,6 +161,13 @@ class CallStore {
   /** The call's chat is open beside it (computer). */
   chatOpen = $state(false);
   #roomy = new MediaQuery("min-width: 900px");
+  /** Wide enough for the call panel under the chat list (CallDock) instead of the pill. */
+  get docked() {
+    return this.#roomy.current;
+  }
+  get canShareScreen() {
+    return !isAndroid && (this.native || !!navigator.mediaDevices?.getDisplayMedia);
+  }
   /** Call on the left, its chat on the right (ChatsScreen docks the chat pane there). */
   get sideChat() {
     return this.active && !this.minimized && this.chatOpen && this.#roomy.current;
@@ -342,8 +349,9 @@ class CallStore {
     return this.roomId !== null;
   }
 
-  /** `ringing`: we start it (1:1 chats ring the other person; the core sends the ring). */
-  async join(room: RoomSummary, video: boolean, ringing = true) {
+  /** `ringing`: we start it (1:1 chats ring the other person; the core sends the ring).
+   * `inPlace`: voice channels on a computer connect without opening the call screen. */
+  async join(room: RoomSummary, video: boolean, ringing = true, inPlace = false) {
     if (this.roomId === room.id) return void (this.minimized = false);
     if (this.incoming?.room_id === room.id) this.stopRing();
     await this.leave();
@@ -357,7 +365,7 @@ class CallStore {
     this.roomName = room.name;
     this.status = "connecting";
     this.error = null;
-    this.minimized = false;
+    this.minimized = inPlace && this.docked;
     this.micOn = !this.prefs.pushToTalk;
     this.deafened = false;
     this.talking = false;

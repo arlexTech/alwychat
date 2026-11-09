@@ -47,6 +47,11 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* Room the window buttons take in the top-right corner (computer apps, see TitleBar). */
+  --window-controls: 0px;
+}
+
 html,
 body {
   margin: 0;

@@ -78,6 +78,10 @@
         <receiver
             android:name=".CallDeclineReceiver"
             android:exported="false" />
+        <!-- Reply / Mark as read in message notifications (NotificationAnswer.kt). -->
+        <receiver
+            android:name=".NotificationAnswer"
+            android:exported="false" />
         <service
             android:name=".CallService"
             android:exported="false"

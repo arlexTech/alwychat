@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Bug from "@lucide/svelte/icons/bug";
+  import ReportPage from "./ReportPage.svelte";
   import { LANGUAGES, chooseLanguage, languageChoice, languageName, locale, tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
@@ -185,6 +187,8 @@
   }
 
   let version = $state("");
+  let reporting = $state(false);
+  const onWindows = navigator.userAgent.includes("Windows");
   $effect(() => {
     appVersion().then((v) => (version = v)).catch(() => {});
   });
@@ -768,7 +772,7 @@
     {/if}
     {#if autostart !== null}
       <label class="toggle">
-        <span><strong>{tr("Open when the computer starts")}</strong><small>{tr("AlwyChat starts in the background, so messages and calls reach you.")}</small></span>
+        <span><strong>{tr("Open when the computer starts")}</strong><small>{onWindows ? tr("AlwyChat opens when you sign in to Windows, so messages and calls reach you.") : tr("AlwyChat starts in the background, so messages and calls reach you.")}</small></span>
         <input type="checkbox" role="switch" checked={autostart} onchange={(e) => setAutostart(e.currentTarget.checked)} />
       </label>
     {/if}
@@ -785,6 +789,8 @@
       <p>{tr("Server: {server}", { server: server })}</p>
       <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button></p>
     </div>
+    <button class="m-btn" onclick={() => (reporting = true)}><Bug size={18} />{tr("Report a problem")}</button>
+    <p class="m-hint">{tr("Something doesn't work? Send what happened and the app's technical log to someone who can help.")}</p>
     {#if isWeb}
       {@const app = nativeApp()}
       <h3 class="section">{tr("Apps")}</h3>
@@ -825,6 +831,7 @@
     {#if error}<p class="error">{error}</p>{/if}
   </Page>
 {/if}
+{#if reporting}<ReportPage onClose={() => (reporting = false)} />{/if}
 {#if pinFlow}
   <Page title={pinFlow.mode === "disable" ? tr("Turn off app lock") : pinFlow.mode === "change" ? tr("Change PIN") : tr("App lock")} onClose={() => (pinFlow = null)}>
     <div class="pin-page">

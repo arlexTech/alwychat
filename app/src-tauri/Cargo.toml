@@ -34,9 +34,12 @@ tracing-subscriber.workspace = true
 tauri-plugin-updater = "2"
 # "Open when the computer starts" (Windows Run key, Linux autostart entry, macOS login item).
 tauri-plugin-autostart = "2"
+# A second launch shows the running app instead of a second client on the same store.
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
+libc = "0.2"
 # Calls: WebKitGTK has no WebRTC, so LiveKit runs natively there (crates/alwy-call).
 alwy-call = { path = "../../crates/alwy-call" }
 # Microphone / camera permission answers in the main webview (see `enable_media_capture`).

@@ -25,6 +25,117 @@
   let width = $state(0);
   let height = $state(0);
   const wide = $derived(!mini && width > height * 0.75);
+  /** Drawn from many blur filters and never moving: shown as a picture made once. */
+  const still = $derived(!mini && scene === "ocean");
+
+  // The sides of a wide chat, and still scenes, are pictures made once: live SVG blurs and masks
+  // cost ~250 ms every time anything on the screen changed (scrolling, typing).
+  let source = $state<SVGSVGElement>();
+  let main = $state<HTMLCanvasElement>();
+  let sides = $state<HTMLCanvasElement>();
+  let edges = $state<HTMLCanvasElement>();
+  let delay = 0;
+  const SIDES_ZOOM = 1.15;
+
+  /** The scene as a bitmap of this size (the hidden copy: no animation, no live filters). */
+  async function picture(w: number, h: number, align: string) {
+    const copy = source!.cloneNode(true) as SVGSVGElement;
+    copy.removeAttribute("class");
+    copy.setAttribute("width", String(w));
+    copy.setAttribute("height", String(h));
+    copy.setAttribute("preserveAspectRatio", `${align} slice`);
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(copy)], { type: "image/svg+xml" }));
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return img;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  /** Three box blurs, close to a Gaussian one. */
+  function blur(ctx: CanvasRenderingContext2D, w: number, h: number, radius: number) {
+    const image = ctx.getImageData(0, 0, w, h);
+    const d = image.data;
+    const pass = (count: number, across: number, step: number, along: number) => {
+      const line = new Uint8ClampedArray(count * 4);
+      for (let a = 0; a < across; a++) {
+        const start = a * along;
+        for (let i = 0; i < count; i++) for (let c = 0; c < 4; c++) line[i * 4 + c] = d[start + i * step + c];
+        for (let c = 0; c < 4; c++) {
+          let sum = 0;
+          for (let i = -radius; i <= radius; i++) sum += line[Math.max(0, Math.min(count - 1, i)) * 4 + c];
+          for (let i = 0; i < count; i++) {
+            d[start + i * step + c] = sum / (radius * 2 + 1);
+            sum += line[Math.min(count - 1, i + radius + 1) * 4 + c] - line[Math.max(0, i - radius) * 4 + c];
+          }
+        }
+      }
+    };
+    for (let n = 0; n < 3; n++) {
+      pass(w, h, 4, w * 4);
+      pass(h, w, w * 4, 4);
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  function draw(canvas: HTMLCanvasElement, img: HTMLImageElement, w: number, h: number) {
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, w, h);
+    return ctx;
+  }
+
+  $effect(() => {
+    if (mini || !width || !height || !source) return;
+    const [w, h, isWide, isStill] = [width, height, wide, still];
+    void scene;
+    let stale = false;
+    // Waits out a window being resized; the first picture comes at once.
+    const timer = setTimeout(async () => {
+      try {
+        const scale = devicePixelRatio || 1;
+        if (isStill && main) {
+          const pw = Math.round((isWide ? (h * 400) / 860 : w) * scale);
+          const ph = Math.round(h * scale);
+          const img = await picture(pw, ph, "xMidYMax");
+          if (!stale && main) draw(main, img, pw, ph);
+        }
+        if (isWide && sides && edges) {
+          // Small, blurred once here and stretched (the canvases are scaled up like the blur's
+          // old 32 px at full size, so its edges stay outside the window).
+          const tw = 160;
+          const th = Math.max(1, Math.round((tw * h) / w));
+          const img = await picture(tw, th, "xMidYMid");
+          if (stale || !sides || !edges) return;
+          blur(draw(sides, img, tw, th), tw, th, Math.max(1, Math.round((32 * tw) / w)));
+          // The same picture over the scene's edges, fading out towards its middle.
+          const ctx = draw(edges, sides as unknown as HTMLImageElement, tw, th);
+          const fitted = (h * 400) / 860 / w / SIDES_ZOOM;
+          const left = (1 - fitted) / 2;
+          const fade = ctx.createLinearGradient(0, 0, tw, 0);
+          fade.addColorStop(Math.max(0, left), "#000");
+          fade.addColorStop(Math.min(1, left + fitted * 0.3), "transparent");
+          fade.addColorStop(Math.max(0, left + fitted * 0.7), "transparent");
+          fade.addColorStop(Math.min(1, left + fitted), "#000");
+          ctx.globalCompositeOperation = "destination-in";
+          ctx.fillStyle = fade;
+          ctx.fillRect(0, 0, tw, th);
+        }
+      } catch (e) {
+        console.warn("chat scene picture", e);
+      }
+    }, delay);
+    delay = 200;
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  });
 </script>
 
 <!-- Drawn for a phone (portrait). On a wider-than-tall chat, covering would zoom it far in, so
@@ -32,9 +143,21 @@
      copy of it (like a letterboxed video). -->
 <div class="scene" class:mini aria-hidden="true" bind:clientWidth={width} bind:clientHeight={height}>
   {#if wide}
-    <svg class="backdrop" viewBox="0 0 400 860" preserveAspectRatio="xMidYMid slice">{@render art()}</svg>
+    <canvas class="stretched" bind:this={sides}></canvas>
   {/if}
-  <svg class:fitted={wide} viewBox="0 0 400 860" preserveAspectRatio={wide ? "xMidYMax meet" : "xMidYMax slice"}>{@render art()}</svg>
+  {#if still}
+    <canvas class="picture" class:fitted={wide} bind:this={main}></canvas>
+  {:else}
+    <svg class:fitted={wide} viewBox="0 0 400 860" preserveAspectRatio={wide ? "xMidYMax meet" : "xMidYMax slice"}>{@render art()}</svg>
+  {/if}
+  {#if wide}
+    <canvas class="stretched" bind:this={edges}></canvas>
+  {/if}
+  {#if !mini}
+    <!-- Only the source of the pictures; never displayed. Last, so the gradient ids of the
+         live drawing above resolve to that drawing, not to this hidden one. -->
+    <svg class="source" bind:this={source} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 860">{@render art()}</svg>
+  {/if}
 </div>
 
 {#snippet art()}
@@ -389,12 +512,18 @@
     width: 100%;
     height: 100%;
   }
-  .backdrop {
-    filter: blur(32px) saturate(1.1);
-    transform: scale(1.15);
+  .source {
+    display: none;
   }
-  .backdrop :global(*) {
-    animation: none !important;
+  .stretched,
+  .picture {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .stretched {
+    transform: scale(1.15);
   }
   /* Soft edges where the scene meets its blurred sides. */
   .fitted {
@@ -403,7 +532,6 @@
     width: auto;
     aspect-ratio: 400 / 860;
     translate: -50% 0;
-    mask-image: linear-gradient(90deg, transparent, black 30%, black 70%, transparent);
   }
   .bubble {
     animation: rise var(--d) linear infinite;

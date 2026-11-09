@@ -88,8 +88,15 @@ pub struct PushTest {
 #[derive(Debug, Clone, Serialize)]
 pub struct PushNotification {
     pub room_id: String,
+    /// The pushed event (Android's Reply / Mark as read act up to it).
+    pub event_id: String,
     /// Sender (1:1 chats) or "Sender · Room".
     pub title: String,
+    /// Who sent it, and the chat's name for groups (Android shows a conversation).
+    pub sender: String,
+    pub room_name: Option<String>,
+    /// When it was sent (ms since 1970).
+    pub sent_at: u64,
     pub body: String,
     /// Sound/vibration, per the push rules (false for "silent" rules).
     pub noisy: bool,
@@ -131,7 +138,9 @@ impl crate::Core {
             .server_name()
             .to_owned();
         let url = format!("https://{server}/.well-known/matrix/client");
-        let Ok(text) = crate::download::fetch_text(&url).await else {
+        // Unreachable is an error, not "no gateway": deciding "no push" on a bad moment left
+        // the running app notifying too while the homeserver kept pushing (each message twice).
+        let Some(text) = crate::download::fetch_text_if_any(&url).await? else {
             return Ok(None);
         };
         let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
@@ -237,6 +246,15 @@ impl crate::Core {
         let client = self.client()?;
         let mut data = HttpPusherData::new(gateway);
         data.format = Some(PushFormat::EventIdOnly);
+        // Copied into every push by the gateway; real messages replace it with their room.
+        // Without it, the push saying "the unread count is now 0" (read on another device) has
+        // no room, event or count, and Sygnal drops it, so the phone would never remove the
+        // notification. Only a placeholder, nothing about the user. (FCM refuses some keys
+        // outright, "from" for one, which then blocks every notification.)
+        data.data.insert(
+            "default_payload".to_owned(),
+            serde_json::json!({ "room_id": "none" }),
+        );
         let pusher: Pusher = PusherInit {
             ids: PusherIds::new(token.to_owned(), PUSH_APP_ID.to_owned()),
             kind: PusherKind::Http(data),
@@ -316,7 +334,11 @@ impl crate::Core {
             );
             return Ok(Some(PushNotification {
                 room_id: room_id.to_string(),
+                event_id: event_id.to_string(),
                 title: sender.clone(),
+                sender: sender.clone(),
+                room_name: None,
+                sent_at: event.origin_server_ts().get().into(),
                 body: String::new(),
                 noisy: true,
                 call: Some(PushCall {
@@ -345,14 +367,25 @@ impl crate::Core {
                 AnySyncTimelineEvent::State(_) => return Ok(None),
             },
         };
-        let title = if item.is_direct_message_room {
-            sender
-        } else {
-            format!("{sender} · {}", item.room_computed_display_name)
+        let room_name =
+            (!item.is_direct_message_room).then(|| item.room_computed_display_name.clone());
+        let title = match &room_name {
+            None => sender.clone(),
+            Some(name) => format!("{sender} · {name}"),
+        };
+        let sent_at = match &item.event {
+            NotificationEvent::Timeline(event) => event.origin_server_ts().get().into(),
+            NotificationEvent::Invite(_) => matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now()
+                .get()
+                .into(),
         };
         Ok(Some(PushNotification {
             room_id: room_id.to_string(),
+            event_id: event_id.to_string(),
             title,
+            sender,
+            room_name,
+            sent_at,
             body,
             noisy: item.is_noisy.unwrap_or(true),
             call: None,
@@ -361,6 +394,77 @@ impl crate::Core {
 }
 
 impl crate::Core {
+    /// A reply typed in a message notification (the app may not be running): sent as
+    /// Markdown, then the chat counts as read up to the message it answered.
+    pub async fn reply_from_notification(
+        &self,
+        room_id: &str,
+        event_id: &str,
+        body: &str,
+    ) -> Result<()> {
+        let room = self.room(room_id)?;
+        let content = matrix_sdk::ruma::events::room::message::RoomMessageEventContent::from(
+            crate::mentions::compose(body, &[]),
+        );
+        room.send(content).await?;
+        self.read_from_notification(room_id, event_id).await
+    }
+
+    /// "Mark as read" in a message notification: read receipt (private if receipts are off,
+    /// like opening the chat) and read marker up to the pushed event.
+    /// Of these chats, the ones with nothing left to notify about: read on another device.
+    /// Asked of the server (a sync limited to them), as the app may have just been woken up.
+    pub async fn read_chats(&self, room_ids: &[String]) -> Result<Vec<String>> {
+        use matrix_sdk::ruma::api::client::{
+            filter::{FilterDefinition, RoomFilter},
+            sync::sync_events::v3,
+        };
+        let client = self.with_active(|a| a.client.clone())?;
+        let mut rooms = RoomFilter::default();
+        rooms.rooms = Some(
+            room_ids
+                .iter()
+                .filter_map(|id| matrix_sdk::ruma::OwnedRoomId::try_from(id.as_str()).ok())
+                .collect(),
+        );
+        rooms.timeline.limit = Some(1u32.into());
+        rooms.state.types = Some(Vec::new());
+        rooms.ephemeral.types = Some(Vec::new());
+        rooms.account_data.types = Some(Vec::new());
+        let mut filter = FilterDefinition::default();
+        filter.room = rooms;
+        filter.presence.types = Some(Vec::new());
+        filter.account_data.types = Some(Vec::new());
+        let mut request = v3::Request::new();
+        request.filter = Some(v3::Filter::FilterDefinition(filter));
+        let response = client.send(request).await?;
+        Ok(response
+            .rooms
+            .join
+            .into_iter()
+            .filter(|(_, room)| {
+                room.unread_notifications
+                    .notification_count
+                    .is_none_or(|count| count == 0u32.into())
+            })
+            .map(|(id, _)| id.to_string())
+            .collect())
+    }
+
+    pub async fn read_from_notification(&self, room_id: &str, event_id: &str) -> Result<()> {
+        let room = self.room(room_id)?;
+        let event = matrix_sdk::ruma::OwnedEventId::try_from(event_id)
+            .map_err(|_| crate::Error::UnknownEvent)?;
+        let receipts = matrix_sdk::room::Receipts::new().fully_read_marker(event.clone());
+        let receipts = if self.settings().send_read_receipts {
+            receipts.public_read_receipt(event)
+        } else {
+            receipts.private_read_receipt(event)
+        };
+        room.send_multiple_receipts(receipts).await?;
+        Ok(())
+    }
+
     /// A pushed call ring, fetched and decrypted here, as an incoming-call notification.
     async fn pushed_ring(
         &self,
@@ -402,7 +506,11 @@ impl crate::Core {
             .unwrap_or_else(|| sender.localpart().to_owned());
         Some(PushNotification {
             room_id: room_id.to_string(),
+            event_id: event_id.to_string(),
             title: name.clone(),
+            sender: name.clone(),
+            room_name: None,
+            sent_at: sent,
             body: String::new(),
             noisy: true,
             call: Some(PushCall {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tr, trn } from "$lib/i18n/index.svelte";
+  import CallDock from "./CallDock.svelte";
   import FileSheet from "./FileSheet.svelte";
   import MessageActions, { type Actions } from "./MessageActions.svelte";
   import ForwardPage from "./ForwardPage.svelte";
@@ -10,6 +11,8 @@
   import List from "@lucide/svelte/icons/list";
   import Page from "./Page.svelte";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+  import { chatList } from "$lib/stores/chatList.svelte";
+  import { nav } from "$lib/stores/nav.svelte";
   import Lock from "@lucide/svelte/icons/lock";
   import Phone from "@lucide/svelte/icons/phone";
   import Video from "@lucide/svelte/icons/video";
@@ -63,6 +66,7 @@
     takeKeyboardContent,
     editMessage,
     markRead,
+    hasTitlebar,
     pickFiles,
     capture,
     sendLocation,
@@ -81,6 +85,7 @@
     type Picked,
     type Revision,
     type RoomSummary,
+    joinRoom,
   } from "$lib/backend";
   import { clockTime, dayLabel, shortTime } from "$lib/format";
   import { chat } from "$lib/stores/chat.svelte";
@@ -131,6 +136,31 @@
   $effect(() => () => {
     if (tl instanceof ThreadTimeline) tl.close();
   });
+
+  /** Upgraded chat: join its new version (if needed) and open it. */
+  let movingOn = $state(false);
+  let moveError = $state<string | null>(null);
+  async function goToSuccessor() {
+    const next = room.successor;
+    if (!next) return;
+    moveError = null;
+    if (!chatList.rooms.some((r) => r.id === next && !r.is_invite)) {
+      movingOn = true;
+      // Servers that may know the new room: its own and this one's (room IDs before room
+      // version 12 name the server that made them).
+      const server = (id: string) => id.split(":").slice(1).join(":");
+      const via = [...new Set([server(next), server(room.id)].filter(Boolean))];
+      try {
+        await joinRoom(next, via);
+      } catch (e) {
+        moveError = String(e);
+        return;
+      } finally {
+        movingOn = false;
+      }
+    }
+    nav.openChat(next);
+  }
 
   /** The thread open over this chat. */
   let threadRoot = $state<string | null>(null);
@@ -481,6 +511,8 @@
   }
 
   function onScroll() {
+    // Back down at the newest: what we scrolled past is read now.
+    if (Math.abs(scroller.scrollTop) < 40 && (room.unread_messages > 0 || room.marked_unread)) readSoon(300);
     const up = Math.abs(scroller.scrollTop) > 600;
     if (up && !scrolledUp) lastAtBottom = lastKey;
     scrolledUp = up;
@@ -490,23 +522,43 @@
     if (tl.focused && Math.abs(scroller.scrollTop) < 400) tl.newer();
   }
 
-  // Read receipts: whenever new content arrives while we're at the bottom and focused.
+  // Read receipts: whenever we may have seen something new — content arrived, the chat came
+  // on screen (back from the background, a notification tapped while Android was still bringing
+  // the app up), we scrolled down to the newest, or the list still counts it unread — and we're
+  // at the bottom and looking. Checking only when content arrived left chats unread when the
+  // app wasn't "visible" yet at that moment.
   let readTimer: ReturnType<typeof setTimeout> | undefined;
+  function readSoon(delay = 600) {
+    clearTimeout(readTimer);
+    readTimer = setTimeout(readNow, delay);
+  }
+  function readNow() {
+    // A thread with no replies yet has nothing to read (the root belongs to the chat).
+    const last = tl.entries.findLast((e) => e.type === "message");
+    if (thread && (!last || (last.type === "message" && last.item_id === thread))) return;
+    // Android's WebView doesn't always report focus (back from a notification…): there,
+    // being on screen is what counts.
+    const looking = isAndroid ? document.visibilityState === "visible" : document.hasFocus();
+    if (looking && scroller && Math.abs(scroller.scrollTop) < 40) {
+      markRead(target).catch(() => {});
+    }
+  }
   $effect(() => {
     tl.entries.length;
-    clearTimeout(readTimer);
-    readTimer = setTimeout(() => {
-      // A thread with no replies yet has nothing to read (the root belongs to the chat).
-      const last = tl.entries.findLast((e) => e.type === "message");
-      if (thread && (!last || (last.type === "message" && last.item_id === thread))) return;
-      // Android's WebView doesn't always report focus (back from a notification…): there,
-      // being on screen is what counts.
-      const looking = isAndroid ? document.visibilityState === "visible" : document.hasFocus();
-      if (looking && scroller && Math.abs(scroller.scrollTop) < 40) {
-        markRead(target).catch(() => {});
-      }
-    }, 600);
+    // Still counted unread in the list (e.g. its receipt went to an older message).
+    room.unread_messages;
+    room.marked_unread;
+    readSoon();
     return () => clearTimeout(readTimer);
+  });
+  $effect(() => {
+    const again = () => document.visibilityState === "visible" && readSoon(300);
+    document.addEventListener("visibilitychange", again);
+    window.addEventListener("focus", again);
+    return () => {
+      document.removeEventListener("visibilitychange", again);
+      window.removeEventListener("focus", again);
+    };
   });
 
   /** Buttons next to the field keep the focus in it (on a phone, losing it closes the keyboard). */
@@ -1288,7 +1340,7 @@
   });
 </script>
 
-<header class="chat-header">
+<header class="chat-header" data-tauri-drag-region="deep">
   {#if selected}
   {@const a = selectionActions}
   <button class="back" onclick={() => (selected = null)} aria-label={tr("Cancel")}><X size={24} /></button>
@@ -1305,7 +1357,7 @@
     <span class="sub">{title}</span>
   </span>
   {:else}
-  <button class="who" onclick={() => (chatMenuOpen = true)} aria-label={tr("Chat settings")}>
+  <button class="who" class:fit={hasTitlebar} onclick={() => (chatMenuOpen = true)} aria-label={tr("Chat settings")}>
     <Avatar name={room.name} mxc={room.avatar} size={40} saved={saved.is(room.id)} />
     <span class="title">
       <strong>{title}</strong>
@@ -1493,7 +1545,14 @@
       {:else if row.kind === "unread"}
         <div class="unread"><span>{tr("New messages")}</span></div>
       {:else if row.kind === "start" && !thread}
-        <p class="center notice">{tr("This is the beginning of {name} ✨", { name: room.name })}</p>
+        {#if room.predecessor}
+          <p class="center notice">
+            {tr("This chat continues an older version of it.")}
+            <button class="link" onclick={() => room.predecessor && nav.openChat(room.predecessor)}>{tr("See older messages")}</button>
+          </p>
+        {:else}
+          <p class="center notice">{tr("This is the beginning of {name} ✨", { name: room.name })}</p>
+        {/if}
       {/if}
     {/each}
 
@@ -1510,6 +1569,14 @@
   </div>
 </div>
 
+{#if !thread}<CallDock inChat />{/if}
+{#if room.successor && !thread}
+  <div class="moved">
+    <p>{tr("This chat was upgraded. The conversation continues in its new version.")}</p>
+    <button class="m-btn" disabled={movingOn} onclick={goToSuccessor}>{movingOn ? tr("Joining…") : tr("Go to the new chat")}</button>
+    {#if moveError}<p class="m-error">{moveError}</p>{/if}
+  </div>
+{:else}
 <form class="composer" onsubmit={send}>
   {#if editing}
     <div class="replying editing" transition:fly={{ y: 8, duration: 160 }}>
@@ -1667,6 +1734,7 @@
   {/if}
   {/if}
 </form>
+{/if}
 
 {#if attachOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -1830,7 +1898,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
+    padding: 12px calc(16px + var(--window-controls)) 12px 16px;
     border-bottom: 1px solid var(--border);
   }
   .title {
@@ -2340,6 +2408,11 @@
   .revisions small {
     color: var(--muted);
   }
+  /* Computer apps: only the name is a button, the rest of the header moves the window. */
+  .who.fit {
+    flex: 0 1 auto;
+    margin-right: auto;
+  }
   .who {
     flex: 1;
     min-width: 0;
@@ -2737,5 +2810,18 @@
     margin: 0 8px 6px;
     font-size: 0.8rem;
     color: var(--muted);
+  }
+  .moved {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    text-align: center;
+  }
+  .moved p {
+    margin: 0;
   }
 </style>

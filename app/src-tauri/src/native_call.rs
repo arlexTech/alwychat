@@ -76,6 +76,14 @@ pub async fn native_call_join(
     on_event: Channel<serde_json::Value>,
     on_frame: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
+    // libwebrtc writes its statistics as JSON with printf, which follows the system's number
+    // format: "7,24e+18" on a French system. The Rust side can't parse that and aborts the
+    // app (voice_meter reads them 10 times a second). GTK sets the locale when it starts,
+    // so this comes after it; the interface runs in the webview and isn't affected.
+    // SAFETY: nothing here keeps a pointer to the locale; the string is a valid C string.
+    #[cfg(target_os = "linux")]
+    #[allow(unsafe_code)]
+    let _ = unsafe { libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr()) };
     #[cfg(target_os = "linux")]
     {
         native_call_leave().await?;

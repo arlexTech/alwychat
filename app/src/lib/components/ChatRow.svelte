@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coreText } from "$lib/coreText";
   import { tr } from "$lib/i18n/index.svelte";
   import BellOff from "@lucide/svelte/icons/bell-off";
   import Phone from "@lucide/svelte/icons/phone";
@@ -33,7 +34,7 @@
     const l = room.latest;
     if (!l) return room.is_invite ? tr("Invitation") : "";
     const who = l.is_own ? tr("You: ") : l.sender_name ? `${l.sender_name}: ` : "";
-    return who + l.text;
+    return who + coreText(l.text);
   });
 </script>
 
