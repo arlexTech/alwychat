@@ -722,6 +722,7 @@ class CallStore {
   }
 
   async toggleScreen() {
+    this.error = null;
     if (this.#nativeIn) {
       // The desktop asks which screen or window (Wayland: the portal dialog).
       this.screenOn = !this.screenOn;
@@ -739,9 +740,22 @@ class CallStore {
     if (what === "microphone") this.micOn = false;
     if (what === "camera") this.camOn = false;
     if (what === "screen sharing") this.screenOn = false;
-    this.error = e instanceof DOMException && e.name === "NotAllowedError"
-      ? tr("AlwyChat isn't allowed to use the {what}", { what: what })
-      : tr("Couldn't start the {what}: {e}", { what: what, e: e });
+    const name = (e as { name?: string } | null)?.name;
+    // Closing the screen picker without choosing anything isn't an error.
+    if (what === "screen sharing" && (name === "NotAllowedError" || name === "AbortError")) return;
+    this.#showError(
+      name === "NotAllowedError"
+        ? tr("AlwyChat isn't allowed to use the {what}", { what: what })
+        : tr("Couldn't start the {what}: {e}", { what: what, e: e }),
+    );
+  }
+
+  /** A problem with the call's devices: shown for a moment, it doesn't stay for the whole call. */
+  #errorTimer: ReturnType<typeof setTimeout> | undefined;
+  #showError(message: string) {
+    this.error = message;
+    clearTimeout(this.#errorTimer);
+    this.#errorTimer = setTimeout(() => (this.error = null), 8000);
   }
 
   /** Measure everyone's voice 10 times a second from WebRTC's audio levels (our microphone's
@@ -758,6 +772,7 @@ class CallStore {
       });
       return level;
     };
+    clearInterval(this.#meter); // a reconnect starts it again
     this.#meter = setInterval(async () => {
       if (busy || this.#lk !== lk) return;
       busy = true;

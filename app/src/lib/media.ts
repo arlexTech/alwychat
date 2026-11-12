@@ -39,20 +39,52 @@ export function eventMediaUrl(key: string, thumb = false): string {
 /** Desktop Linux: WebKitGTK's audio/video player can't stream from the media:// scheme. */
 const needsBlob = !isWeb && /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
 const blobs = new Map<string, Promise<string>>();
+/** Big ones (videos), oldest use first: they're let go once they add up to too much memory.
+ * Small ones (voice messages) stay for the session, their players keep the URL. */
+const bigBlobs = new Map<string, { size: number; blobUrl: string }>();
+const BIG_BLOB = 4 * 1024 * 1024;
+const BIG_BLOBS_MAX = 256 * 1024 * 1024;
+/** The latest ones are never let go: one may be playing. */
+const BIG_BLOBS_KEEP = 3;
 
 /**
  * A URL an <audio>/<video> element can play: the media URL itself, or on desktop Linux a
- * blob URL of its bytes (kept for the session, so replaying doesn't download again).
+ * blob URL of its bytes (kept so replaying doesn't download again).
  */
 export function playableUrl(url: string): Promise<string> {
   if (!needsBlob) return Promise.resolve(url);
   let blob = blobs.get(url);
+  const known = bigBlobs.get(url);
+  if (known) {
+    // Used again: newest.
+    bigBlobs.delete(url);
+    bigBlobs.set(url, known);
+  }
   if (!blob) {
     blob = fetch(url)
       .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`media ${r.status}`))))
-      .then((b) => URL.createObjectURL(b));
+      .then((b) => {
+        const blobUrl = URL.createObjectURL(b);
+        if (b.size >= BIG_BLOB) {
+          bigBlobs.set(url, { size: b.size, blobUrl });
+          dropOldBlobs();
+        }
+        return blobUrl;
+      });
     blob.catch(() => blobs.delete(url));
     blobs.set(url, blob);
   }
   return blob;
+}
+
+function dropOldBlobs() {
+  let total = 0;
+  for (const b of bigBlobs.values()) total += b.size;
+  for (const [url, b] of bigBlobs) {
+    if (total <= BIG_BLOBS_MAX || bigBlobs.size <= BIG_BLOBS_KEEP) break;
+    URL.revokeObjectURL(b.blobUrl);
+    bigBlobs.delete(url);
+    blobs.delete(url);
+    total -= b.size;
+  }
 }

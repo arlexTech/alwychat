@@ -75,10 +75,16 @@ impl crate::Core {
                     image_height: og.image_height,
                 })
                 .filter(|p| p.title.is_some() || p.description.is_some() || p.image.is_some()),
-            // Unreachable page, blocked address… : no card, don't ask again this run.
-            Err(e) => {
+            // The server answered "no" (unreachable page, blocked address…): no card, and
+            // don't ask again this run.
+            Err(e) if e.client_api_error_kind().is_some() => {
                 debug!(url, "no link preview: {e}");
                 None
+            }
+            // We couldn't reach the server: no card for now, asked again next time.
+            Err(e) => {
+                debug!(url, "link preview not loaded: {e}");
+                return Ok(None);
             }
         };
         CACHE

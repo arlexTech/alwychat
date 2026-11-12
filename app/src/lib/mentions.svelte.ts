@@ -17,12 +17,48 @@ export class MentionAutocomplete {
   #roomId = "";
   #isGroup = false;
 
-  /** Call when the open chat changes. Members load lazily on the first `@`. */
+  /** Call when the open chat changes. Members load right away, so the first `@` (and a
+   *  typed `@name` at send) already knows them. */
   reset(roomId: string, isGroup: boolean) {
-    if (roomId !== this.#roomId) this.#members = [];
+    const changed = roomId !== this.#roomId;
+    if (changed) this.#members = [];
     this.#roomId = roomId;
     this.#isGroup = isGroup;
     this.clear();
+    if (changed) this.#load();
+  }
+
+  #load() {
+    const id = this.#roomId;
+    if (!id) return;
+    roomMembers(id)
+      .then((m) => id === this.#roomId && (this.#members = m))
+      .catch((e) => console.warn("mentions: members", e));
+  }
+
+  /** Mentions to send with `body`: the picked ones, plus any `@name` typed in full without
+   *  using the list (a member's name, first name or user name, if it means only one person). */
+  mentionsFor(body: string): MentionInput[] {
+    const out = this.picked.filter((m) => body.includes(m.text));
+    const taken = new Set(out.map((m) => m.user_id));
+    for (const match of body.matchAll(/(?:^|\s)(@[^\s@]+(?::[^\s]+)?)/gu)) {
+      const text = match[1].replace(/[.,!?;)]+$/u, "");
+      if (text === "@room" || out.some((m) => m.text === text)) continue;
+      const word = normalize(text.slice(1));
+      const who = this.#members.filter(
+        (m) =>
+          !m.is_me &&
+          (normalize(m.user_id) === `@${word}` ||
+            normalize(m.user_id).startsWith(`@${word}:`) ||
+            normalize(m.name) === word ||
+            normalize(m.name).split(/\s+/)[0] === word),
+      );
+      if (who.length === 1 && !taken.has(who[0].user_id)) {
+        out.push({ user_id: who[0].user_id, text });
+        taken.add(who[0].user_id);
+      }
+    }
+    return out;
   }
 
   clear() {
@@ -58,12 +94,7 @@ export class MentionAutocomplete {
     const text = match[1];
     this.query = { start: caret - text.length - 1, end: caret, text };
     this.index = 0;
-    if (!this.#members.length) {
-      const id = this.#roomId;
-      roomMembers(id)
-        .then((m) => id === this.#roomId && (this.#members = m))
-        .catch(() => {});
-    }
+    if (!this.#members.length) this.#load();
   }
 
   move(delta: number) {

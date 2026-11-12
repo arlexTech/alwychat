@@ -12,9 +12,9 @@ use matrix_sdk::{
     Room,
     ruma::{
         OwnedRoomId,
-        api::client::state::{get_state_event_for_key, get_state_events},
+        api::client::state::get_state_events,
         events::{
-            AnyMessageLikeEventContent, GlobalAccountDataEventType, StateEventType,
+            AnyMessageLikeEventContent, GlobalAccountDataEventType,
             room::message::{FormattedBody, MessageType, RoomMessageEventContentWithoutRelation},
         },
         serde::Raw,
@@ -133,15 +133,13 @@ impl crate::Core {
     /// Our pack first, then the open chat's packs, then the packs turned on everywhere.
     pub async fn emote_packs(&self, room_id: Option<&str>) -> Result<Vec<EmotePack>> {
         let client = self.client()?;
-        let account = client.account();
+        let _account = client.account();
         let mut packs = Vec::new();
 
-        let own = account
-            .fetch_account_data(GlobalAccountDataEventType::from(USER_EMOTES))
+        let own = crate::offline::read_global(&client, USER_EMOTES)
             .await
             .ok()
             .flatten()
-            .and_then(|raw| serde_json::from_str::<Value>(raw.json().get()).ok())
             .unwrap_or_else(|| json!({}));
         packs.extend(parse_pack("user".into(), "My emoji", own, true));
 
@@ -163,18 +161,16 @@ impl crate::Core {
         }
 
         // Packs from other chats, turned on everywhere ({"rooms": {room: {state key: {}}}}).
-        let enabled = account
-            .fetch_account_data(GlobalAccountDataEventType::from(EMOTE_ROOMS))
+        let enabled = crate::offline::read_global(&client, EMOTE_ROOMS)
             .await
             .ok()
-            .flatten()
-            .and_then(|raw| serde_json::from_str::<Value>(raw.json().get()).ok());
+            .flatten();
         if let Some(rooms) = enabled.as_ref().and_then(|v| v["rooms"].as_object()) {
             for (room_id, keys) in rooms {
                 let Ok(room_id) = OwnedRoomId::try_from(room_id.as_str()) else {
                     continue;
                 };
-                let Some(room) = client.get_room(&room_id) else {
+                let Some(_room) = client.get_room(&room_id) else {
                     continue;
                 };
                 for key in keys
@@ -185,16 +181,11 @@ impl crate::Core {
                     if !seen.insert((room_id.clone(), key.clone())) {
                         continue;
                     }
-                    let request = get_state_event_for_key::v3::Request::new(
-                        room_id.clone(),
-                        StateEventType::from(ROOM_EMOTES),
-                        key.clone(),
-                    );
-                    let Ok(response) = client.send(request).await else {
+                    let Some(room) = client.get_room(&room_id) else {
                         continue;
                     };
-                    let Ok(content) =
-                        serde_json::from_str::<Value>(response.event_or_content.get())
+                    let Ok(Some(content)) =
+                        crate::offline::read_state(&room, ROOM_EMOTES, &key).await
                     else {
                         continue;
                     };
@@ -278,22 +269,17 @@ impl crate::Core {
     /// Re-read our pack from the server, change it, write it back (another device's change
     /// since the picker opened isn't lost).
     async fn change_own_pack(&self, change: impl FnOnce(&mut Value)) -> Result<()> {
-        let account = self.client()?.account();
-        let kind = GlobalAccountDataEventType::from(USER_EMOTES);
-        let mut pack = account
-            .fetch_account_data(kind.clone())
+        let _account = self.client()?.account();
+        let _kind = GlobalAccountDataEventType::from(USER_EMOTES);
+        let mut pack = crate::offline::read_global(&self.client()?, USER_EMOTES)
             .await?
-            .and_then(|raw| serde_json::from_str::<Value>(raw.json().get()).ok())
             .filter(Value::is_object)
             .unwrap_or_else(|| json!({}));
         if !pack["images"].is_object() {
             pack["images"] = json!({});
         }
         change(&mut pack);
-        account
-            .set_account_data_raw(kind, Raw::new(&pack)?.cast_unchecked())
-            .await?;
-        Ok(())
+        crate::offline::write_global(&self.client()?, USER_EMOTES, pack).await
     }
 }
 
@@ -301,22 +287,30 @@ impl crate::Core {
 /// doesn't keep custom state types in the store.
 async fn room_packs(room: &Room) -> Vec<(String, Value)> {
     let request = get_state_events::v3::Request::new(room.room_id().to_owned());
+    let remembered = format!("emote-packs|{}", room.room_id());
     match room.client().send(request).await {
-        Ok(response) => response
-            .room_state
-            .iter()
-            .filter(|raw| {
-                raw.get_field::<String>("type").ok().flatten().as_deref() == Some(ROOM_EMOTES)
-            })
-            .filter_map(|raw| {
-                let key = raw.get_field::<String>("state_key").ok().flatten()?;
-                let content = raw.get_field::<Value>("content").ok().flatten()?;
-                Some((key, content))
-            })
-            .collect(),
+        Ok(response) => {
+            let packs: Vec<(String, Value)> = response
+                .room_state
+                .iter()
+                .filter(|raw| {
+                    raw.get_field::<String>("type").ok().flatten().as_deref() == Some(ROOM_EMOTES)
+                })
+                .filter_map(|raw| {
+                    let key = raw.get_field::<String>("state_key").ok().flatten()?;
+                    let content = raw.get_field::<Value>("content").ok().flatten()?;
+                    Some((key, content))
+                })
+                .collect();
+            crate::offline::remember_value(&remembered, json!(packs));
+            packs
+        }
         Err(e) => {
+            // Offline: the packs we saw last time.
             warn!("emote packs of {}: {e}", room.room_id());
-            Vec::new()
+            crate::offline::last_seen(&remembered)
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default()
         }
     }
 }

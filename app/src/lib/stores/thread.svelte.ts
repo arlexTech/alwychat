@@ -7,7 +7,9 @@ import { applyDiffs } from "./list";
  */
 export class ThreadTimeline {
   root: string;
-  entries = $state<TimelineEntry[]>([]);
+  // Plain objects, replaced as a whole on each batch: thousands of deeply reactive entries
+  // made every update (and every read while drawing) slow in long chats.
+  entries = $state.raw<TimelineEntry[]>([]);
   loaded = $state(false);
   atStart = $state(false);
   loadingOlder = $state(false);
@@ -21,7 +23,9 @@ export class ThreadTimeline {
     this.root = root;
     openThread(roomId, root, (diffs) => {
       if (!this.#open) return;
-      applyDiffs(this.entries, diffs);
+      const next = this.entries.slice();
+      applyDiffs(next, diffs);
+      this.entries = next;
       this.loaded = true;
     })
       .then(() => this.older())

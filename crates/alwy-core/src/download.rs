@@ -9,10 +9,15 @@ use matrix_sdk::reqwest;
 use crate::{Error, Result};
 
 fn client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .user_agent(concat!("AlwyChat/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| Error::Download(e.to_string()))
+    let builder =
+        reqwest::Client::builder().user_agent(concat!("AlwyChat/", env!("CARGO_PKG_VERSION")));
+    // A stalled server must not hang an update check or download for ever (browsers have
+    // their own limits).
+    #[cfg(not(target_family = "wasm"))]
+    let builder = builder
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .read_timeout(std::time::Duration::from_secs(60));
+    builder.build().map_err(|e| Error::Download(e.to_string()))
 }
 
 /// GET `url` as text (follows redirects: GitHub release files live on another host).

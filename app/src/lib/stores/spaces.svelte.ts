@@ -1,3 +1,4 @@
+import { peek, remember } from "$lib/cache";
 import {
   getChatListPrefs,
   setChatListPrefs,
@@ -10,9 +11,10 @@ import {
 
 /** Joined spaces, which chats are in them, and whether those also show in "Chats". */
 class Spaces {
-  list = $state<SpaceInfo[]>([]);
+  // Last run's list until the live one arrives (the Spaces tab never opens empty).
+  list = $state<SpaceInfo[]>(peek<SpaceInfo[]>("spaces", true) ?? []);
   prefs = $state<ChatListPrefs>({ show_space_chats: false, spaces: {}, rooms: {}, folders: [] });
-  loaded = $state(false);
+  loaded = $state(!!peek<SpaceInfo[]>("spaces", true));
   /** Chat → the top-level spaces it's in. */
   #spacesOf = $derived.by(() => {
     const map = new Map<string, string[]>();
@@ -27,7 +29,7 @@ class Spaces {
     if (this.#started) return;
     this.#started = true;
     subscribeSpaces((list) => {
-      this.list = list;
+      this.list = remember("spaces", list, true);
       this.loaded = true;
     }).catch(() => (this.#started = false));
     this.#reload();

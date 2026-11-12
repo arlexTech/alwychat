@@ -9,10 +9,7 @@
 
 use std::collections::HashMap;
 
-use matrix_sdk::{
-    notification_settings::RoomNotificationMode,
-    ruma::{OwnedRoomId, events::GlobalAccountDataEventType, serde::Raw},
-};
+use matrix_sdk::{notification_settings::RoomNotificationMode, ruma::OwnedRoomId};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -65,29 +62,14 @@ fn expired(mutes: &Mutes, now: u64) -> (Vec<String>, Vec<String>) {
 impl crate::Core {
     /// From the server (another device may have changed it), else the store's copy.
     pub async fn mutes(&self) -> Result<Mutes> {
-        let account = self.client()?.account();
-        let kind = GlobalAccountDataEventType::from(MUTES);
-        let raw = match account.fetch_account_data(kind.clone()).await {
-            Ok(raw) => raw,
-            Err(e) => {
-                warn!("mutes from the server: {e}");
-                account.account_data_raw(kind).await?
-            }
-        };
-        Ok(raw
-            .and_then(|r| serde_json::from_str(r.json().get()).ok())
+        Ok(crate::offline::read_global(&self.client()?, MUTES)
+            .await?
+            .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default())
     }
 
     async fn save_mutes(&self, mutes: &Mutes) -> Result<()> {
-        self.client()?
-            .account()
-            .set_account_data_raw(
-                GlobalAccountDataEventType::from(MUTES),
-                Raw::new(mutes)?.cast_unchecked(),
-            )
-            .await?;
-        Ok(())
+        crate::offline::write_global(&self.client()?, MUTES, serde_json::to_value(mutes)?).await
     }
 
     /// Mute a chat, until `until` (ms since 1970) or until turned back on (`None`).

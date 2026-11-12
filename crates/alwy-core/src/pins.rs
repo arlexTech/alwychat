@@ -78,8 +78,7 @@ impl crate::Core {
         if pin {
             list.push(event_id);
         }
-        room.send_state_event_raw(PINNED_EVENTS, "", json!({ "pinned": list }))
-            .await?;
+        crate::offline::write_state(&room, PINNED_EVENTS, "", json!({ "pinned": list })).await?;
         Ok(())
     }
 }

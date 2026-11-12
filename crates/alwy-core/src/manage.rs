@@ -15,7 +15,6 @@ use matrix_sdk::{
                 AccountManagementActionData, DeviceDeleteData,
             },
             room::create_room,
-            state::get_state_event_for_key,
         },
         events::{
             StateEventType,
@@ -455,27 +454,27 @@ impl crate::Core {
     pub async fn members(&self, room_id: &str) -> Result<Vec<MemberInfo>> {
         let room = self.room(room_id)?;
         let own = room.own_user_id().to_owned();
-        let mut out: Vec<MemberInfo> = room
-            .members(
-                RoomMemberships::JOIN
-                    | RoomMemberships::INVITE
-                    | RoomMemberships::BAN
-                    | RoomMemberships::KNOCK,
-            )
-            .await?
-            .into_iter()
-            .map(|m| MemberInfo {
-                is_me: m.user_id() == own,
-                user_id: m.user_id().to_string(),
-                name: m
-                    .display_name()
-                    .unwrap_or(m.user_id().localpart())
-                    .to_owned(),
-                avatar: m.avatar_url().map(ToString::to_string),
-                power: level(m.power_level()),
-                membership: membership(&m),
-            })
-            .collect();
+        let mut out: Vec<MemberInfo> = crate::offline::members(
+            &room,
+            RoomMemberships::JOIN
+                | RoomMemberships::INVITE
+                | RoomMemberships::BAN
+                | RoomMemberships::KNOCK,
+        )
+        .await?
+        .into_iter()
+        .map(|m| MemberInfo {
+            is_me: m.user_id() == own,
+            user_id: m.user_id().to_string(),
+            name: m
+                .display_name()
+                .unwrap_or(m.user_id().localpart())
+                .to_owned(),
+            avatar: m.avatar_url().map(ToString::to_string),
+            power: level(m.power_level()),
+            membership: membership(&m),
+        })
+        .collect();
         out.sort_by_cached_key(|m| (-m.power, m.name.to_lowercase()));
         Ok(out)
     }
@@ -543,21 +542,7 @@ impl crate::Core {
         kind: StateEventType,
         key: &str,
     ) -> Result<Option<Value>> {
-        let request = get_state_event_for_key::v3::Request::new(
-            room.room_id().to_owned(),
-            kind,
-            key.to_owned(),
-        );
-        match room.client().send(request).await {
-            Ok(response) => Ok(serde_json::from_str(response.event_or_content.get()).ok()),
-            Err(e)
-                if e.client_api_error_kind()
-                    == Some(&matrix_sdk::ruma::api::error::ErrorKind::NotFound) =>
-            {
-                Ok(None)
-            }
-            Err(e) => Err(e.into()),
-        }
+        crate::offline::read_state(room, &kind.to_string(), key).await
     }
 
     // ---- Chat and space settings -------------------------------------------------------------
@@ -798,9 +783,7 @@ impl crate::Core {
 
     pub async fn remove_from_space(&self, space_id: &str, room_id: &str) -> Result<()> {
         let space = self.room(space_id)?;
-        space
-            .send_state_event_raw("m.space.child", room_id, json!({}))
-            .await?;
+        crate::offline::write_state(&space, "m.space.child", room_id, json!({})).await?;
         if let Ok(room) = self.room(room_id)
             && room.state() == RoomState::Joined
             && let Err(e) = room
@@ -826,9 +809,7 @@ impl crate::Core {
             .filter(|c| c["via"].is_array())
             .unwrap_or_else(|| json!({ "via": [server] }));
         content["suggested"] = json!(suggested);
-        space
-            .send_state_event_raw("m.space.child", room_id, content)
-            .await?;
+        crate::offline::write_state(&space, "m.space.child", room_id, content).await?;
         Ok(())
     }
 

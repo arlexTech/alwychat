@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import { tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import FileText from "@lucide/svelte/icons/file-text";
@@ -12,6 +13,7 @@
   import FileSheet from "./FileSheet.svelte";
   import MediaViewer from "./MediaViewer.svelte";
   import Page from "./Page.svelte";
+  import { onBack } from "$lib/back.svelte";
 
   let {
     roomId,
@@ -38,6 +40,11 @@
   let toast = $state<string | null>(null);
   let generation = 0;
 
+  // Android back closes the file sheet before the page.
+  $effect(() => {
+    if (fileFor) return onBack(() => (fileFor = null));
+  });
+
   async function load(reset: boolean) {
     if (!reset && (done || loading)) return;
     const g = reset ? ++generation : generation;
@@ -48,7 +55,7 @@
       const before = reset ? null : (items.at(-1)?.timestamp ?? null);
       const page = await sharedMedia(roomId, kind, before);
       if (g !== generation) return;
-      items = reset ? page : [...items, ...page];
+      items = reset ? remember(`shared:${roomId}:${kind}`, page) : [...items, ...page];
       done = page.length < PAGE;
     } catch (e) {
       if (g === generation) error = String(e);
@@ -59,12 +66,13 @@
 
   function show(kind: KindFilter) {
     tab = kind;
-    items = [];
+    items = peek<SharedItem[]>(`shared:${roomId}:${kind}`) ?? [];
     done = false;
     void load(true);
   }
 
   onMount(() => {
+    items = peek<SharedItem[]>(`shared:${roomId}:${tab}`) ?? [];
     void load(true);
     // History is indexed in the background: refresh the first page until this chat is done.
     const timer = setInterval(async () => {

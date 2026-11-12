@@ -16,6 +16,8 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // VITE_ (the default) and the Tauri CLI's build target (TAURI_ENV_PLATFORM…).
+  envPrefix: ["VITE_", "TAURI_ENV_"],
   // 2. tauri expects a fixed port, fail if that port is not available
   server: webHost
     ? {

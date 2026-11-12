@@ -39,7 +39,7 @@
   $effect(() => {
     void url;
     clearTimeout(slowTimer);
-    if (!loaded) slowTimer = setTimeout(() => (slow = true), 1000);
+    if (!loaded) slowTimer = setTimeout(() => (slow = true), 350);
   });
 
   function done(e: Event) {
@@ -79,6 +79,9 @@
     {/key}
   {/if}
   {#if slow && !loaded && !failed}
+    <!-- Something always moves while a photo loads: a light sweeping over its blurry preview,
+         and a ring. -->
+    <span class="sweep"></span>
     <span class="ring" aria-label={tr("Loading…")}></span>
   {/if}
   {#if failed}
@@ -117,6 +120,28 @@
   }
   img.shown {
     opacity: 1;
+  }
+  .sweep {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.22) 50%, transparent 70%);
+    background-size: 250% 100%;
+    animation: sweep 1.3s infinite linear;
+    pointer-events: none;
+  }
+  @keyframes sweep {
+    from {
+      background-position: 120% 0;
+    }
+    to {
+      background-position: -130% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sweep {
+      animation: none;
+      opacity: 0;
+    }
   }
   .ring {
     position: absolute;

@@ -6,13 +6,26 @@
 <script lang="ts">
   import { tr } from "$lib/i18n/index.svelte";
   import { eventMediaUrl, playableUrl } from "$lib/media";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import Pause from "@lucide/svelte/icons/pause";
+  import Play from "@lucide/svelte/icons/play";
+  import RotateCw from "@lucide/svelte/icons/rotate-cw";
+  import { tick } from "svelte";
 
   let {
     media,
     durationMs,
     waveform,
     own,
-  }: { media: string; durationMs: number | null; waveform: number[]; own: boolean } = $props();
+    name = null,
+  }: {
+    media: string;
+    durationMs: number | null;
+    waveform: number[];
+    own: boolean;
+    /** Shown above the player: an audio file's name (voice messages have none). */
+    name?: string | null;
+  } = $props();
 
   const BARS = 28;
   const SPEEDS = [1, 1.5, 2];
@@ -23,11 +36,13 @@
   let duration = $state(0);
   let speed = $state(1);
   let failed = $state(false);
+  /** Asked to play, not playing yet (downloading, buffering). */
+  let busy = $state(false);
+  // Nothing is downloaded until the first tap, the same way on every system: a chat full of
+  // voice messages used to fetch them all as soon as they were on screen.
   let src = $state<string | undefined>();
-  $effect(() => {
-    const url = eventMediaUrl(media);
-    playableUrl(url).then((u) => (src = u), () => (failed = true));
-  });
+  /** Where to start (seconds), chosen on the waveform before the sound was loaded. */
+  let startAt: number | null = null;
 
   // The duration sent with the message first: recorded files can carry a wrong one (WebKitGTK).
   const total = $derived(durationMs ? durationMs / 1000 : duration);
@@ -46,16 +61,40 @@
     return out.map((v) => Math.max(0.08, v / max));
   });
 
-  function toggle(event: MouseEvent) {
-    event.stopPropagation();
-    if (audio.paused) {
-      if (playing && playing !== audio) playing.pause();
-      playing = audio;
-      audio.playbackRate = speed;
-      audio.play().catch(() => (failed = true));
-    } else {
-      audio.pause();
+  async function load() {
+    if (src) return true;
+    try {
+      src = await playableUrl(eventMediaUrl(media));
+      // The <audio> element has its address from here on.
+      await tick();
+      return true;
+    } catch {
+      return false;
     }
+  }
+
+  function fail() {
+    failed = true;
+    busy = false;
+    // The next tap starts over.
+    src = undefined;
+  }
+
+  async function toggle(event: MouseEvent) {
+    event.stopPropagation();
+    if (busy) return;
+    if (!audio.paused) return audio.pause();
+    failed = false;
+    busy = true;
+    if (!(await load())) return fail();
+    if (playing && playing !== audio) playing.pause();
+    playing = audio;
+    audio.playbackRate = speed;
+    audio.play().catch((e) => {
+      // Paused by another message starting meanwhile: not a failure.
+      if (e?.name === "AbortError") busy = false;
+      else fail();
+    });
   }
 
   function cycleSpeed(event: MouseEvent) {
@@ -64,14 +103,22 @@
     audio.playbackRate = speed;
   }
 
-  /** Tap or drag on the waveform to jump. */
+  /** Tap or drag on the waveform to jump (before the first play too: it then starts there). */
   function seek(event: PointerEvent) {
     event.stopPropagation();
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    if (total && Number.isFinite(total)) {
-      audio.currentTime = ratio * total;
-      current = audio.currentTime;
+    if (!total || !Number.isFinite(total)) return;
+    current = ratio * total;
+    if (src && audio.readyState > 0) audio.currentTime = current;
+    else startAt = current;
+  }
+
+  function loadedMetadata() {
+    if (Number.isFinite(audio.duration)) duration = audio.duration;
+    if (startAt !== null) {
+      audio.currentTime = startAt;
+      startAt = null;
     }
   }
 
@@ -81,9 +128,18 @@
   };
 </script>
 
+{#if name}<span class="name" title={name}>{name}</span>{/if}
 <div class="voice" class:own>
-  <button class="play" onclick={toggle} aria-label={paused ? tr("Play voice message") : tr("Pause")}>
-    {#if failed}⚠{:else if paused}▶{:else}❚❚{/if}
+  <button
+    class="play"
+    onclick={toggle}
+    aria-label={failed ? tr("Couldn't load · Tap to retry") : busy ? tr("Loading…") : paused ? (name ? tr("Play") : tr("Play voice message")) : tr("Pause")}
+    title={failed ? tr("Couldn't load · Tap to retry") : undefined}
+  >
+    {#if busy}<span class="spin"><LoaderCircle size={18} /></span>
+    {:else if failed}<RotateCw size={16} />
+    {:else if paused}<Play size={16} fill="currentColor" />
+    {:else}<Pause size={16} fill="currentColor" />{/if}
   </button>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="wave" onpointerdown={seek} style:--progress={progress}>
@@ -96,13 +152,13 @@
   <audio
     bind:this={audio}
     {src}
-    preload="metadata"
-    onplay={() => (paused = false)}
-    onpause={() => (paused = true)}
+    preload="auto"
+    onplaying={() => ((paused = false), (busy = false))}
+    onpause={() => ((paused = true), (busy = false))}
     onended={() => ((paused = true), (current = 0))}
     ontimeupdate={() => (current = audio.currentTime)}
-    onloadedmetadata={() => Number.isFinite(audio.duration) && (duration = audio.duration)}
-    onerror={() => (failed = true)}
+    onloadedmetadata={loadedMetadata}
+    onerror={() => src && fail()}
   ></audio>
 </div>
 
@@ -115,7 +171,30 @@
     max-width: 100%;
     padding: 2px 0;
   }
+  .name {
+    display: block;
+    max-width: 240px;
+    margin-bottom: 2px;
+    overflow: hidden;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.9;
+  }
+  .spin {
+    display: grid;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
   .play {
+    display: grid;
+    place-items: center;
+    padding: 0;
     flex: none;
     width: 36px;
     height: 36px;

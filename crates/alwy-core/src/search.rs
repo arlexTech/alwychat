@@ -123,6 +123,8 @@ enum Change {
     /// An edit: the original's new text (and content).
     Replace {
         target: String,
+        /// Only the original's sender can edit it.
+        sender: String,
         body: String,
         kind: &'static str,
         link: bool,
@@ -202,6 +204,7 @@ fn change_of(raw: &Raw<AnySyncTimelineEvent>) -> Option<Change> {
                 let (kind, body, link, media) = describe(content.get("m.new_content")?)?;
                 return Some(Change::Replace {
                     target: target.to_owned(),
+                    sender,
                     body,
                     kind,
                     link,
@@ -413,6 +416,7 @@ impl SearchIndex {
                 }
                 Change::Replace {
                     target,
+                    sender,
                     body,
                     kind,
                     link,
@@ -420,8 +424,15 @@ impl SearchIndex {
                 } => {
                     tx.execute(
                         "UPDATE msg SET body = ?2, kind = ?3, link = ?4, media = COALESCE(?5, media)
-                         WHERE event_id = ?1",
-                        params![target, body, kind, link, media.map(|v| v.to_string())],
+                         WHERE event_id = ?1 AND sender = ?6",
+                        params![
+                            target,
+                            body,
+                            kind,
+                            link,
+                            media.map(|v| v.to_string()),
+                            sender
+                        ],
                     )
                     .map_err(sql)?;
                 }
@@ -984,8 +995,12 @@ impl crate::Core {
         }
         let client = self.client()?;
         let task = crate::rt::spawn(async move {
-            if let Err(e) = backfill(&client, &index).await {
-                warn!("search backfill stopped: {e}");
+            // Offline or a server hiccup: go on later, not only after the next restart.
+            let mut pause = std::time::Duration::from_secs(60);
+            while let Err(e) = backfill(&client, &index).await {
+                warn!("search backfill paused: {e}");
+                crate::rt::sleep(pause).await;
+                pause = (pause * 2).min(std::time::Duration::from_secs(15 * 60));
             }
             index
                 .running
@@ -1063,7 +1078,10 @@ async fn retry_undecrypted(
 }
 
 /// Open the index and keep it fed from sync (called once per signed-in client).
-pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchIndex>> {
+pub(crate) fn install(
+    client: &Client,
+    store_dir: &Path,
+) -> Option<(Arc<SearchIndex>, crate::rt::AbortHandle)> {
     let index = match SearchIndex::open(store_dir) {
         Ok(index) => Arc::new(index),
         Err(e) => {
@@ -1074,7 +1092,7 @@ pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchInd
     // Keys arriving later (backup download, forwarded keys): index what they open.
     let keyed = index.clone();
     let keys_client = client.clone();
-    crate::rt::spawn(async move {
+    let keys_task = crate::rt::spawn(async move {
         use futures_util::StreamExt;
         let Some(mut stream) = keys_client.encryption().room_keys_received_stream().await else {
             return;
@@ -1087,7 +1105,8 @@ pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchInd
                 .collect();
             retry_undecrypted(&keys_client, &keyed, Some(keys)).await;
         }
-    });
+    })
+    .abort_handle();
     let live = index.clone();
     client.add_event_handler(move |event: Raw<AnySyncTimelineEvent>, room: Room| {
         let index = live.clone();
@@ -1101,7 +1120,7 @@ pub(crate) fn install(client: &Client, store_dir: &Path) -> Option<Arc<SearchInd
             .await;
         }
     });
-    Some(index)
+    Some((index, keys_task))
 }
 
 /// One `/messages` page backwards: the next token (None at the start of the room), how many

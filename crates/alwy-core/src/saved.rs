@@ -10,7 +10,6 @@ use matrix_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::warn;
 
 use crate::{Error, Result};
 
@@ -25,17 +24,9 @@ impl crate::Core {
     /// Our saved-messages chat, if it exists and we're still in it.
     pub async fn saved_messages_id(&self) -> Result<Option<String>> {
         let client = self.client()?;
-        let account = client.account();
-        let kind = GlobalAccountDataEventType::from(SAVED_MESSAGES);
-        let raw = match account.fetch_account_data(kind.clone()).await {
-            Ok(raw) => raw,
-            Err(e) => {
-                warn!("saved messages pointer from the server: {e}");
-                account.account_data_raw(kind).await?
-            }
-        };
-        let id = raw
-            .and_then(|r| serde_json::from_str::<Pointer>(r.json().get()).ok())
+        let id = crate::offline::read_global(&client, SAVED_MESSAGES)
+            .await?
+            .and_then(|v| serde_json::from_value::<Pointer>(v).ok())
             .and_then(|p| p.room_id)
             .and_then(|id| OwnedRoomId::try_from(id).ok());
         Ok(id

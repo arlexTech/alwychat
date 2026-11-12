@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { prefetch } from "$lib/cache";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import CallDock from "./CallDock.svelte";
   import FileSheet from "./FileSheet.svelte";
@@ -55,6 +56,7 @@
   import { fade, fly } from "svelte/transition";
   import {
     chatMediaHd,
+    roomDetails,
     deleteMessage,
     discardPicked,
     saveBlob,
@@ -104,6 +106,7 @@
   import MentionSuggestions from "./MentionSuggestions.svelte";
   import { MentionAutocomplete } from "$lib/mentions.svelte";
   import { pickedMediaUrl } from "$lib/media";
+  import { probeVideo } from "$lib/videoMeta";
   import { VoiceRecorder } from "$lib/recorder.svelte";
   import { presence } from "$lib/stores/presence.svelte";
   import { profiles } from "$lib/stores/profiles.svelte";
@@ -273,9 +276,6 @@
 
   // Android back closes these before the chat itself.
   $effect(() => {
-    if (viewer) return closeOnBack(() => (viewer = null));
-  });
-  $effect(() => {
     if (history) return closeOnBack(() => (history = null));
   });
   $effect(() => {
@@ -335,7 +335,11 @@
     });
     chatHd = null;
     chatMediaHd(id).then((hd) => room.id === id && (chatHd = hd)).catch(() => {});
+    // Chat settings read the power levels from the server: fetch them while the chat is read,
+    // so the settings page opens filled in.
+    const warm = thread ? undefined : setTimeout(() => prefetch(`details:${id}`, () => roomDetails(id)), 1200);
     return () => {
+      clearTimeout(warm);
       stopTyping(id);
       drafts.flush(id);
     };
@@ -475,13 +479,69 @@
     }
     // A read marker right at the bottom says nothing.
     if (out.at(-1)?.kind === "unread") out.pop();
+    // Rows that didn't change keep their object, so only what changed is drawn again (a new
+    // message used to update every bubble of the chat).
+    const kept = new Map<string, Row>();
+    for (let i = 0; i < out.length; i++) {
+      const old = lastRows.get(out[i].key);
+      if (old && sameRow(old, out[i])) out[i] = old;
+      kept.set(out[i].key, out[i]);
+    }
+    lastRows = kept;
     return out;
+  });
+  let lastRows = new Map<string, Row>();
+  function sameRow(a: Row, b: Row) {
+    if (a.kind === "message" && b.kind === "message")
+      return (
+        a.msg === b.msg &&
+        a.first === b.first &&
+        a.last === b.last &&
+        a.album?.length === b.album?.length &&
+        (a.album ?? []).every((m, i) => m === b.album![i])
+      );
+    if (a.kind === "day" && b.kind === "day") return a.label === b.label;
+    if (a.kind === "notice" && b.kind === "notice") return a.text === b.text && a.action === b.action;
+    return a.kind === b.kind;
+  }
+
+  // Only the latest rows are drawn; scrolling up draws more of what's loaded, then loads
+  // older messages. A long chat opens and updates as fast as a short one.
+  const WINDOW = 120;
+  /** Rows in the first frame of a chat: about a screenful, so it shows at once; the rest of
+   *  the window follows two frames later. */
+  const FIRST_PAINT = 24;
+  let limit = $state(FIRST_PAINT);
+  let widen = $state(true);
+  const shown = $derived(rows.length > limit ? rows.slice(-limit) : rows);
+  $effect(() => {
+    void room.id;
+    void tl.focused;
+    limit = FIRST_PAINT;
+    widen = true;
+  });
+  $effect(() => {
+    if (!widen || !rows.length) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        widen = false;
+        limit = Math.max(limit, WINDOW);
+      });
+    });
+    return () => cancelAnimationFrame(frame);
   });
 
   /** Show the nickname this chat gave the sender, if any. */
+  /** The same renamed copy each time (a new object would redraw the bubble). */
+  const nicknamed = new WeakMap<MessageEntry, { nick: string; msg: MessageEntry }>();
   function withNickname(e: MessageEntry): MessageEntry {
     const nick = chat.style?.nicknames[e.sender];
-    return nick && !e.is_own ? { ...e, sender_name: nick } : e;
+    if (!nick || e.is_own) return e;
+    const known = nicknamed.get(e);
+    if (known?.nick === nick) return known.msg;
+    const msg = { ...e, sender_name: nick };
+    nicknamed.set(e, { nick, msg });
+    return msg;
   }
 
   function joinsAlbum(a: MessageEntry, b: MessageEntry) {
@@ -517,7 +577,12 @@
     if (up && !scrolledUp) lastAtBottom = lastKey;
     scrolledUp = up;
     const fromTop = scroller.scrollHeight + scroller.scrollTop - scroller.clientHeight;
-    if (fromTop < 400) tl.older();
+    // Near the top of what's drawn: more of what's loaded first, then older messages.
+    if (limit < rows.length) {
+      if (fromTop < 1500) limit += WINDOW;
+    } else if (fromTop < 400) tl.older();
+    // Back at the newest: let go of the rows far above.
+    if (limit > WINDOW && Math.abs(scroller.scrollTop) < 40) limit = WINDOW;
     // Opened on an older message: newer ones load near the bottom.
     if (tl.focused && Math.abs(scroller.scrollTop) < 400) tl.newer();
   }
@@ -582,7 +647,7 @@
     if (tl.focused) await tl.latest();
     stopTyping(room.id);
     const reply = replyTo?.item_id ?? null;
-    const mentions = mention.picked;
+    const mentions = mention.mentionsFor(body);
     mention.clear();
     draft = "";
     replyTo = null;
@@ -706,7 +771,14 @@
       // One at a time: the send queue keeps them in order and the album stays together.
       for (const f of files) {
         const gallery = galleryId && isPhoto(f) ? { id: galleryId, index: index++, count: photos } : null;
-        const meta = { caption: files.length === 1 ? text : null, gallery, viewOnce: !!f.viewOnce };
+        // Videos: their shape, length and a preview frame, so every app shows them properly.
+        let video = null;
+        if (f.mime.startsWith("video/")) {
+          const src = f.picked ? pickedMediaUrl(f.picked.path) : f.file ? URL.createObjectURL(f.file) : null;
+          video = src ? await probeVideo(src) : null;
+          if (src?.startsWith("blob:")) URL.revokeObjectURL(src);
+        }
+        const meta = { caption: files.length === 1 ? text : null, gallery, viewOnce: !!f.viewOnce, video };
         if (f.picked) await sendPicked(target, f.picked, meta);
         else if (f.file) await sendFile(target, f.file, meta);
       }
@@ -726,7 +798,7 @@
   }
 
   function onDragOver(event: DragEvent) {
-    if (!event.dataTransfer?.types.includes(tr("Files"))) return;
+    if (!event.dataTransfer?.types.includes("Files")) return;
     event.preventDefault();
     dragging = true;
   }
@@ -749,7 +821,7 @@
   }
 
   async function saveEdit(msg: MessageEntry, body: string) {
-    const mentions = mention.picked;
+    const mentions = mention.mentionsFor(body);
     mention.clear();
     editing = null;
     draft = "";
@@ -1302,8 +1374,16 @@
     tick().then(() => jumpTo(target));
   });
 
-  function jumpTo(eventId: string) {
-    const el = scroller.querySelector<HTMLElement>(`[data-event="${CSS.escape(eventId)}"]`);
+  async function jumpTo(eventId: string) {
+    // Its row (a photo inside an album is found by the album's row), drawn if it wasn't.
+    const at = rows.findIndex((r) => r.kind === "message" && (r.msg.item_id === eventId || r.album?.some((m) => m.item_id === eventId)));
+    const row = rows[at];
+    if (row?.kind !== "message") return;
+    if (rows.length - at > limit) {
+      limit = rows.length - at + 20;
+      await tick();
+    }
+    const el = scroller.querySelector<HTMLElement>(`[data-event="${CSS.escape(row.msg.item_id)}"]`);
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.animate([{ background: "rgb(123 92 255 / 0.25)" }, { background: "transparent" }], {
@@ -1488,7 +1568,7 @@
       <div class="spinner" aria-label={tr("Loading older messages")}></div>
     {/if}
 
-    {#each rows as row (row.key)}
+    {#each shown as row (row.key)}
       {#if row.kind === "message"}
         {@const isSelected = !!selected?.has(row.msg.item_id)}
         <div data-event={row.msg.item_id} class="msg-row" class:selecting={!!selected} class:selected={isSelected}>

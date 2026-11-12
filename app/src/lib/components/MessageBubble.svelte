@@ -506,7 +506,7 @@
         {:else if c.kind === "poll"}
           <PollView {roomId} pollId={msg.item_id} poll={c} />
         {:else if c.kind === "audio"}
-          <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} />
+          <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} name={c.is_voice ? null : c.filename} />
         {:else if c.kind === "file"}
           <button class="file" onclick={() => afterTap(onSaveFile)} title={tr("Open or save")}>
             <span class="file-icon"><FileText size={26} /></span>
@@ -1117,12 +1117,17 @@
     font-size: 0.85rem;
     cursor: pointer;
   }
+  /* width: a button sizes itself to its content otherwise, and a long file name that can't
+     wrap would then push it out of the bubble. */
   .file,
   .location {
     display: flex;
     align-items: center;
     gap: 10px;
-    min-width: 200px;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: min(200px, 100%);
     padding: 4px 2px;
     border: none;
     background: none;
@@ -1132,10 +1137,12 @@
   }
   .file-icon {
     display: grid;
+    flex: none;
     color: var(--accent-a);
   }
   .file-meta {
     display: flex;
+    flex: 1;
     flex-direction: column;
     min-width: 0;
   }

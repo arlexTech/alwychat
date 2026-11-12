@@ -87,6 +87,8 @@ export class MessageSearch {
 
   /** Keep the index status fresh, and results too while history is still arriving. */
   start() {
+    // Started again after signing back in: one refresh loop, not one more each time.
+    clearInterval(this.#refresh);
     void this.#updateStatus();
     this.#refresh = setInterval(async () => {
       const before = this.status?.messages ?? 0;

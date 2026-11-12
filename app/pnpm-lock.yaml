@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/noto-color-emoji':
+        specifier: 5.3.2
+        version: 5.3.2
       '@lucide/svelte':
         specifier: ^1.65.0
         version: 1.65.0(svelte@5.57.3)
@@ -20,6 +23,9 @@ importers:
       livekit-client:
         specifier: ^2.23.0
         version: 2.23.0(@types/dom-mediacapture-record@1.0.22)
+      twemoji-colr-font:
+        specifier: 15.0.3
+        version: 15.0.3
     devDependencies:
       '@sveltejs/adapter-static':
         specifier: ^3.0.10
@@ -50,6 +56,9 @@ packages:
 
   '@bufbuild/protobuf@1.10.1':
     resolution: {integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==}
+
+  '@fontsource/noto-color-emoji@5.3.2':
+    resolution: {integrity: sha512-rO15sQ45Dc28hMAMz1X1oSOWxcbqNL+CiHHJ7JPn1gmfiGIuR/QyLuHqBrXivSYHsHVTXGT/m6/DuQ42s5xQkw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -570,6 +579,10 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
+  twemoji-colr-font@15.0.3:
+    resolution: {integrity: sha512-UsK4JUpaczeVoMGeYMnKaMTxKt7fujg1nQOk4NaC0teZmdOo+uAai0DIuaSzsMkShtG4J75F0OEsVdGJ+Q1pHQ==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+
   typed-emitter@2.1.0:
     resolution: {integrity: sha512-g/KzbYKbH5C2vPkaXGu8DJlHrGKHLsM25Zg9WuC9pMGfuvT+X25tZQWo5fK1BjBm8+UrVE9LDCvaY0CQk+fXDA==}
 
@@ -639,6 +652,8 @@ packages:
 snapshots:
 
   '@bufbuild/protobuf@1.10.1': {}
+
+  '@fontsource/noto-color-emoji@5.3.2': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -1045,6 +1060,8 @@ snapshots:
   totalist@3.0.1: {}
 
   tslib@2.8.1: {}
+
+  twemoji-colr-font@15.0.3: {}
 
   typed-emitter@2.1.0:
     optionalDependencies:

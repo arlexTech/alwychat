@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import { tr } from "$lib/i18n/index.svelte";
   import Link from "@lucide/svelte/icons/link";
   import UserPlus from "@lucide/svelte/icons/user-plus";
@@ -26,8 +27,10 @@
     onChanged?: () => void;
   } = $props();
 
-  let list = $state<MemberInfo[]>([]);
-  let loaded = $state(false);
+  // svelte-ignore state_referenced_locally
+  const known = peek<MemberInfo[]>(`memberList:${room.id}`);
+  let list = $state<MemberInfo[]>(known ?? []);
+  let loaded = $state(!!known);
   let query = $state("");
   let open = $state<MemberInfo | null>(null);
   // svelte-ignore state_referenced_locally
@@ -39,7 +42,7 @@
 
   function reload() {
     loadMembers(room.id)
-      .then((m) => ((list = m), (loaded = true)))
+      .then((m) => ((list = remember(`memberList:${room.id}`, m)), (loaded = true)))
       .catch((e) => ((error = String(e)), (loaded = true)));
   }
   $effect(reload);

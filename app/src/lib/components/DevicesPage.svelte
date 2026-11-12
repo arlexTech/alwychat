@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import { locale, tr, trn } from "$lib/i18n/index.svelte";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Laptop from "@lucide/svelte/icons/laptop";
@@ -11,14 +12,15 @@
   /** Where we're signed in. Signing a session out happens on the account page (OAuth). */
   let { onClose }: { onClose: () => void } = $props();
 
-  let list = $state<DeviceInfo[]>([]);
-  let loaded = $state(false);
+  const known = peek<DeviceInfo[]>("devices");
+  let list = $state<DeviceInfo[]>(known ?? []);
+  let loaded = $state(!!known);
   let renaming = $state<{ id: string; name: string } | null>(null);
   let error = $state<string | null>(null);
 
   function load() {
     loadDevices()
-      .then((d) => ((list = d), (loaded = true)))
+      .then((d) => ((list = remember("devices", d)), (loaded = true)))
       .catch((e) => ((error = String(e)), (loaded = true)));
   }
   $effect(load);

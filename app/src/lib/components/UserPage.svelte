@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import { tr } from "$lib/i18n/index.svelte";
   import Ban from "@lucide/svelte/icons/ban";
   import Copy from "@lucide/svelte/icons/copy";
@@ -40,8 +41,9 @@
     onChanged?: () => void;
   } = $props();
 
-  let profile = $state<UserResult | null>(null);
-  let blocked = $state(false);
+  // svelte-ignore state_referenced_locally
+  let profile = $state<UserResult | null>(peek<UserResult>(`user:${userId}`) ?? null);
+  let blocked = $state(peek<UserResult[]>("blocked")?.some((u) => u.user_id === userId) ?? false);
   let busy = $state(false);
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
@@ -49,8 +51,8 @@
   let reason = $state("");
 
   $effect(() => {
-    userProfile(userId).then((p) => (profile = p)).catch(() => {});
-    ignoredUsers().then((list) => (blocked = list.some((u) => u.user_id === userId))).catch(() => {});
+    userProfile(userId).then((p) => (profile = remember(`user:${userId}`, p))).catch(() => {});
+    ignoredUsers().then((list) => (blocked = remember("blocked", list).some((u) => u.user_id === userId))).catch(() => {});
     profiles.refresh([userId], true);
   });
 

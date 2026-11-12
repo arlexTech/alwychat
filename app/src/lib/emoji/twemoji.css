@@ -1,0 +1,9 @@
+/* Twemoji: graphics (c) Twitter and contributors, CC-BY 4.0; font SIL OFL 1.1. */
+@font-face {
+  font-family: "Twemoji";
+  font-display: swap;
+  src: url("../../../node_modules/twemoji-colr-font/twemoji.woff2") format("woff2");
+  /* Emoji only: its digits, # * and (c)/(R)/TM are blank. */
+  unicode-range: U+200D, U+20E3, U+203C, U+2049, U+2139, U+2194-21AA, U+231A-23FF, U+24C2, U+25AA-27BF,
+    U+2934-2935, U+2B05-2B55, U+3030, U+303D, U+3297, U+3299, U+FE0F, U+1F000-1FAFF, U+E0020-E007F;
+}

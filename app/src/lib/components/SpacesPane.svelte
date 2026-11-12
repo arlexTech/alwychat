@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tr, trn } from "$lib/i18n/index.svelte";
+  import { asList, stored } from "$lib/stored";
   import { onDestroy } from "svelte";
   import { fade, fly } from "svelte/transition";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -40,6 +41,8 @@
   import SpaceSettingsPage from "./SpaceSettingsPage.svelte";
   import CreateRoomPage from "./CreateRoomPage.svelte";
   import { nav } from "$lib/stores/nav.svelte";
+  import { peek, remember } from "$lib/cache";
+  import { sectionOrder } from "$lib/spaceSections";
 
   let {
     selectedId,
@@ -82,8 +85,11 @@
   $effect(() => {
     const id = current?.id;
     void settingsFor; // also when its settings open or close
-    if (id) spaceBanner(id).then((b) => current?.id === id && (banner = b)).catch(() => {});
-    else banner = null;
+    banner = id ? (peek<string | null>(`banner:${id}`, true) ?? null) : null;
+    if (id)
+      spaceBanner(id)
+        .then((b) => (remember(`banner:${id}`, b, true), current?.id === id && (banner = b)))
+        .catch(() => {});
   });
   let newSpace = $state(false);
   /** A space to open once it shows up (just created or joined). */
@@ -120,11 +126,20 @@
   const currentId = $derived(opened?.id ?? null);
   $effect(() => {
     const id = currentId;
-    children = [];
+    // What the space held last time shows at once; the server's answer replaces it.
+    const known = id ? peek<SpaceChild[]>(`space:${id}`, true) : undefined;
+    children = known ?? [];
     error = null;
     if (!id) return void closeSpace().catch(() => {});
-    loading = true;
+    loading = !known;
+    let first = true;
     openSpace(id, (list) => {
+      // The first answer is empty until the hierarchy arrives: keep the known list meanwhile
+      // (a later empty answer is real: the space was emptied).
+      const placeholder = first && !list.length && !!known?.length;
+      first = false;
+      if (placeholder) return;
+      remember(`space:${id}`, list, true);
       if (currentId === id) {
         children = list;
         loading = false;
@@ -136,8 +151,8 @@
   let canAdd = $state(false);
   $effect(() => {
     const id = currentId;
-    canAdd = false;
-    if (id) canAddToSpace(id).then((ok) => currentId === id && (canAdd = ok)).catch(() => {});
+    canAdd = id ? (peek<boolean>(`canAdd:${id}`, true) ?? false) : false;
+    if (id) canAddToSpace(id).then((ok) => (remember(`canAdd:${id}`, ok, true), currentId === id && (canAdd = ok))).catch(() => {});
   });
 
   const roomsById = $derived(new Map(chatList.rooms.map((r) => [r.id, r])));
@@ -147,11 +162,10 @@
       return r && (r.unread_messages > 0 || r.marked_unread);
     }).length;
 
-  // Joined chats in the chat list's order (most recent first); then sub-spaces; then the rest.
-  const joinedRooms = $derived.by(() => {
-    const ids = new Set(children.filter((c) => !c.is_space && c.joined).map((c) => c.id));
-    return chatList.rooms.filter((r) => ids.has(r.id));
-  });
+  // Joined chats in the space's own order (set in its settings, shared with other apps).
+  const joinedRooms = $derived(
+    children.filter((c) => !c.is_space).flatMap((c) => roomsById.get(c.id) ?? []),
+  );
   const joinedChats = $derived(joinedRooms.filter((r) => !r.is_voice));
   // Voice channels keep the space's order (not the most recent first), joined or not.
   const voiceChannels = $derived(
@@ -161,6 +175,8 @@
       .filter((v) => v.room || !v.child.joined),
   );
   const subSpaces = $derived(children.filter((c) => c.is_space));
+  /** Which kind comes first in the space's order decides which section comes first. */
+  const sections = $derived(sectionOrder(children));
   const joinable = $derived(children.filter((c) => !c.is_space && !c.is_voice && !c.joined && !roomsById.has(c.id)));
 
   /** Wait for a just-joined (or created) room to reach the chat list. */
@@ -179,6 +195,10 @@
 
   // ── Categories: the space's sub-spaces, shown as sections with their chats ──
   let categories = $state<SpaceCategory[]>([]);
+  $effect(() => {
+    const id = currentId;
+    categories = id ? (peek<SpaceCategory[]>(`categories:${id}`, true) ?? []) : [];
+  });
   let categoriesTimer: ReturnType<typeof setTimeout> | undefined;
   /** Reload them (after the space's children change, or a change of ours). */
   function loadCategories(delay = 300) {
@@ -187,7 +207,7 @@
     if (!id) return void (categories = []);
     categoriesTimer = setTimeout(() => {
       spaceCategories(id)
-        .then((list) => currentId === id && (categories = list))
+        .then((list) => (remember(`categories:${id}`, list, true), currentId === id && (categories = list)))
         .catch((e) => console.warn("categories", e));
     }, delay);
   }
@@ -196,7 +216,7 @@
     loadCategories();
   });
   const COLLAPSED_KEY = "alwychat.collapsedCategories";
-  let collapsed = $state<string[]>(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
+  let collapsed = $state<string[]>(asList(stored<unknown>(COLLAPSED_KEY, [])));
   function toggleCategory(id: string) {
     collapsed = collapsed.includes(id) ? collapsed.filter((c) => c !== id) : [...collapsed, id];
     localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed));
@@ -321,16 +341,16 @@
       <button class="icon" onclick={() => (settingsFor = current)} aria-label={tr("Space settings")}><Settings size={20} /></button>
     </header>
     {#if error}<p class="state error">{error}</p>{/if}
+    <!-- New voice channels: in the space's settings. -->
+    {#snippet chatsSection()}
+    {#if joinedChats.length}<h4>{tr("Chats")}</h4>{/if}
     {#each joinedChats as room (room.id)}
       <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} oncontextmenu={onRowMenu && ((e) => onRowMenu(e, room))} />
     {/each}
-    {#if voiceChannels.length || canAdd}
-      <h4 class="with-action">
-        {tr("Voice channels")}
-        {#if canAdd}
-          <button class="icon small" onclick={() => (newChannel = { name: "", busy: false, error: null })} aria-label={tr("New voice channel")} title={tr("New voice channel")}><Plus size={18} /></button>
-        {/if}
-      </h4>
+    {/snippet}
+    {#snippet voiceSection()}
+    {#if voiceChannels.length}
+      <h4>{tr("Voice channels")}</h4>
       {#each voiceChannels as v (v.child.id)}
         <VoiceChannel
           room={v.room}
@@ -341,6 +361,8 @@
         />
       {/each}
     {/if}
+    {/snippet}
+    {#snippet categoriesSection()}
     {#each subSpaces as sub (sub.id)}
       {@const cat = categoryOf(sub)}
       {@const open = !collapsed.includes(cat.id)}
@@ -380,6 +402,11 @@
           <p class="category-empty">{cat.joined || categories.some((c) => c.id === cat.id) ? tr("No chats in this category yet.") : tr("Loading…")}</p>
         {/each}
       {/if}
+    {/each}
+    {/snippet}
+    <!-- Sections in the space's own order (set in its settings → Change the order). -->
+    {#each sections as section (section)}
+      {#if section === "chats"}{@render chatsSection()}{:else if section === "voice"}{@render voiceSection()}{:else}{@render categoriesSection()}{/if}
     {/each}
     {#if canAdd}
       <button class="new-category" onclick={() => (newCategory = { name: "", busy: false, error: null })}><Plus size={16} />{tr("New category")}</button>
@@ -705,12 +732,6 @@
     color: var(--muted);
     font: inherit;
     cursor: pointer;
-  }
-  .with-action {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-right: 4px;
   }
   .icon.small {
     width: 30px;

@@ -15,7 +15,7 @@ use matrix_sdk::{
     room::{IncludeRelations, RelationsOptions},
     ruma::{
         OwnedEventId, OwnedUserId, UInt,
-        events::{AnySyncTimelineEvent, GlobalAccountDataEventType, relation::RelationType},
+        events::{AnySyncTimelineEvent, relation::RelationType},
         serde::Raw,
     },
 };
@@ -96,9 +96,12 @@ async fn maybe_delete(room: &Room, target: OwnedEventId) -> Result<()> {
     loop {
         let page = room.relations(target.clone(), options.clone()).await?;
         for event in &page.chunk {
-            if let Ok(Some(sender)) = event.raw().get_field::<OwnedUserId>("sender")
-                && sender != room.own_user_id()
-            {
+            // Other references to a photo (a thread-less reply by some app…) aren't views.
+            let kind = event.raw().get_field::<String>("type").ok().flatten();
+            if !matches!(kind.as_deref(), Some(VIEW_ONCE_VIEWED | "m.room.encrypted")) {
+                continue;
+            }
+            if let Ok(Some(sender)) = event.raw().get_field::<OwnedUserId>("sender") {
                 viewers.insert(sender);
             }
         }
@@ -107,13 +110,16 @@ async fn maybe_delete(room: &Room, target: OwnedEventId) -> Result<()> {
             None => break,
         }
     }
-    let others = room
+    // Everyone still in the chat, not just as many people (someone who left may have opened it).
+    let own = room.own_user_id().to_owned();
+    let others: Vec<OwnedUserId> = room
         .members(matrix_sdk::RoomMemberships::JOIN)
         .await?
         .into_iter()
-        .filter(|m| m.user_id() != room.own_user_id())
-        .count();
-    if viewers.len() >= others.max(1) {
+        .map(|m| m.user_id().to_owned())
+        .filter(|u| *u != own)
+        .collect();
+    if !others.is_empty() && others.iter().all(|u| viewers.contains(u)) {
         room.redact(&target, Some(REASON), None).await?;
         info!(room = %room.room_id(), "view-once message opened by everyone: deleted");
     }
@@ -123,14 +129,9 @@ async fn maybe_delete(room: &Room, target: OwnedEventId) -> Result<()> {
 impl crate::Core {
     /// View-once messages we already opened (on any of our devices).
     pub async fn viewed_once(&self) -> Result<Vec<String>> {
-        let account = self.client()?.account();
-        let kind = GlobalAccountDataEventType::from(VIEWED_ONCE);
-        let raw = match account.fetch_account_data(kind.clone()).await {
-            Ok(raw) => raw,
-            Err(_) => account.account_data_raw(kind).await?,
-        };
-        Ok(raw
-            .and_then(|r| serde_json::from_str::<Viewed>(r.json().get()).ok())
+        Ok(crate::offline::read_global(&self.client()?, VIEWED_ONCE)
+            .await?
+            .and_then(|v| serde_json::from_value::<Viewed>(v).ok())
             .unwrap_or_default()
             .events)
     }
@@ -144,12 +145,7 @@ impl crate::Core {
             viewed.push(event_id.to_owned());
             let skip = viewed.len().saturating_sub(KEEP);
             viewed.drain(..skip);
-            self.client()?
-                .account()
-                .set_account_data_raw(
-                    GlobalAccountDataEventType::from(VIEWED_ONCE),
-                    Raw::new(&json!({ "events": viewed }))?.cast_unchecked(),
-                )
+            crate::offline::write_global(&self.client()?, VIEWED_ONCE, json!({ "events": viewed }))
                 .await?;
         }
         room.send_raw(

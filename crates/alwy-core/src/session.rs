@@ -184,9 +184,15 @@ type SessionEndedHandler = Box<dyn Fn() + Send + Sync>;
 pub(crate) struct Active {
     pub client: Client,
     pub sync: Arc<SyncService>,
-    /// Background tasks feeding the UI; aborted on sign-out or re-subscribe.
+    /// The chat list's feed to the UI; a new subscriber replaces it.
     pub tasks: Vec<crate::rt::AbortHandle>,
+    /// The connection status feed to the UI; a new subscriber replaces it.
+    pub connection_task: Option<crate::rt::AbortHandle>,
+    /// Tasks that live as long as the session (not tied to a UI subscription).
+    pub background: Vec<crate::rt::AbortHandle>,
     pub chat: Option<crate::timeline::OpenChat>,
+    /// Counts `open_chat` calls: one that finishes after a newer one started gives way.
+    pub opening: u64,
     /// Live timelines of recently closed chats (newest last), reused when they reopen.
     pub recent_chats: Vec<(
         matrix_sdk::ruma::OwnedRoomId,
@@ -205,6 +211,24 @@ pub(crate) struct Active {
     pub spaces_task: Option<crate::rt::AbortHandle>,
     /// The open space's children feed.
     pub space_task: Option<crate::rt::AbortHandle>,
+}
+
+impl Active {
+    /// Stop everything this session runs. Nothing may outlive it: a leftover task keeps the
+    /// client (and its open store) alive after sign-out.
+    async fn stop(&self) {
+        self.may_persist.store(false, Ordering::SeqCst);
+        self.tasks
+            .iter()
+            .chain(&self.background)
+            .chain(&self.connection_task)
+            .chain(&self.encryption_task)
+            .chain(&self.search_task)
+            .chain(&self.spaces_task)
+            .chain(&self.space_task)
+            .for_each(|t| t.abort());
+        self.sync.stop().await;
+    }
 }
 
 impl Core {
@@ -438,16 +462,7 @@ impl Core {
     pub async fn end_session(&self) {
         let active = self.active.lock().unwrap().take();
         if let Some(active) = active {
-            active.may_persist.store(false, Ordering::SeqCst);
-            active.tasks.iter().for_each(|t| t.abort());
-            active.encryption_task.iter().for_each(|t| t.abort());
-            active.search_task.iter().for_each(|t| t.abort());
-            active
-                .spaces_task
-                .iter()
-                .chain(&active.space_task)
-                .for_each(|t| t.abort());
-            active.sync.stop().await;
+            active.stop().await;
         }
     }
 
@@ -458,16 +473,7 @@ impl Core {
         }
         let active = self.active.lock().unwrap().take();
         if let Some(active) = active {
-            active.may_persist.store(false, Ordering::SeqCst);
-            active.tasks.iter().for_each(|t| t.abort());
-            active.encryption_task.iter().for_each(|t| t.abort());
-            active.search_task.iter().for_each(|t| t.abort());
-            active
-                .spaces_task
-                .iter()
-                .chain(&active.space_task)
-                .for_each(|t| t.abort());
-            active.sync.stop().await;
+            active.stop().await;
             if let Err(e) = active.client.oauth().logout().await {
                 warn!("server-side logout failed, wiping locally anyway: {e}");
             }
@@ -535,7 +541,7 @@ impl Core {
         let mut changes = client.subscribe_to_session_changes();
         let ended = self.on_session_ended.clone();
         let checked = client.clone();
-        crate::rt::spawn(async move {
+        let watcher = crate::rt::spawn(async move {
             while let Ok(change) = changes.recv().await {
                 let SessionChange::UnknownToken(info) = change else {
                     continue;
@@ -559,7 +565,8 @@ impl Core {
                     Err(e) => warn!("couldn't check the session ({e}), keeping it"),
                 }
             }
-        });
+        })
+        .abort_handle();
 
         let verifications = crate::encryption::Verifications::install(&client);
         crate::notifications::install(&client, self.on_notification.clone(), self.settings.clone())
@@ -567,7 +574,6 @@ impl Core {
         crate::rtc::install(&client, self.on_call_signal.clone());
         crate::call_keys::install(&client);
         crate::view_once::install(&client);
-        crate::call_history::install(self.data_dir.join(&store_dir).join("calls.json"));
         #[cfg(not(target_family = "wasm"))]
         crate::autosave::install(
             &client,
@@ -575,7 +581,9 @@ impl Core {
             self.data_dir.join(&store_dir).join("autosave.json"),
         );
         crate::drafts::install(&client, self.on_draft.clone());
-        let search = crate::search::install(&client, &self.data_dir.join(&store_dir));
+        let (search, search_keys) =
+            crate::search::install(&client, &self.data_dir.join(&store_dir)).unzip();
+        let outbox = crate::offline::install(&client, self.data_dir.join(&store_dir));
         let disappearing = crate::disappearing::install(
             &client,
             self.data_dir.join(&store_dir).join("disappearing.json"),
@@ -599,8 +607,14 @@ impl Core {
         *self.active.lock().unwrap() = Some(Active {
             client,
             sync,
-            tasks: vec![disappearing],
+            tasks: Vec::new(),
+            connection_task: None,
+            background: [watcher, disappearing, outbox]
+                .into_iter()
+                .chain(search_keys)
+                .collect(),
             chat: None,
+            opening: 0,
             recent_chats: Vec::new(),
             verifications,
             encryption_task: None,
@@ -643,6 +657,8 @@ impl Core {
                     if status == "online" && !last.is_empty() {
                         client.send_queue().set_enabled(true).await;
                     }
+                    // Changes made offline (settings, drafts…) go out too.
+                    crate::offline::set_online(status != "offline");
                     sink(status);
                     last = status;
                 }
@@ -656,7 +672,11 @@ impl Core {
                 }
             }
         });
-        self.with_active(|a| a.tasks.push(task.abort_handle()))
+        self.with_active(|a| {
+            if let Some(old) = a.connection_task.replace(task.abort_handle()) {
+                old.abort();
+            }
+        })
     }
 
     /// The app is back in front: make sure the sync runs (no-op when it does).
@@ -664,6 +684,7 @@ impl Core {
         let sync = self.with_active(|a| a.sync.clone())?;
         sync.start().await;
         self.client()?.send_queue().set_enabled(true).await;
+        crate::offline::kick();
         Ok(())
     }
 

@@ -5,7 +5,7 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageDecoder, ImageReader, codecs::jpeg::JpegEncoder};
 use matrix_sdk::{
     attachment::{AttachmentInfo, BaseFileInfo, BaseImageInfo, BaseVideoInfo, Thumbnail},
-    ruma::{UInt, events::RoomAccountDataEventType, serde::Raw},
+    ruma::{UInt, events::RoomAccountDataEventType},
 };
 use matrix_sdk_ui::timeline::{AttachmentConfig, AttachmentSource};
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,45 @@ pub struct OutgoingFile {
     /// Shown once, then deleted (AlwyChat only, see view_once.rs).
     #[serde(default)]
     pub view_once: bool,
+    /// A video's picture size, length and preview, read by the UI (its player can; we can't
+    /// decode video here). Without them other apps show a blank box of the wrong shape.
+    #[serde(default)]
+    pub video: Option<VideoMeta>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct VideoMeta {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u64>,
+    /// A JPEG preview frame, base64…
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+    /// …or as the last `thumbnail_len` bytes after the file's own (raw uploads).
+    #[serde(default)]
+    pub thumbnail_len: usize,
+}
+
+/// Longest side of a video preview we accept from the UI.
+const VIDEO_THUMBNAIL_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// The preview frame as a thumbnail, with its blurhash. `None` if it isn't a readable JPEG.
+fn video_thumbnail(jpeg: Vec<u8>) -> Option<(Thumbnail, Option<String>)> {
+    if jpeg.is_empty() || jpeg.len() > VIDEO_THUMBNAIL_MAX_BYTES {
+        return None;
+    }
+    let image = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg).ok()?;
+    let blurhash = crate::blurhash::of_image(&image);
+    Some((
+        Thumbnail {
+            height: UInt::from(image.height()),
+            width: UInt::from(image.width()),
+            size: UInt::new(jpeg.len() as u64)?,
+            data: jpeg,
+            content_type: mime::IMAGE_JPEG,
+        },
+        blurhash,
+    ))
 }
 
 /// `com.alwy.chat.gallery`: which album a photo belongs to (other clients just show the photos).
@@ -45,8 +84,25 @@ pub struct GalleryRef {
 impl crate::Core {
     /// Send one photo/video/file to the open chat. Photos follow the chat's HD setting
     /// (else the app default): compressed photos are resized and re-encoded as JPEG.
-    pub async fn send_file(&self, room_id: &str, file: OutgoingFile, bytes: Vec<u8>) -> Result<()> {
+    pub async fn send_file(
+        &self,
+        room_id: &str,
+        mut file: OutgoingFile,
+        mut bytes: Vec<u8>,
+    ) -> Result<()> {
         let timeline = self.timeline(room_id)?;
+        // A video's preview frame: after the file's bytes, or base64 in its description.
+        let video = file.video.take();
+        let preview = video.as_ref().and_then(|v| {
+            if v.thumbnail_len > 0 && v.thumbnail_len < bytes.len() {
+                Some(bytes.split_off(bytes.len() - v.thumbnail_len))
+            } else {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(v.thumbnail.as_deref()?)
+                    .ok()
+            }
+        });
         let hd = self
             .chat_media_hd(room_id)
             .await?
@@ -103,9 +159,26 @@ impl crate::Core {
         } else {
             let size = UInt::new(bytes.len() as u64);
             config.info = Some(if mime.starts_with("video/") {
+                let video = video.unwrap_or_default();
+                // A view-once video gives nothing away before it's opened.
+                let preview = match preview.filter(|_| !file.view_once) {
+                    Some(jpeg) => crate::rt::blocking(move || video_thumbnail(jpeg))
+                        .await
+                        .ok()
+                        .flatten(),
+                    None => None,
+                };
+                let (thumbnail, blurhash) = preview.unzip();
+                config.thumbnail = thumbnail;
                 AttachmentInfo::Video(BaseVideoInfo {
                     size,
-                    ..Default::default()
+                    width: video.width.filter(|w| *w > 0).map(UInt::from),
+                    height: video.height.filter(|h| *h > 0).map(UInt::from),
+                    duration: video
+                        .duration_ms
+                        .filter(|d| *d > 0)
+                        .map(std::time::Duration::from_millis),
+                    blurhash: blurhash.flatten(),
                 })
             } else {
                 AttachmentInfo::File(BaseFileInfo { size })
@@ -141,12 +214,7 @@ impl crate::Core {
             Some(hd) => json!({ "hd": hd }),
             None => json!({}),
         };
-        room.set_account_data_raw(
-            RoomAccountDataEventType::from(MEDIA_PREFS),
-            Raw::new(&content)?.cast_unchecked(),
-        )
-        .await?;
-        Ok(())
+        crate::offline::write_room_data(&room, MEDIA_PREFS, content).await
     }
 }
 
@@ -318,6 +386,30 @@ mod tests {
     fn small_images_get_no_thumbnail() {
         let p = prepare_image(png(400, 300), "image/png", false).unwrap();
         assert!(p.thumbnail.is_none());
+    }
+
+    #[test]
+    fn video_previews() {
+        let frame = encode_jpeg(&DynamicImage::new_rgb8(800, 450), 80).unwrap();
+        let (thumb, blurhash) = video_thumbnail(frame.clone()).unwrap();
+        assert_eq!(
+            (u64::from(thumb.width), u64::from(thumb.height)),
+            (800, 450)
+        );
+        assert_eq!(thumb.data, frame);
+        assert!(blurhash.is_some());
+        // Not a picture, nothing, or far too big: sent without a preview.
+        assert!(video_thumbnail(b"not a jpeg".to_vec()).is_none());
+        assert!(video_thumbnail(Vec::new()).is_none());
+        // What the UI sends with a video.
+        let file: OutgoingFile = serde_json::from_str(
+            r#"{"filename":"a.mp4","mime":"video/mp4","caption":null,"gallery":null,
+                "video":{"width":1280,"height":720,"duration_ms":4000,"thumbnail_len":20756}}"#,
+        )
+        .unwrap();
+        let video = file.video.unwrap();
+        assert_eq!((video.width, video.duration_ms), (Some(1280), Some(4000)));
+        assert_eq!(video.thumbnail_len, 20756);
     }
 
     #[test]

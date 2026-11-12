@@ -52,6 +52,14 @@
   --window-controls: 0px;
 }
 
+/* The chosen emoji font sits right after the text font, which has no emoji of its own. */
+html[data-emoji="google"] body {
+  font-family: "Inter", "Noto Color Emoji", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+html[data-emoji="twitter"] body {
+  font-family: "Inter", "Twemoji", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
 html,
 body {
   margin: 0;

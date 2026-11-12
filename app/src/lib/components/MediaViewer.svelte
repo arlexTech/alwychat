@@ -7,6 +7,7 @@
   import { fade, scale } from "svelte/transition";
   import { eventMediaUrl, playableUrl } from "$lib/media";
   import { saveToGallery } from "$lib/save";
+  import { onBack } from "$lib/back.svelte";
 
   type Item = { media: string; kind: "image" | "video"; caption: string | null };
   let {
@@ -25,6 +26,8 @@
   // The album position starts where the user clicked, then the viewer owns it.
   let index = $state(untrack(() => start));
   const item = $derived(items[index]);
+  /** Photos whose full version is on screen (until then: the small one and a loading ring). */
+  const ready = $state<Record<number, boolean>>({});
 
   function step(delta: number) {
     const next = Math.max(0, Math.min(items.length - 1, index + delta));
@@ -203,6 +206,9 @@
     else onClose();
   }
 
+  // Android back closes the viewer, wherever it was opened from (chat, shared media…).
+  onMount(() => onBack(() => onClose()));
+
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -238,11 +244,19 @@
         <div class="slide">
           {#if Math.abs(i - index) <= 1}
             {#if it.kind === "image"}
+              {#if !ready[i]}
+                <!-- The small version (already on screen in the chat) while the full one loads. -->
+                <img class="preview" src={eventMediaUrl(it.media, true)} alt="" draggable="false" onerror={(e) => ((e.currentTarget as HTMLElement).style.visibility = "hidden")} />
+                <span class="ring" aria-label={tr("Loading…")}></span>
+              {/if}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
               <img
                 src={eventMediaUrl(it.media)}
                 alt={it.caption ?? ""}
                 draggable="false"
+                class:pending={!ready[i]}
+                onload={() => (ready[i] = true)}
+                onerror={() => (ready[i] = true)}
                 class:zooming
                 style:transform={i === index && zoom > 1 ? `translate(${panX}px, ${panY}px) scale(${zoom})` : undefined}
                 onclick={(e) => e.stopPropagation()}
@@ -251,7 +265,8 @@
             {:else if i === index}
               <!-- svelte-ignore a11y_media_has_caption -->
               {#await playableUrl(eventMediaUrl(it.media))}
-                <div class="video-placeholder">…</div>
+                <img class="preview" src={eventMediaUrl(it.media, true)} alt="" draggable="false" onerror={(e) => ((e.currentTarget as HTMLElement).style.visibility = "hidden")} />
+                <span class="ring" aria-label={tr("Loading…")}></span>
               {:then url}
                 <video
                   src={url}
@@ -274,6 +289,8 @@
     </div>
   </div>
 
+  <div class="top">
+  {#if items.length > 1}<span class="counter">{index + 1} / {items.length}</span>{/if}
   <div class="bar" onclick={(e) => e.stopPropagation()}>
     {#if onShow}<button onclick={() => onShow(index)}>{tr("Show in chat")}</button>{/if}
     <button onclick={() => save(false)} disabled={saving}>{saving ? tr("Saving…") : tr("Save")}</button>
@@ -281,6 +298,7 @@
       <button onclick={() => save(true)} disabled={saving}>{tr("Save all ({length})", { length: items.length })}</button>
     {/if}
     <button onclick={onClose} aria-label={tr("Close")}><X size={18} /></button>
+  </div>
   </div>
 
   {#if items.length > 1}
@@ -290,7 +308,6 @@
     {#if index < items.length - 1}
       <button class="nav next" onclick={(e) => (e.stopPropagation(), step(1))} aria-label={tr("Next")}><ChevronRight size={28} /></button>
     {/if}
-    <span class="counter">{index + 1} / {items.length}</span>
   {/if}
 
   {#if item.caption || status}
@@ -352,6 +369,34 @@
     object-fit: contain;
     -webkit-user-drag: none;
   }
+  .slide > :global(*) {
+    grid-area: 1 / 1;
+  }
+  img.preview {
+    width: 100%;
+    height: 100%;
+    filter: blur(6px);
+    opacity: 0.85;
+  }
+  img.pending {
+    opacity: 0;
+  }
+  .ring {
+    z-index: 1;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 4px solid rgb(255 255 255 / 0.25);
+    border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.5));
+    pointer-events: none;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
   .video-placeholder {
     display: grid;
     place-items: center;
@@ -362,13 +407,26 @@
     color: white;
     font-size: 2.5rem;
   }
-  .bar {
+  /* Counter on the left, buttons on the right; on a narrow screen the buttons wrap below
+     instead of covering the counter. */
+  .top {
     position: absolute;
     top: 12px;
+    left: 12px;
     right: calc(12px + var(--window-controls));
     z-index: 1;
     display: flex;
+    align-items: flex-start;
     gap: 8px;
+    pointer-events: none;
+  }
+  .bar {
+    margin-left: auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    pointer-events: auto;
   }
   /* Dark frosted pills: readable over a bright or zoomed-in photo too. */
   .bar button,
@@ -435,10 +493,7 @@
     right: 16px;
   }
   .counter {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    z-index: 1;
+    flex: none;
     padding: 8px 14px;
     border-radius: 999px;
     color: white;

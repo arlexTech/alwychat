@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
 
-use crate::{Error, Result, names::DISAPPEARING};
+use crate::{Result, names::DISAPPEARING};
 
 /// Longest delay we ask the server for (Synapse's `max_delay`, often 24 h).
 const SERVER_MAX_DELAY: Duration = Duration::from_secs(24 * 3600);
@@ -175,7 +175,7 @@ async fn schedule(queue: &Queue, event: &Raw<AnySyncTimelineEvent>, room: &Room)
     if ts < timer.since {
         return;
     }
-    let at = ts + timer.timer_ms;
+    let at = ts.saturating_add(timer.timer_ms);
     let wait = at.saturating_sub(now_ms());
     if takes_delayed_redactions(room) && wait <= SERVER_MAX_DELAY.as_millis() as u64 {
         match delayed_redaction(room, &id, Duration::from_millis(wait)).await {
@@ -257,9 +257,7 @@ impl crate::Core {
             Some(timer_ms) => json!({ "timer_ms": timer_ms, "since": now_ms() }),
             None => json!({}),
         };
-        room.send_state_event_raw(DISAPPEARING, "", content)
-            .await
-            .map_err(|e| Error::Timeline(e.to_string()))?;
+        crate::offline::write_state(&room, DISAPPEARING, "", content).await?;
         Ok(())
     }
 

@@ -7,7 +7,6 @@ pub mod applock;
 #[cfg(not(target_family = "wasm"))]
 pub mod autosave;
 pub mod blurhash;
-pub mod call_history;
 pub mod call_keys;
 pub mod custom;
 pub mod disappearing;
@@ -28,6 +27,7 @@ pub mod mentions;
 pub mod mutes;
 pub mod names;
 pub mod notifications;
+pub mod offline;
 pub mod pins;
 pub mod polls;
 pub mod presence;

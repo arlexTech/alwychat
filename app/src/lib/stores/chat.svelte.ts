@@ -1,13 +1,36 @@
 import { closeChat, loadNewer, loadOlder, openChat, type ChatStyle, type Pins, type TimelineEntry } from "$lib/backend";
 import { applyDiffs } from "./list";
+import { peek, remember } from "$lib/cache";
 
 /** Older messages are fetched until at least this many entries are loaded. */
 const MIN_ENTRIES = 30;
 
+// What a chat showed when we left it, drawn the moment it's opened again (also after a
+// restart) while the core rebuilds its timeline; the live one then takes over in place.
+const SNAPSHOT_ENTRIES = 30;
+const SNAPSHOT_ROOMS = 15;
+const SNAPSHOT_KEY = "alwychat.snapshots";
+
+function loadSnapshots(): Map<string, TimelineEntry[]> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) ?? "[]");
+    return new Map(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Map();
+  }
+}
+
+/** Row keys shared by a snapshot message and the same message in the live timeline, so the
+ *  swap redraws nothing (prefixed: they never clash with the core's own keys). */
+const snapKey = (e: TimelineEntry) =>
+  e.type === "message" ? `snap:${e.item_id}` : e.key.startsWith("snap:") ? e.key : `snap:${e.key}`;
+
 /** The chat on screen: its live timeline, kept in sync with the core. */
 class Chat {
   roomId = $state<string | null>(null);
-  entries = $state<TimelineEntry[]>([]);
+  // Plain objects, replaced as a whole on each batch: thousands of deeply reactive entries
+  // made every update (and every read while drawing) slow in long chats.
+  entries = $state.raw<TimelineEntry[]>([]);
   loaded = $state(false);
   atStart = $state(false);
   loadingOlder = $state(false);
@@ -17,6 +40,43 @@ class Chat {
   /** Theme, quick reaction and nicknames; null until loaded (the last one seen is reused). */
   style = $state<ChatStyle | null>(null);
   #styles = new Map<string, ChatStyle>();
+  #snapshots: Map<string, TimelineEntry[]> | null = null;
+  /** The live timeline answered (until then a snapshot may be on screen). */
+  #live = false;
+  #saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Keep what this chat shows now for its next opening. */
+  #keepSnapshot(now = false) {
+    const roomId = this.roomId;
+    if (!roomId || this.focused || !this.loaded || !this.entries.length) return;
+    const snaps = (this.#snapshots ??= loadSnapshots());
+    snaps.delete(roomId);
+    snaps.set(
+      roomId,
+      // Sent messages only (not ones still sending), and no "new messages" line.
+      this.entries
+        .slice(-SNAPSHOT_ENTRIES)
+        .filter((e) => e.type !== "read_marker" && !(e.type === "message" && !e.item_id.startsWith("$"))),
+    );
+    while (snaps.size > SNAPSHOT_ROOMS) snaps.delete(snaps.keys().next().value!);
+    clearTimeout(this.#saveTimer);
+    const write = () => {
+      try {
+        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify([...snaps]));
+      } catch {
+        // Full storage: the in-memory copy still works for this run.
+      }
+    };
+    // Written when the app is idle, not while the next chat opens (at once when hidden:
+    // timers stop in the background).
+    if (now) write();
+    else this.#saveTimer = setTimeout(write, 1500);
+  }
+
+  /** Save the open chat's look now (the app is going to the background). */
+  persist() {
+    this.#keepSnapshot(true);
+  }
   /** Pinned messages (newest pin first). */
   pins = $state<Pins>({ messages: [], can_pin: false });
 
@@ -66,17 +126,31 @@ class Chat {
     const generation = ++this.#generation;
     const current = () => this.#generation === generation;
     const sameRoom = this.roomId === roomId;
+    if (!sameRoom) this.#keepSnapshot();
     this.roomId = roomId;
     this.focused = focus;
     this.atEnd = !focus;
-    this.entries = [];
-    this.loaded = false;
+    // The snapshot (if any) until the first live batch.
+    const snapshot = focus ? undefined : (this.#snapshots ??= loadSnapshots()).get(roomId);
+    this.entries = snapshot?.map((e) => ({ ...e, key: snapKey(e) })) ?? [];
+    this.loaded = !!snapshot?.length;
+    const snapped = new Set(snapshot?.flatMap((e) => (e.type === "message" ? [e.item_id] : [])));
+    const renamed = new WeakMap<TimelineEntry, TimelineEntry>();
+    const shared = (e: TimelineEntry): TimelineEntry => {
+      if (e.type !== "message" || !snapped.has(e.item_id)) return e;
+      let copy = renamed.get(e);
+      if (!copy) renamed.set(e, (copy = { ...e, key: snapKey(e) }));
+      return copy;
+    };
+    let live: TimelineEntry[] | null = null;
+    this.#live = false;
     this.atStart = false;
     this.error = null;
     if (!sameRoom) {
       this.typing = [];
-      // Last known look right away, so the chat doesn't flash the default theme.
-      this.style = this.#styles.get(roomId) ?? null;
+      // Last known look right away (also after a restart), so the chat doesn't flash the
+      // default theme.
+      this.style = this.#styles.get(roomId) ?? peek<ChatStyle>(`style:${roomId}`, true) ?? null;
       this.pins = { messages: [], can_pin: false };
     }
     try {
@@ -85,7 +159,11 @@ class Chat {
         (diffs) => {
           // Late batches from the previous timeline are dropped.
           if (!current()) return;
-          applyDiffs(this.entries, diffs);
+          // Diffs apply to the live list, never to the snapshot shown meanwhile.
+          live = live ? live.slice() : [];
+          this.#live = true;
+          applyDiffs(live, diffs);
+          this.entries = snapped.size ? live.map(shared) : live;
           this.loaded = true;
         },
         (names) => {
@@ -93,6 +171,7 @@ class Chat {
         },
         (style) => {
           this.#styles.set(roomId, style);
+          remember(`style:${roomId}`, style, true);
           if (current()) this.style = style;
         },
         (pins) => {
@@ -100,7 +179,7 @@ class Chat {
         },
         focus,
       );
-      while (current() && !focus && !this.atStart && this.entries.length < MIN_ENTRIES) {
+      while (current() && !focus && !this.atStart && ((live as TimelineEntry[] | null)?.length ?? 0) < MIN_ENTRIES) {
         if (!(await this.older())) break;
       }
     } catch (e) {
@@ -130,7 +209,8 @@ class Chat {
 
   async older(): Promise<boolean> {
     const roomId = this.roomId;
-    if (!roomId || this.atStart || this.loadingOlder) return false;
+    // Older messages come from the live timeline, not the snapshot shown before it.
+    if (!roomId || this.atStart || this.loadingOlder || !this.#live) return false;
     this.loadingOlder = true;
     this.olderFailed = false;
     try {
@@ -164,6 +244,7 @@ class Chat {
 
   close() {
     if (!this.roomId) return;
+    this.#keepSnapshot();
     this.#generation++;
     this.focused = null;
     this.roomId = null;
@@ -175,6 +256,8 @@ class Chat {
 }
 
 export const chat = new Chat();
+if (typeof document !== "undefined")
+  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && chat.persist());
 
 // Dev builds only: lets the desktop test harness (WebDriver) read the open chat.
 if (import.meta.env.DEV) (globalThis as Record<string, unknown>).__chat = chat;

@@ -44,11 +44,22 @@ export function laterTime(ms: number, now = Date.now()): string {
   return `${date.format(d)} ${t}`;
 }
 
-/** Two-letter initials for avatar fallbacks. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** First visible character of a word, whole (an emoji or a flag is several code units). */
+function firstChar(word: string): string {
+  for (const { segment } of graphemes.segment(word)) return segment;
+  return "";
+}
+
+/** Two-letter initials for avatar fallbacks (one emoji if the name starts with one). */
 export function initials(name: string): string {
   const words = name.replace(/^[@#!]/, "").trim().split(/\s+/).filter(Boolean);
-  const letters = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 1);
-  return letters.toUpperCase();
+  if (!words.length) return "?";
+  const first = firstChar(words[0]);
+  if (/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(first)) return first;
+  const second = words.length > 1 ? firstChar(words[1]) : "";
+  return (/\p{L}|\p{N}/u.test(second) ? first + second : first).toUpperCase();
 }
 
 /** Bubble timestamp: always just the time. */

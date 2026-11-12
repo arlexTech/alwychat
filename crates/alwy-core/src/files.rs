@@ -22,7 +22,11 @@ pub fn write_private_now(path: &std::path::Path, bytes: &[u8]) -> std::io::Resul
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(&tmp)?.write_all(bytes)?;
+    let mut file = options.open(&tmp)?;
+    file.write_all(bytes)?;
+    // On disk before it replaces the old file: a power cut must not leave an empty session.
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(tmp, path)
 }
 

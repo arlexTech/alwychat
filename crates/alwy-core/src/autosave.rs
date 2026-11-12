@@ -64,62 +64,85 @@ pub(crate) fn install(client: &Client, settings: Arc<Mutex<Settings>>, mark: Pat
         .and_then(|b| serde_json::from_slice::<Marks>(&b).ok())
         .unwrap_or_default();
     let marks = Arc::new(Mutex::new(marks));
-    client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, room: Room| {
-        let settings = settings.clone();
-        let marks = marks.clone();
-        let mark = mark.clone();
-        async move {
-            let wanted = settings
-                .lock()
-                .unwrap()
-                .auto_save_rooms
-                .iter()
-                .any(|r| r == room.room_id().as_str());
-            // No target yet (a push woke the app before its UI): leave the message for later.
-            if !wanted || event.sender == room.own_user_id() || TARGET.lock().unwrap().is_none() {
-                return;
-            }
-            let sent: u64 = event.origin_server_ts.get().into();
-            let snapshot = {
-                let mut marks = marks.lock().unwrap();
-                let since = marks
-                    .rooms
-                    .entry(room.room_id().to_string())
-                    .or_insert_with(|| now_ms().saturating_sub(FIRST_LOOK_SLACK_MS));
-                if sent <= *since {
+    client.add_event_handler(
+        move |event: OriginalSyncRoomMessageEvent,
+              raw: matrix_sdk::event_handler::RawEvent,
+              room: Room| {
+            let settings = settings.clone();
+            let marks = marks.clone();
+            let mark = mark.clone();
+            async move {
+                // A view-once photo is meant to be seen once, not kept.
+                let view_once = serde_json::from_str::<serde_json::Value>(raw.get())
+                    .ok()
+                    .and_then(|e| e.get("content")?.get(crate::names::VIEW_ONCE)?.as_bool())
+                    == Some(true);
+                if view_once {
                     return;
                 }
-                *since = sent;
-                marks.clone()
-            };
-            if let Ok(bytes) = serde_json::to_vec(&snapshot)
-                && let Err(e) = crate::files::write(&mark, bytes).await
-            {
-                warn!("auto-save mark: {e}");
+                let wanted = settings
+                    .lock()
+                    .unwrap()
+                    .auto_save_rooms
+                    .iter()
+                    .any(|r| r == room.room_id().as_str());
+                // No target yet (a push woke the app before its UI): leave the message for later.
+                if !wanted || event.sender == room.own_user_id() || TARGET.lock().unwrap().is_none()
+                {
+                    return;
+                }
+                let sent: u64 = event.origin_server_ts.get().into();
+                let snapshot = {
+                    let mut marks = marks.lock().unwrap();
+                    let since = marks
+                        .rooms
+                        .entry(room.room_id().to_string())
+                        .or_insert_with(|| now_ms().saturating_sub(FIRST_LOOK_SLACK_MS));
+                    if sent <= *since {
+                        return;
+                    }
+                    *since = sent;
+                    marks.clone()
+                };
+                if let Ok(bytes) = serde_json::to_vec(&snapshot)
+                    && let Err(e) = crate::files::write(&mark, bytes).await
+                {
+                    warn!("auto-save mark: {e}");
+                }
+                save(&room, event).await;
             }
-            save(&room, event).await;
-        }
-    });
+        },
+    );
 }
+
+/// Bigger files aren't saved by themselves: the whole file is held in memory on its way to
+/// the disk, and a phone's storage isn't for the taking.
+const MAX_AUTO_SAVE_BYTES: u64 = 200 * 1024 * 1024;
 
 async fn save(room: &Room, event: OriginalSyncRoomMessageEvent) {
     // An edit isn't a new photo.
     if matches!(event.content.relates_to, Some(Relation::Replacement(_))) {
         return;
     }
-    let (source, name, mime) = match &event.content.msgtype {
+    let (source, name, mime, size) = match &event.content.msgtype {
         MessageType::Image(c) => (
             c.source.clone(),
             c.filename().to_owned(),
             c.info.as_ref().and_then(|i| i.mimetype.clone()),
+            c.info.as_ref().and_then(|i| i.size),
         ),
         MessageType::Video(c) => (
             c.source.clone(),
             c.filename().to_owned(),
             c.info.as_ref().and_then(|i| i.mimetype.clone()),
+            c.info.as_ref().and_then(|i| i.size),
         ),
         _ => return,
     };
+    if size.is_some_and(|s| u64::from(s) > MAX_AUTO_SAVE_BYTES) {
+        info!(event = %event.event_id, "too big to save by itself");
+        return;
+    }
     if !SEEN.lock().unwrap().insert(event.event_id.clone()) {
         return;
     }

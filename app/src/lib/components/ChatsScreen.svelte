@@ -18,9 +18,6 @@
   import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
   import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
-  import CallsPane from "./CallsPane.svelte";
-  import PhoneIcon from "@lucide/svelte/icons/phone";
-  import { calls } from "$lib/stores/calls.svelte";
   import { viewOnce } from "$lib/stores/viewOnce.svelte";
   import { onMount } from "svelte";
   import { friendlyError } from "$lib/errors";
@@ -135,7 +132,7 @@
   }
   let query = $state("");
   /** Bottom bar: chats, or spaces and their chats. */
-  let tab = $state<"chats" | "spaces" | "calls">("chats");
+  let tab = $state<"chats" | "spaces">("chats");
   /** Messages matching the search box, under the matching chats. */
   const messageSearch = new MessageSearch();
   $effect(() => {
@@ -164,10 +161,6 @@
   // Android back: a full-screen call shrinks to its pill first.
   $effect(() => {
     if (call.active && !call.minimized) return onBack(() => (call.minimized = true));
-  });
-  // The call history: back returns to the chats.
-  $effect(() => {
-    if (tab === "calls") return onBack(() => (tab = "chats"));
   });
   // Then menus and sheets, then the open chat.
   $effect(() => {
@@ -278,7 +271,6 @@
     mutes.start();
     presence.start();
     call.listen();
-    void calls.start();
     void viewOnce.load();
     spaces.start();
     saved.start();
@@ -361,16 +353,7 @@
       <button class="me" onclick={() => (settingsOpen = true)} aria-label={tr("Settings")} title={tr("Settings")}>
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
-      <h1>{tab === "chats" ? tr("Chats") : tab === "spaces" ? tr("Spaces") : tr("Calls")}</h1>
-      <!-- Calls are a page from here, not a tab: used less than chats and spaces. -->
-      <button
-        class="new-chat calls-button"
-        class:active={tab === "calls"}
-        onclick={() => (tab = tab === "calls" ? "chats" : "calls")}
-        aria-label={tr("Calls")}
-        title={tr("Calls")}
-        ><PhoneIcon size={20} />{#if calls.unseenMissed && tab !== "calls"}<span class="missed">{calls.unseenMissed}</span>{/if}</button
-      >
+      <h1>{tab === "chats" ? tr("Chats") : tr("Spaces")}</h1>
       <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label={tr("New chat")} title={tr("New chat")}><SquarePen size={21} /></button>
     </header>
 
@@ -441,10 +424,6 @@
     {#if tab === "spaces"}
       <div class="rows">
         <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} onRowMenu={openRowMenu} />
-      </div>
-    {:else if tab === "calls"}
-      <div class="rows">
-        <CallsPane onOpen={(id) => (selectedId = id)} />
       </div>
     {:else}
     <input class="search" type="search" placeholder={tr("Search")} bind:value={query} />
@@ -817,27 +796,6 @@
   }
   .new-chat:hover {
     background: var(--surface-hover);
-  }
-  .calls-button {
-    position: relative;
-  }
-  .calls-button.active {
-    background: color-mix(in srgb, var(--accent-a) 22%, transparent);
-    color: var(--accent-a);
-  }
-  /* Missed calls: red, like a missed call anywhere. */
-  .missed {
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    min-width: 18px;
-    padding: 1px 5px;
-    border-radius: 999px;
-    background: var(--danger);
-    color: white;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
   }
   .me {
     padding: 0;

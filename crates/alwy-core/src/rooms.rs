@@ -277,13 +277,19 @@ async fn summarize(room: &Room) -> RoomSummary {
         is_voice: is_voice_type(room.room_type().as_ref()),
         is_space: room.is_space(),
         is_invite: room.state() == RoomState::Invited,
-        is_favourite: room.is_favourite(),
-        is_archived: room.is_low_priority(),
-        is_muted: room.cached_user_defined_notification_mode() == Some(RoomNotificationMode::Mute),
+        // Changes made offline show until they're sent.
+        is_favourite: crate::offline::waiting_flag(room.room_id().as_str(), "tag|m.favourite")
+            .unwrap_or_else(|| room.is_favourite()),
+        is_archived: crate::offline::waiting_flag(room.room_id().as_str(), "tag|m.lowpriority")
+            .unwrap_or_else(|| room.is_low_priority()),
+        is_muted: crate::offline::waiting_flag(room.room_id().as_str(), "mute").unwrap_or_else(
+            || room.cached_user_defined_notification_mode() == Some(RoomNotificationMode::Mute),
+        ),
         is_encrypted: room.encryption_state().is_encrypted(),
         unread_messages: room.num_unread_messages(),
         unread_mentions: room.num_unread_mentions(),
-        marked_unread: room.is_marked_unread(),
+        marked_unread: crate::offline::waiting_flag(room.room_id().as_str(), "unread")
+            .unwrap_or_else(|| room.is_marked_unread()),
         latest: latest_message(room, is_dm).await,
         successor: room.successor_room().map(|s| s.room_id.to_string()),
         predecessor: room.predecessor_room().map(|p| p.room_id.to_string()),
@@ -407,16 +413,12 @@ impl crate::Core {
 
     /// Pin a chat to the top (the spec's favourite tag, shared with Element).
     pub async fn set_pinned(&self, room_id: &str, pinned: bool) -> Result<()> {
-        self.room(room_id)?.set_is_favourite(pinned, None).await?;
-        Ok(())
+        crate::offline::write_tag(&self.room(room_id)?, "m.favourite", pinned).await
     }
 
     /// Archive a chat (low-priority tag); a new message doesn't unarchive it.
     pub async fn set_archived(&self, room_id: &str, archived: bool) -> Result<()> {
-        self.room(room_id)?
-            .set_is_low_priority(archived, None)
-            .await?;
-        Ok(())
+        crate::offline::write_tag(&self.room(room_id)?, "m.lowpriority", archived).await
     }
 
     /// Mute (no notifications or badges) or restore the default notification mode.
@@ -432,7 +434,13 @@ impl crate::Core {
                 .delete_user_defined_room_rules(room.room_id())
                 .await
         };
-        result.map_err(|e| crate::Error::Sync(e.to_string()))?;
+        if let Err(e) = result {
+            // No connection: the mute waits for it, and shows now.
+            if crate::offline::online() {
+                return Err(crate::Error::Sync(e.to_string()));
+            }
+            crate::offline::later_mute(&room, muted);
+        }
         // The push-rule change only reaches the room's cached mode on a later sync, and that
         // alone doesn't refresh the chat list: update it now so the row changes right away.
         if muted {
@@ -445,8 +453,7 @@ impl crate::Core {
 
     /// Flag a chat as unread (or clear the flag) without touching read receipts.
     pub async fn set_marked_unread(&self, room_id: &str, unread: bool) -> Result<()> {
-        self.room(room_id)?.set_unread_flag(unread).await?;
-        Ok(())
+        crate::offline::write_unread(&self.room(room_id)?, unread).await
     }
 
     /// Start streaming the chat list to `sink`. Replaces any previous subscription.
@@ -461,7 +468,6 @@ impl crate::Core {
             }
         });
         self.with_active(|a| {
-            a.tasks.retain(|t| !crate::rt::finished(t));
             // One chat list at a time: the newest subscriber wins.
             a.tasks.drain(..).for_each(|t| t.abort());
             a.tasks.push(task.abort_handle());

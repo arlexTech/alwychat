@@ -325,13 +325,6 @@ impl crate::Core {
             if !first_ring(room_id, expires_at) {
                 return Ok(None);
             }
-            crate::call_history::rang(
-                room_id.as_str(),
-                event_id.as_str(),
-                event.sender().as_str(),
-                video,
-                event.origin_server_ts().get().into(),
-            );
             return Ok(Some(PushNotification {
                 room_id: room_id.to_string(),
                 event_id: event_id.to_string(),
@@ -490,13 +483,6 @@ impl crate::Core {
             .ok()
             .flatten()
             .unwrap_or(expires_at);
-        crate::call_history::rang(
-            room_id.as_str(),
-            event_id.as_str(),
-            sender.as_str(),
-            video,
-            sent,
-        );
         let name = room
             .get_member_no_sync(&sender)
             .await

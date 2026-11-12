@@ -18,10 +18,12 @@
   },
   "license": "AGPL-3.0-or-later",
   "dependencies": {
+    "@fontsource/noto-color-emoji": "5.3.2",
     "@lucide/svelte": "^1.65.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
-    "livekit-client": "^2.23.0"
+    "livekit-client": "^2.23.0",
+    "twemoji-colr-font": "15.0.3"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",

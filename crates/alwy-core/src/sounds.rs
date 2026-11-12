@@ -71,8 +71,7 @@ impl crate::Core {
     /// Replace the chat's sounds (adding or removing one: read, change, write).
     pub async fn set_room_sounds(&self, room_id: &str, items: Vec<Sound>) -> Result<()> {
         let room = self.room(room_id)?;
-        room.send_state_event_raw(SOUNDS, "", json!({ "items": clean(items) }))
-            .await?;
+        crate::offline::write_state(&room, SOUNDS, "", json!({ "items": clean(items) })).await?;
         Ok(())
     }
 

@@ -14,11 +14,8 @@ use futures_util::StreamExt;
 use matrix_sdk::{
     Client,
     ruma::{
-        OwnedRoomId, OwnedRoomOrAliasId,
-        api::client::room::create_room,
-        events::{GlobalAccountDataEventType, StateEventType},
-        room::RoomType,
-        serde::Raw,
+        OwnedRoomId, OwnedRoomOrAliasId, api::client::room::create_room, events::StateEventType,
+        room::RoomType, serde::Raw,
     },
 };
 use matrix_sdk_ui::spaces::{SpaceRoom, SpaceService};
@@ -251,6 +248,40 @@ impl crate::Core {
             .unwrap_or(false))
     }
 
+    /// Put a space's children in this order (`order` in their `m.space.child`, which Element and
+    /// the SDK's space list sort by). Only the ones whose order changes are rewritten; the rest
+    /// of each event (via, suggested) is kept.
+    pub async fn reorder_space(&self, space_id: &str, ids: Vec<String>) -> Result<()> {
+        let room = self.room(space_id)?;
+        for (i, id) in ids.iter().enumerate() {
+            let order = format!("{:04}", i * 10);
+            let Some(mut content) = crate::custom::fetch::<
+                serde_json::Map<String, serde_json::Value>,
+            >(&room, "m.space.child", id)
+            .await?
+            else {
+                continue;
+            };
+            // An empty event is a removed child: leave it removed.
+            let linked = content
+                .get("via")
+                .and_then(|v| v.as_array())
+                .is_some_and(|v| !v.is_empty());
+            if !linked || content.get("order").and_then(|o| o.as_str()) == Some(order.as_str()) {
+                continue;
+            }
+            content.insert("order".into(), json!(order));
+            crate::offline::write_state(
+                &room,
+                "m.space.child",
+                id,
+                serde_json::Value::Object(content),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Create a voice channel in a space: an Element Call "video room" that space members can
     /// join. Not end-to-end encrypted, so Element Call users can talk with us (we don't do
     /// call media encryption yet); its text chat isn't encrypted either.
@@ -315,29 +346,21 @@ impl crate::Core {
     /// From the server when reachable, not the store: the store only catches up with our own
     /// writes at the next sync, and changes are applied to this copy.
     pub async fn chat_list_prefs(&self) -> Result<ChatListPrefs> {
-        let account = self.client()?.account();
-        let kind = GlobalAccountDataEventType::from(CHAT_LIST_PREFS);
-        let raw = match account.fetch_account_data(kind.clone()).await {
-            Ok(raw) => raw,
-            Err(e) => {
-                warn!("chat list prefs from the server: {e}");
-                account.account_data_raw(kind).await?
-            }
-        };
-        Ok(raw
-            .and_then(|r| serde_json::from_str::<ChatListPrefs>(r.json().get()).ok())
-            .unwrap_or_default())
+        Ok(
+            crate::offline::read_global(&self.client()?, CHAT_LIST_PREFS)
+                .await?
+                .and_then(|v| serde_json::from_value::<ChatListPrefs>(v).ok())
+                .unwrap_or_default(),
+        )
     }
 
     pub async fn set_chat_list_prefs(&self, prefs: ChatListPrefs) -> Result<()> {
-        self.client()?
-            .account()
-            .set_account_data_raw(
-                GlobalAccountDataEventType::from(CHAT_LIST_PREFS),
-                Raw::new(&prefs)?.cast_unchecked(),
-            )
-            .await?;
-        Ok(())
+        crate::offline::write_global(
+            &self.client()?,
+            CHAT_LIST_PREFS,
+            serde_json::to_value(&prefs)?,
+        )
+        .await
     }
 }
 
@@ -369,6 +392,20 @@ async fn spaces_overview(client: &Client, service: &SpaceService) -> Vec<SpaceIn
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn children_follow_the_space_order() {
+        let mut list = [
+            ("!c", None, 1),
+            ("!b", Some("0010"), 9),
+            ("!a", Some("0000"), 5),
+            ("!d", None, 0),
+        ];
+        list.sort_by(|a, b| super::child_order(*a, *b));
+        let ids: Vec<_> = list.iter().map(|c| c.0).collect();
+        assert_eq!(ids, ["!a", "!b", "!d", "!c"]);
+        assert!(!super::valid_order("caf\u{e9}"));
+    }
+
     use super::*;
 
     #[test]
@@ -394,6 +431,24 @@ pub struct SpaceCategory {
     /// We're in it (needed to see its chats' messages; joining a chat inside works either way).
     pub joined: bool,
     pub children: Vec<SpaceChild>,
+}
+
+/// A usable `order` (spec: printable ASCII, at most 50 characters).
+fn valid_order(order: &str) -> bool {
+    order.len() <= 50 && order.bytes().all(|b| (0x20..=0x7E).contains(&b))
+}
+
+/// The spec's ordering of a space's children: by `order` (those with one first), then by
+/// when they were added, then by room ID.
+fn child_order(a: (&str, Option<&str>, u64), b: (&str, Option<&str>, u64)) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    let by_order = match (a.1, b.1) {
+        (Some(x), Some(y)) => x.cmp(y),
+        (Some(_), None) => Less,
+        (None, Some(_)) => Greater,
+        (None, None) => Equal,
+    };
+    by_order.then(a.2.cmp(&b.2)).then(a.0.cmp(b.0))
 }
 
 fn hierarchy_child(client: &Client, room: &serde_json::Value) -> Option<SpaceChild> {
@@ -453,24 +508,35 @@ impl crate::Core {
             .collect();
         // A space's children (ID and servers to join through), in its own order.
         let children_of = |id: &str| -> Vec<(String, Vec<String>)> {
-            by_id
+            let events = by_id
                 .get(id)
                 .and_then(|r| r["children_state"].as_array())
-                .map(|events| {
-                    events
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let mut children: Vec<_> = events
+                .iter()
+                .filter_map(|e| {
+                    let via: Vec<String> = e["content"]["via"]
+                        .as_array()?
                         .iter()
-                        .filter_map(|e| {
-                            let via: Vec<String> = e["content"]["via"]
-                                .as_array()?
-                                .iter()
-                                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                                .collect();
-                            let id = e["state_key"].as_str()?.to_owned();
-                            (!via.is_empty()).then_some((id, via))
-                        })
-                        .collect()
+                        .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                        .collect();
+                    let id = e["state_key"].as_str()?.to_owned();
+                    let order = e["content"]["order"]
+                        .as_str()
+                        .filter(|o| valid_order(o))
+                        .map(ToOwned::to_owned);
+                    let ts = e["origin_server_ts"].as_u64().unwrap_or(0);
+                    (!via.is_empty()).then_some((id, via, order, ts))
                 })
-                .unwrap_or_default()
+                .collect();
+            children.sort_by(|a, b| {
+                child_order((&a.0, a.2.as_deref(), a.3), (&b.0, b.2.as_deref(), b.3))
+            });
+            children
+                .into_iter()
+                .map(|(id, via, ..)| (id, via))
+                .collect()
         };
         let mut categories = Vec::new();
         for (child_id, _) in children_of(space_id) {
@@ -530,8 +596,7 @@ impl crate::Core {
             }
             None => serde_json::json!({}),
         };
-        room.send_state_event_raw(crate::names::BANNER, "", content)
-            .await?;
+        crate::offline::write_state(&room, crate::names::BANNER, "", content).await?;
         Ok(())
     }
 }

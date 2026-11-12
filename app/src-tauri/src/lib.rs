@@ -606,6 +606,15 @@ async fn can_add_to_space(core: State<'_, AppCore>, space_id: String) -> alwy_co
 }
 
 #[tauri::command]
+async fn reorder_space(
+    core: State<'_, AppCore>,
+    space_id: String,
+    ids: Vec<String>,
+) -> alwy_core::Result<()> {
+    core.reorder_space(&space_id, ids).await
+}
+
+#[tauri::command]
 async fn create_voice_channel(
     core: State<'_, AppCore>,
     space_id: String,
@@ -1062,7 +1071,7 @@ async fn unlock_biometric(
     .await
     .unwrap_or(false);
     if ok {
-        core.biometric_unlocked();
+        core.biometric_unlocked().await;
     }
     Ok(ok)
 }
@@ -1162,21 +1171,6 @@ async fn open_view_once(
     core.open_view_once(&room_id, &event_id).await
 }
 
-#[tauri::command]
-fn call_history(core: State<'_, AppCore>) -> alwy_core::call_history::CallHistory {
-    core.call_history()
-}
-
-#[tauri::command]
-fn mark_calls_seen(core: State<'_, AppCore>) {
-    core.mark_calls_seen();
-}
-
-#[tauri::command]
-fn clear_call_history(core: State<'_, AppCore>, id: Option<String>) {
-    core.clear_call_history(id.as_deref());
-}
-
 /// Media keys known for the call in `room_id` (see `call_keys.rs`).
 #[tauri::command]
 fn call_keys(core: State<'_, AppCore>, room_id: String) -> Vec<alwy_core::call_keys::CallKey> {
@@ -1195,14 +1189,6 @@ async fn join_call(
 #[tauri::command]
 async fn leave_call(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.leave_call().await
-}
-
-#[tauri::command]
-async fn call_participants(
-    core: State<'_, AppCore>,
-    room_id: String,
-) -> alwy_core::Result<Vec<Member>> {
-    core.call_participants(&room_id).await
 }
 
 #[tauri::command]
@@ -1688,15 +1674,6 @@ async fn set_archived(
     archived: bool,
 ) -> alwy_core::Result<()> {
     core.set_archived(&room_id, archived).await
-}
-
-#[tauri::command]
-async fn set_muted(
-    core: State<'_, AppCore>,
-    room_id: String,
-    muted: bool,
-) -> alwy_core::Result<()> {
-    core.set_muted(&room_id, muted).await
 }
 
 /// Timed mutes and muted spaces (see alwy_core::mutes).
@@ -2536,10 +2513,6 @@ pub fn run() {
             core.on_auto_save(&pictures.join("AlwyChat"), |_| {});
         }
         let handle = app.handle().clone();
-        core.on_call_history(move || {
-            let _ = handle.emit("call-history", ());
-        });
-        let handle = app.handle().clone();
         core.on_call_key(move |key| {
             native_call::on_key(&key);
             let _ = handle.emit("call-key", key);
@@ -2696,13 +2669,10 @@ pub fn run() {
             join_call,
             leave_call,
             call_keys,
-            call_history,
             viewed_once,
             open_view_once,
             space_banner,
             set_space_banner,
-            mark_calls_seen,
-            clear_call_history,
             native_call::native_calls,
             native_call::native_call_join,
             native_call::native_call_leave,
@@ -2720,7 +2690,6 @@ pub fn run() {
             set_room_sounds,
             can_edit_sounds,
             upload_sound,
-            call_participants,
             presence,
             report_activity,
             system_status,
@@ -2755,6 +2724,7 @@ pub fn run() {
             close_space,
             join_room,
             can_add_to_space,
+            reorder_space,
             message_activity,
             message_at,
             retry_send,
@@ -2852,7 +2822,6 @@ pub fn run() {
             set_settings,
             set_pinned,
             set_archived,
-            set_muted,
             mutes,
             apply_mutes,
             mute_room,

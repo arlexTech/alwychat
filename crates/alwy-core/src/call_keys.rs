@@ -237,7 +237,7 @@ fn call_device(raw: &Raw<AnySyncStateEvent>, now: u64) -> Option<(OwnedUserId, O
         .get("expires")
         .and_then(|t| t.as_u64())
         .unwrap_or(4 * 3600 * 1000);
-    (created + expires >= now).then(|| (sender, OwnedDeviceId::from(device)))
+    (created.saturating_add(expires) >= now).then(|| (sender, OwnedDeviceId::from(device)))
 }
 
 fn new_key() -> [u8; 32] {

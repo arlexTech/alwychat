@@ -2,6 +2,7 @@
 // (Element-compatible beacons), until the chosen time is up or "Stop".
 import { startLiveLocation, stopLiveLocation, updateLiveLocation } from "$lib/backend";
 import { locale, tr } from "$lib/i18n/index.svelte";
+import { asList, stored } from "$lib/stored";
 import { clockTime } from "$lib/format";
 
 /** Don't send more often than this, unless we moved a lot. */
@@ -33,7 +34,7 @@ function distance(a: GeolocationCoordinates, b: GeolocationCoordinates) {
 }
 
 class LiveLocation {
-  shares = $state<Share[]>(JSON.parse(localStorage.getItem(KEY) ?? "[]").filter((s: Share) => s.shareId && s.endsAt > Date.now()));
+  shares = $state<Share[]>(asList<Share>(stored<unknown>(KEY, [])).filter((s) => s?.shareId && s.endsAt > Date.now()));
   error = $state<string | null>(null);
   #watch: number | null = null;
   #last: { at: number; coords: GeolocationCoordinates } | null = null;

@@ -1,6 +1,7 @@
 // The only module allowed to call Tauri's invoke(). Everything else imports from here.
 import { Channel, getVersion, invoke, isTauri, isWeb, listen, onBackButtonPress, openUrl, webLogin } from "./platform";
 import { eventMediaUrl } from "$lib/media";
+import type { VideoMeta } from "$lib/videoMeta";
 
 /** False when the UI is opened in a plain browser without the WebAssembly core (e.g. `pnpm dev`). */
 export const hasBackend = isTauri || isWeb;
@@ -324,25 +325,6 @@ export const viewedOnce = () => invoke<string[]>("viewed_once");
 /** Open a view-once message: remembered, and its sender is told (their app deletes it). */
 export const openViewOnce = (roomId: string, eventId: string) => invoke<void>("open_view_once", { roomId, eventId });
 
-/** A call in this device's log (the Calls tab). */
-export interface CallRecord {
-  id: string;
-  room_id: string;
-  kind: "outgoing" | "incoming" | "missed" | "declined" | "joined";
-  video: boolean;
-  /** When it rang or started (ms). */
-  at: number;
-  /** How long we were in it, once over. */
-  duration_s: number | null;
-  /** Who called (incoming, missed, declined). */
-  caller: string | null;
-  /** Someone else was in it (an outgoing call without: no answer). */
-  connected: boolean;
-}
-export const callHistory = () => invoke<{ records: CallRecord[]; unseen_missed: number }>("call_history");
-export const markCallsSeen = () => invoke<void>("mark_calls_seen");
-export const clearCallHistory = (id: string | null) => invoke<void>("clear_call_history", { id });
-export const onCallHistory = (handler: () => void) => listen("call-history", () => handler());
 
 /** A chat's own soundboard sound (built-in ones live in the UI). */
 export interface Sound {
@@ -377,7 +359,6 @@ export interface CallKey {
 export const callKeys = (roomId: string) => invoke<CallKey[]>("call_keys", { roomId });
 export const onCallKey = (handler: (key: CallKey) => void) => listen<CallKey>("call-key", (e) => handler(e.payload));
 export const leaveCall = () => invoke<void>("leave_call");
-export const callParticipants = (roomId: string) => invoke<Member[]>("call_participants", { roomId });
 
 // ── Native calls (Linux desktop: WebKitGTK has no WebRTC, LiveKit runs in Rust) ──────────────
 export interface NativeCallMember {
@@ -672,6 +653,8 @@ export const closeSpace = () => invoke<void>("close_space");
 export const roomSummary = (roomId: string) => invoke<RoomSummary>("room_summary", { roomId });
 export const joinRoom = (roomId: string, via: string[]) => invoke<void>("join_room", { roomId, via });
 export const canAddToSpace = (spaceId: string) => invoke<boolean>("can_add_to_space", { spaceId });
+/** Put a space's children in this order (saved in the space, other apps follow it). */
+export const reorderSpace = (spaceId: string, ids: string[]) => invoke<void>("reorder_space", { spaceId, ids });
 export const createVoiceChannel = (spaceId: string, name: string) =>
   invoke<string>("create_voice_channel", { spaceId, name });
 export const getChatListPrefs = () => invoke<ChatListPrefs>("chat_list_prefs");
@@ -797,19 +780,40 @@ export interface GalleryRef {
   count: number;
 }
 
+export interface SendMeta {
+  caption?: string | null;
+  gallery?: GalleryRef | null;
+  viewOnce?: boolean;
+  /** For videos: read by `probeVideo` before sending. */
+  video?: VideoMeta | null;
+}
+
+const base64Of = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+
 /** Send a photo/video/file to the open chat (bytes as a raw IPC body, metadata in headers). */
 export async function sendFile(
   roomId: string,
   file: File,
-  meta: { caption?: string | null; gallery?: GalleryRef | null; viewOnce?: boolean } = {},
+  meta: SendMeta = {},
 ) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  // A video's preview frame travels after the file's own bytes.
+  const preview = meta.video?.thumbnail ?? null;
+  const bytes = new Uint8Array(await new Blob(preview ? [file, preview] : [file]).arrayBuffer());
   const info = {
     filename: file.name || "file",
     mime: file.type || null,
     caption: meta.caption ?? null,
     gallery: meta.gallery ?? null,
     view_once: !!meta.viewOnce,
+    video: meta.video
+      ? { width: meta.video.width, height: meta.video.height, duration_ms: meta.video.duration_ms, thumbnail_len: preview?.size ?? 0 }
+      : null,
   };
   if (isWeb) return invoke<void>("send_file", { roomId, file: info, bytes });
   return invoke<void>("send_file", bytes, {
@@ -851,17 +855,21 @@ export const pickFiles = (kind: "media" | "files") => invoke<Picked[]>("pick_fil
 export const capture = (kind: "photo" | "video") => invoke<Picked[]>("capture", { kind });
 
 /** Android: send a picked file (the webview can't hand raw bytes to Rust there). */
-export function sendPicked(
-  roomId: string,
-  picked: Picked,
-  meta: { caption?: string | null; gallery?: GalleryRef | null; viewOnce?: boolean } = {},
-) {
+export async function sendPicked(roomId: string, picked: Picked, meta: SendMeta = {}) {
   const file = {
     filename: picked.name,
     mime: picked.mime,
     caption: meta.caption ?? null,
     gallery: meta.gallery ?? null,
     view_once: !!meta.viewOnce,
+    video: meta.video
+      ? {
+          width: meta.video.width,
+          height: meta.video.height,
+          duration_ms: meta.video.duration_ms,
+          thumbnail: meta.video.thumbnail ? await base64Of(meta.video.thumbnail) : null,
+        }
+      : null,
   };
   return invoke<void>("send_picked", { roomId, path: picked.path, file });
 }
@@ -915,8 +923,6 @@ export const setPinned = (roomId: string, pinned: boolean) =>
   invoke<void>("set_pinned", { roomId, pinned });
 export const setArchived = (roomId: string, archived: boolean) =>
   invoke<void>("set_archived", { roomId, archived });
-export const setMuted = (roomId: string, muted: boolean) =>
-  invoke<void>("set_muted", { roomId, muted });
 /** Timed mutes (room → end, ms) and muted spaces (see core mutes.rs). */
 export interface Mutes {
   rooms: Record<string, number>;

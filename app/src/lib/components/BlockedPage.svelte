@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import { tr } from "$lib/i18n/index.svelte";
   import { ignoredUsers, setIgnored, type UserResult } from "$lib/backend";
   import Avatar from "./Avatar.svelte";
@@ -8,15 +9,16 @@
   /** Blocked (ignored) people: their messages and invites are hidden, on every device. */
   let { onClose }: { onClose: () => void } = $props();
 
-  let list = $state<UserResult[]>([]);
-  let loaded = $state(false);
+  const known = peek<UserResult[]>("blocked");
+  let list = $state<UserResult[]>(known ?? []);
+  let loaded = $state(!!known);
   let adding = $state(false);
   let busy = $state<string | null>(null);
   let error = $state<string | null>(null);
 
   const load = () =>
     ignoredUsers()
-      .then((l) => ((list = l), (loaded = true)))
+      .then((l) => ((list = remember("blocked", l)), (loaded = true)))
       .catch((e) => ((error = String(e)), (loaded = true)));
   $effect(() => void load());
 

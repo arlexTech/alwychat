@@ -3,7 +3,7 @@
 //! encrypted with the PIN. `app_lock.json` holds a salted PBKDF2 hash, never the PIN; it's
 //! removed on sign-out.
 
-use std::{sync::Mutex, time::Duration};
+use std::time::Duration;
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -22,12 +22,22 @@ struct Stored {
     salt: Vec<u8>,
     hash: Vec<u8>,
     rounds: u32,
+    /// Wrong PINs since the last success, and until when (ms since the epoch) no PIN is
+    /// taken: kept here so that restarting the app doesn't hand out new tries.
+    #[serde(default)]
+    tries: u32,
+    #[serde(default)]
+    wait_until: u64,
 }
 
-/// Wrong attempts since the last success (process-wide; the core is a singleton).
-use matrix_sdk::ruma::time::Instant;
+fn now_ms() -> u64 {
+    matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now()
+        .get()
+        .into()
+}
 
-static ATTEMPTS: Mutex<(u32, Option<Instant>)> = Mutex::new((0, None));
+/// One PIN check at a time, so parallel guesses can't share a try.
+static CHECKING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
@@ -77,60 +87,85 @@ impl crate::Core {
             hash: hash(&pin, &salt, ROUNDS),
             salt,
             rounds: ROUNDS,
+            tries: 0,
+            wait_until: 0,
         })
         .await
         .map_err(|e| Error::AppLock(e.to_string()))?;
         crate::files::create_dir_all(&self.data_dir).await?;
+        self.save_app_lock(&stored).await
+    }
+
+    async fn save_app_lock(&self, stored: &Stored) -> Result<()> {
+        let path = self.data_dir.join(LOCK_FILE);
         let tmp = path.with_extension("tmp");
-        crate::files::write(&tmp, serde_json::to_vec(&stored)?).await?;
+        crate::files::write(&tmp, serde_json::to_vec(stored)?).await?;
         crate::files::rename(&tmp, &path).await?;
         Ok(())
     }
 
     /// Check a PIN. Unlocked when there's no lock.
     pub async fn unlock_app(&self, pin: &str) -> Result<Unlock> {
-        {
-            let attempts = ATTEMPTS.lock().unwrap();
-            if let (_, Some(until)) = *attempts
-                && let Some(left) = until.checked_duration_since(Instant::now())
-            {
-                return Ok(Unlock::Wait {
-                    seconds: left.as_secs() + 1,
-                });
-            }
-        }
+        let _one = CHECKING.lock().await;
         let bytes = match crate::files::read(self.data_dir.join(LOCK_FILE)).await {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Unlock::Ok),
             Err(e) => return Err(e.into()),
         };
-        let stored: Stored = serde_json::from_slice(&bytes)?;
-        let pin = pin.to_owned();
-        let ok = crate::rt::blocking(move || {
-            same(&hash(&pin, &stored.salt, stored.rounds), &stored.hash)
-        })
-        .await
-        .map_err(|e| Error::AppLock(e.to_string()))?;
-        let mut attempts = ATTEMPTS.lock().unwrap();
-        if ok {
-            *attempts = (0, None);
-            return Ok(Unlock::Ok);
-        }
-        attempts.0 += 1;
-        if attempts.0 >= FREE_ATTEMPTS {
-            let pause = PAUSE * 2u32.pow((attempts.0 - FREE_ATTEMPTS).min(6));
-            attempts.1 = Some(Instant::now() + pause);
+        let mut stored: Stored = serde_json::from_slice(&bytes)?;
+        let left = stored.wait_until.saturating_sub(now_ms());
+        if left > 0 {
             return Ok(Unlock::Wait {
-                seconds: pause.as_secs(),
+                // A clock set back must not lock the app for longer than the longest pause.
+                seconds: (left / 1000 + 1).min(pause_after(u32::MAX).as_secs()),
             });
         }
-        Ok(Unlock::Wrong)
+        let (pin, salt, expected, rounds) = (
+            pin.to_owned(),
+            stored.salt.clone(),
+            stored.hash.clone(),
+            stored.rounds,
+        );
+        let ok = crate::rt::blocking(move || same(&hash(&pin, &salt, rounds), &expected))
+            .await
+            .map_err(|e| Error::AppLock(e.to_string()))?;
+        if ok {
+            if stored.tries > 0 || stored.wait_until > 0 {
+                (stored.tries, stored.wait_until) = (0, 0);
+                self.save_app_lock(&stored).await?;
+            }
+            return Ok(Unlock::Ok);
+        }
+        stored.tries = stored.tries.saturating_add(1);
+        let pause = (stored.tries >= FREE_ATTEMPTS).then(|| pause_after(stored.tries));
+        stored.wait_until = pause.map_or(0, |p| now_ms() + p.as_millis() as u64);
+        self.save_app_lock(&stored).await?;
+        Ok(match pause {
+            Some(pause) => Unlock::Wait {
+                seconds: pause.as_secs(),
+            },
+            None => Unlock::Wrong,
+        })
     }
 
     /// Biometrics (checked by the shell) unlock without the PIN.
-    pub fn biometric_unlocked(&self) {
-        *ATTEMPTS.lock().unwrap() = (0, None);
+    pub async fn biometric_unlocked(&self) {
+        let _one = CHECKING.lock().await;
+        let Ok(bytes) = crate::files::read(self.data_dir.join(LOCK_FILE)).await else {
+            return;
+        };
+        if let Ok(mut stored) = serde_json::from_slice::<Stored>(&bytes)
+            && (stored.tries > 0 || stored.wait_until > 0)
+        {
+            (stored.tries, stored.wait_until) = (0, 0);
+            let _ = self.save_app_lock(&stored).await;
+        }
     }
+}
+
+/// The pause after `tries` wrong PINs in a row: 30 s, doubling up to 32 min.
+fn pause_after(tries: u32) -> Duration {
+    PAUSE * 2u32.pow(tries.saturating_sub(FREE_ATTEMPTS).min(6))
 }
 
 #[cfg(test)]
@@ -143,6 +178,13 @@ mod tests {
         assert!(same(&h, &hash("1234", b"salt", 1000)));
         assert!(!same(&h, &hash("1235", b"salt", 1000)));
         assert!(!same(&h, &hash("1234", b"pepper", 1000)));
+    }
+
+    #[test]
+    fn pauses_double_and_stop_growing() {
+        assert_eq!(pause_after(5), Duration::from_secs(30));
+        assert_eq!(pause_after(6), Duration::from_secs(60));
+        assert_eq!(pause_after(u32::MAX), Duration::from_secs(30 * 64));
     }
 
     #[test]

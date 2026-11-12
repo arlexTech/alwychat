@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
   import {
@@ -67,14 +68,16 @@
     onLeft: () => void;
   } = $props();
 
-  let details = $state<RoomDetails | null>(null);
+  // Seen before (or prefetched when the chat opened): shown at once, refreshed behind.
+  // svelte-ignore state_referenced_locally
+  let details = $state<RoomDetails | null>(peek<RoomDetails>(`details:${roomId}`) ?? null);
   let sub = $state<"profile" | "members" | "nicknames" | "customize" | "privacy" | "dates" | null>(null);
   $effect(() => {
     if (sub) return onBack(() => (sub = null));
   });
   function loadDetails() {
     roomDetails(roomId)
-      .then((d) => (details = d))
+      .then((d) => (details = remember(`details:${roomId}`, d)))
       .catch((e) => (error = String(e)));
   }
 
@@ -85,7 +88,8 @@
   const currentTheme = $derived(themeById(style?.theme));
   const quick = $derived(style?.quick_reaction ?? DEFAULT_QUICK_REACTION);
 
-  let members = $state<Member[]>([]);
+  // svelte-ignore state_referenced_locally
+  let members = $state<Member[]>(peek<Member[]>(`members:${roomId}`) ?? []);
   /** User ID whose nickname is being edited, and the draft. */
   let editing = $state<{ userId: string; value: string } | null>(null);
   let error = $state<string | null>(null);
@@ -93,7 +97,7 @@
   onMount(() => {
     loadDetails();
     roomMembers(roomId)
-      .then((list) => (members = list.sort((a, b) => Number(b.is_me) - Number(a.is_me))))
+      .then((list) => (members = remember(`members:${roomId}`, list.sort((a, b) => Number(b.is_me) - Number(a.is_me)))))
       .catch((e) => (error = String(e)));
   });
 

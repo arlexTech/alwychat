@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
 
-use crate::{Error, Result, mentions::Member};
+use crate::{Error, Result};
 
 pub(crate) const CALL_MEMBER: &str = "org.matrix.msc3401.call.member";
 /// "Ring" (MSC4075), as Element Call / Element X send it; the stable name is accepted too.
@@ -44,6 +44,8 @@ const RTC_DECLINE: &str = "org.matrix.msc4310.rtc.decline";
 const RTC_DECLINE_STABLE: &str = "m.rtc.decline";
 /// How long a ring lasts if nobody answers.
 const RING_LIFETIME: Duration = Duration::from_secs(30);
+/// The longest a ring from someone else is allowed to last.
+const MAX_RING_LIFETIME: Duration = Duration::from_secs(120);
 
 /// Incoming ring or the answer to ours, for the UI.
 #[derive(Debug, Clone, Serialize)]
@@ -79,10 +81,14 @@ pub struct CallConnection {
 }
 
 /// The call we're in (one at a time).
+/// The ID of our scheduled leave (None: the server takes no delayed events). Shared with the
+/// heartbeat, which schedules a new one after the server sent the old one.
+type DelayId = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+
 pub(crate) struct ActiveCall {
     room: Room,
     state_key: String,
-    delay_id: Option<String>,
+    delay_id: DelayId,
     heartbeat: crate::rt::AbortHandle,
     /// Sharing our media key (encrypted rooms).
     keys: Option<crate::rt::AbortHandle>,
@@ -138,6 +144,7 @@ impl crate::Core {
         });
         let response = reqwest::Client::new()
             .post(format!("{service}/sfu/get"))
+            .timeout(Duration::from_secs(15))
             .json(&body)
             .send()
             .await
@@ -171,9 +178,11 @@ impl crate::Core {
         });
 
         // The delayed leave goes first: if anything below fails, we still end up out.
-        let delay_id = schedule_leave(&room, &state_key).await;
+        let delay_id: DelayId = std::sync::Arc::new(std::sync::Mutex::new(
+            schedule_leave(&room, &state_key).await,
+        ));
         let member_event = room
-            .send_state_event_raw(CALL_MEMBER, &state_key, membership)
+            .send_state_event_raw(CALL_MEMBER, &state_key, membership.clone())
             .await?
             .event_id;
         info!(room = %room.room_id(), "joined call");
@@ -186,15 +195,13 @@ impl crate::Core {
         if !others_in_call && room.is_direct().await.unwrap_or(false) {
             ring(&room, &member_event, video).await;
         }
-        // Voice channels aren't calls to remember.
-        // (Any other device counts, our own too: joining from the phone a call started on the
-        // computer is joining, not calling.)
-        if !is_voice_channel(&room) {
-            let others_there = !crate::call_keys::call_devices(&room).await.is_empty();
-            crate::call_history::joined(room.room_id().as_str(), video, others_there);
-        }
-
-        let heartbeat = crate::rt::spawn(heartbeat(room.clone(), delay_id.clone())).abort_handle();
+        let heartbeat = crate::rt::spawn(heartbeat(
+            room.clone(),
+            state_key.clone(),
+            membership,
+            delay_id.clone(),
+        ))
+        .abort_handle();
         let encrypted = room
             .latest_encryption_state()
             .await
@@ -221,11 +228,13 @@ impl crate::Core {
             return Ok(());
         };
         // Fire the delayed leave now; if that fails, send the empty membership ourselves.
-        let fired = match &call.delay_id {
+        call.heartbeat.abort();
+        let delay_id = call.delay_id.lock().unwrap().clone();
+        let fired = match delay_id {
             Some(id) => call
                 .room
                 .client()
-                .send(update_delayed::Request::new(id.clone(), UpdateAction::Send))
+                .send(update_delayed::Request::new(id, UpdateAction::Send))
                 .await
                 .is_ok(),
             None => false,
@@ -235,17 +244,6 @@ impl crate::Core {
                 .send_state_event_raw(CALL_MEMBER, &call.state_key, json!({}))
                 .await?;
         }
-        // Someone else there right before we left counts (short calls the heartbeat missed).
-        let me = call.room.own_user_id().to_owned();
-        if call
-            .room
-            .active_room_call_participants()
-            .iter()
-            .any(|u| *u != me)
-        {
-            crate::call_history::connected(call.room.room_id().as_str());
-        }
-        crate::call_history::left(call.room.room_id().as_str());
         info!(room = %call.room.room_id(), "left call");
         Ok(())
     }
@@ -258,7 +256,6 @@ impl crate::Core {
     /// Say no to a ring: the caller's app stops calling.
     pub async fn decline_call(&self, room_id: &str, notification_id: &str) -> Result<()> {
         let room = self.room(room_id)?;
-        crate::call_history::declined(room_id);
         let content = json!({
             "m.relates_to": { "rel_type": "m.reference", "event_id": notification_id },
         });
@@ -274,40 +271,6 @@ impl crate::Core {
             .as_ref()
             .map(|c| c.room.room_id().to_owned())
     }
-
-    /// People in the room's call right now (for "join" banners and voice-channel avatars).
-    pub async fn call_participants(&self, room_id: &str) -> Result<Vec<Member>> {
-        let room = self.room(room_id)?;
-        let own = room.own_user_id().to_owned();
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for user in room.active_room_call_participants() {
-            if !seen.insert(user.clone()) {
-                continue;
-            }
-            let member = room.get_member_no_sync(&user).await.ok().flatten();
-            out.push(Member {
-                is_me: user == own,
-                name: member
-                    .as_ref()
-                    .and_then(|m| m.display_name().map(ToOwned::to_owned))
-                    .unwrap_or_else(|| user.localpart().to_owned()),
-                avatar: member.and_then(|m| m.avatar_url().map(ToString::to_string)),
-                user_id: user.to_string(),
-            });
-        }
-        Ok(out)
-    }
-}
-
-/// An Element Call "video room" (voice channel), not a chat's call.
-fn is_voice_channel(room: &Room) -> bool {
-    room.room_type().is_some_and(|t| {
-        matches!(
-            t.to_string().as_str(),
-            "org.matrix.msc3417.call" | "io.element.video"
-        )
-    })
 }
 
 /// Ring the other side (new and older Element formats). Best effort: the call still works.
@@ -409,18 +372,12 @@ async fn call_signal(
             {
                 return None;
             }
-            let sent = event
-                .get_field::<u64>("origin_server_ts")
-                .ok()
-                .flatten()
-                .unwrap_or(expires_at);
-            crate::call_history::rang(
-                room.room_id().as_str(),
-                &event_id,
-                sender.as_str(),
-                video,
-                sent,
-            );
+            // A muted chat doesn't ring.
+            if room.cached_user_defined_notification_mode()
+                == Some(matrix_sdk::notification_settings::RoomNotificationMode::Mute)
+            {
+                return None;
+            }
             let member = room.get_member_no_sync(&sender).await.ok().flatten();
             Some(CallSignal::Ring {
                 room_id: room.room_id().to_string(),
@@ -469,7 +426,12 @@ pub(crate) fn fresh_ring(
         .ok()
         .flatten()
         .or(content.sender_ts)?;
-    let expires_at = sent + content.lifetime.unwrap_or(RING_LIFETIME.as_millis() as u64);
+    // The caller chooses how long it rings, within reason.
+    let lifetime = content
+        .lifetime
+        .unwrap_or(RING_LIFETIME.as_millis() as u64)
+        .min(MAX_RING_LIFETIME.as_millis() as u64);
+    let expires_at = sent.saturating_add(lifetime);
     let now: u64 = matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now()
         .get()
         .into();
@@ -516,22 +478,45 @@ async fn schedule_leave(room: &Room, state_key: &str) -> Option<String> {
     }
 }
 
-/// Keep pushing the delayed leave back while we're in the call.
-async fn heartbeat(room: Room, delay_id: Option<String>) {
-    let Some(id) = delay_id else { return };
-    let me = room.own_user_id().to_owned();
+/// Keep pushing the delayed leave back while we're in the call. If the server sent it anyway
+/// (the computer slept, or the network was away for longer than the delay), everyone saw us
+/// leave while we're still connected: schedule a new one and publish our membership again.
+async fn heartbeat(room: Room, state_key: String, membership: serde_json::Value, delay: DelayId) {
+    if delay.lock().unwrap().is_none() {
+        return;
+    }
+    // The server sent our leave and our membership isn't back yet.
+    let mut absent = false;
     loop {
         crate::rt::sleep(HEARTBEAT).await;
-        if room
-            .active_room_call_participants()
-            .iter()
-            .any(|u| *u != me)
-        {
-            crate::call_history::connected(room.room_id().as_str());
-        }
-        let request = update_delayed::Request::new(id.clone(), UpdateAction::Restart);
+        let Some(id) = delay.lock().unwrap().clone() else {
+            return;
+        };
+        let request = update_delayed::Request::new(id, UpdateAction::Restart);
         if let Err(e) = room.client().send(request).await {
             warn!("call heartbeat failed: {e}");
+            // Only when the server says that leave no longer exists (it was sent).
+            if e.client_api_error_kind() != Some(&matrix_sdk::ruma::api::error::ErrorKind::NotFound)
+            {
+                continue;
+            }
+            let Some(new_id) = schedule_leave(&room, &state_key).await else {
+                continue;
+            };
+            *delay.lock().unwrap() = Some(new_id);
+            absent = true;
+        }
+        if absent {
+            match room
+                .send_state_event_raw(CALL_MEMBER, &state_key, membership.clone())
+                .await
+            {
+                Ok(_) => {
+                    absent = false;
+                    info!(room = %room.room_id(), "back in the call's member list");
+                }
+                Err(e) => warn!("couldn't publish the call membership again: {e}"),
+            }
         }
     }
 }
@@ -580,6 +565,16 @@ mod tests {
         assert_eq!(
             fresh_ring(&event("org.matrix.msc4075.call.notify", t, legacy)),
             Some((false, t + 30_000))
+        );
+    }
+
+    #[test]
+    fn a_ring_cannot_last_for_ever() {
+        let t = now() - 1_000;
+        let long = serde_json::json!({ "notification_type": "ring", "lifetime": u64::MAX });
+        assert_eq!(
+            fresh_ring(&event("m.rtc.notification", t, long)),
+            Some((false, t + 120_000))
         );
     }
 

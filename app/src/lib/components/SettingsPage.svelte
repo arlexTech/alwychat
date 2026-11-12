@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { peek, remember } from "$lib/cache";
   import Bug from "@lucide/svelte/icons/bug";
+  import { emojiStyle } from "$lib/stores/emojiStyle.svelte";
   import ReportPage from "./ReportPage.svelte";
   import { LANGUAGES, chooseLanguage, languageChoice, languageName, locale, tr } from "$lib/i18n/index.svelte";
   import { onMount } from "svelte";
@@ -112,14 +114,15 @@
   }
 
   // ── Notification rules (push rules, shared with other apps) ──
-  let rules = $state<NotificationRules | null>(null);
+  let rules = $state<NotificationRules | null>(peek<NotificationRules>("notificationRules") ?? null);
   let keyword = $state("");
   $effect(() => {
-    if (hasBackend) notificationRules().then((r) => (rules = r)).catch(() => {});
+    if (hasBackend) notificationRules().then((r) => (rules = remember("notificationRules", r))).catch(() => {});
   });
   async function changeRule(rule: "room_mentions" | "invites", on: boolean) {
     if (!rules) return;
     rules[rule] = on;
+    remember("notificationRules", $state.snapshot(rules));
     await setNotificationRule(rule, on).catch((e) => ((error = String(e)), rules && (rules[rule] = !on)));
   }
   async function changeKeyword(word: string, add: boolean) {
@@ -720,6 +723,15 @@
       {/each}
     </div>
     {#each appearance as t (t.key)}{@render row(t)}{/each}
+    <h3 class="section">{tr("Emoji style")}</h3>
+    <div class="m-seg">
+      {#each emojiStyle.choices as style (style)}
+        <button class:on={emojiStyle.current === style} onclick={() => emojiStyle.set(style)}>
+          {style === "system" ? tr("System") : style === "google" ? "Google" : "Twitter"}
+        </button>
+      {/each}
+    </div>
+    {#if emojiStyle.current === "twitter"}<small class="credit">{tr("Twemoji graphics © Twitter and contributors, CC-BY 4.0")}</small>{/if}
     <h3 class="section">{tr("Text size")}</h3>
     <div class="m-seg">
       {#each TEXT_SIZES as t (t.value)}
@@ -859,6 +871,11 @@
 {/if}
 
 <style>
+  .credit {
+    display: block;
+    margin: 6px 4px 0;
+    color: var(--muted);
+  }
   .wide-btn {
     width: 100%;
   }

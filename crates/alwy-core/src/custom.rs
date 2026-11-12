@@ -13,12 +13,7 @@ use std::collections::BTreeMap;
 use matrix_sdk::{
     Room,
     event_handler::EventHandlerDropGuard,
-    ruma::{
-        OwnedUserId,
-        api::client::state::get_state_event_for_key,
-        events::{AnySyncStateEvent, StateEventType},
-        serde::Raw,
-    },
+    ruma::{OwnedUserId, events::AnySyncStateEvent, serde::Raw},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -145,15 +140,13 @@ impl crate::Core {
             })
             .take(20)
             .collect();
-        room.send_state_event_raw(COUNTDOWNS, "", json!({ "items": items }))
-            .await?;
+        crate::offline::write_state(&room, COUNTDOWNS, "", json!({ "items": items })).await?;
         Ok(())
     }
 
     pub async fn set_quick_reaction(&self, room_id: &str, emoji: Option<String>) -> Result<()> {
         let room = self.room(room_id)?;
-        room.send_state_event_raw(QUICK_REACTION, "", json!({ "emoji": emoji }))
-            .await?;
+        crate::offline::write_state(&room, QUICK_REACTION, "", json!({ "emoji": emoji })).await?;
         Ok(())
     }
 
@@ -169,7 +162,7 @@ impl crate::Core {
         if let Some(w) = wallpaper.filter(|w| w.starts_with("mxc://")) {
             content["wallpaper"] = json!(w);
         }
-        room.send_state_event_raw(THEME, "", content).await?;
+        crate::offline::write_state(&room, THEME, "", content).await?;
         Ok(())
     }
 
@@ -205,8 +198,13 @@ impl crate::Core {
             Some(n) => content.nicknames.insert(user.to_string(), n),
             None => content.nicknames.remove(user.as_str()),
         };
-        room.send_state_event_raw(NICKNAMES, "", json!({ "nicknames": content.nicknames }))
-            .await?;
+        crate::offline::write_state(
+            &room,
+            NICKNAMES,
+            "",
+            json!({ "nicknames": content.nicknames }),
+        )
+        .await?;
         Ok(())
     }
 }
@@ -263,29 +261,16 @@ async fn chat_style(room: &Room) -> ChatStyle {
     }
 }
 
-/// A state event's content from the server; `None` if it was never set.
+/// A state event's content; `None` if it was never set. From the server, or offline from what
+/// we last saw (see `offline`).
 pub(crate) async fn fetch<T: DeserializeOwned>(
     room: &Room,
     event_type: &str,
     key: &str,
 ) -> Result<Option<T>> {
-    let request = get_state_event_for_key::v3::Request::new(
-        room.room_id().to_owned(),
-        StateEventType::from(event_type),
-        key.to_owned(),
-    );
-    match room.client().send(request).await {
-        Ok(response) => Ok(serde_json::from_str(response.event_or_content.get()).ok()),
-        Err(e) if is_not_found(&e) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
-fn is_not_found(e: &matrix_sdk::HttpError) -> bool {
-    matches!(
-        e.client_api_error_kind(),
-        Some(matrix_sdk::ruma::api::error::ErrorKind::NotFound)
-    )
+    Ok(crate::offline::read_state(room, event_type, key)
+        .await?
+        .and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// Our own nickname in a chat = our per-room display name (`None`: back to the global one).
@@ -302,8 +287,7 @@ async fn set_own_room_name(room: &Room, nickname: Option<String>) -> Result<()> 
         Some(n) => member.insert("displayname".into(), n.into()),
         None => member.remove("displayname"),
     };
-    room.send_state_event_raw("m.room.member", me.as_str(), Value::Object(member))
-        .await?;
+    crate::offline::write_state(room, "m.room.member", me.as_str(), Value::Object(member)).await?;
     Ok(())
 }
 

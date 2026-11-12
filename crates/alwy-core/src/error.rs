@@ -54,6 +54,8 @@ pub enum Error {
     Upload(String),
     #[error("not logged in")]
     NotLoggedIn,
+    #[error("no connection")]
+    Offline,
     #[error("local storage: {0}")]
     Io(#[from] std::io::Error),
     #[error("corrupted session file: {0}")]

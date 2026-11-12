@@ -73,12 +73,7 @@ impl crate::Core {
             Some(d) => serde_json::to_value(d)?,
             None => serde_json::json!({}),
         };
-        room.set_account_data_raw(
-            RoomAccountDataEventType::from(DRAFT),
-            Raw::new(&content)?.cast_unchecked(),
-        )
-        .await?;
-        Ok(())
+        crate::offline::write_room_data(&room, DRAFT, content).await
     }
 
     /// `handler` gets drafts changed through sync while signed in.

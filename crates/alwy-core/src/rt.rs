@@ -6,14 +6,6 @@ pub use matrix_sdk::{
     sleep::sleep,
 };
 
-/// Whether a task is over (in a browser: only known once aborted).
-pub fn finished(task: &AbortHandle) -> bool {
-    #[cfg(not(target_family = "wasm"))]
-    return task.is_finished();
-    #[cfg(target_family = "wasm")]
-    return task.is_aborted();
-}
-
 /// CPU-heavy or blocking work: on Tokio's blocking pool natively, inline in a browser.
 #[cfg(not(target_family = "wasm"))]
 pub async fn blocking<T, F>(work: F) -> Result<T, String>

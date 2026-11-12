@@ -17,9 +17,10 @@
 
 name: Build
 
+# While the app is in beta, only `beta` builds on push; main builds only when started by hand.
 on:
   push:
-    branches: [main, beta]
+    branches: [beta]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:

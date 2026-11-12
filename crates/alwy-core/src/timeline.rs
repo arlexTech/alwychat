@@ -31,10 +31,12 @@ use crate::{
 /// Events fetched per back-pagination request.
 const PAGE_EVENTS: u16 = 40;
 /// Closed chats whose timeline is kept for a quick reopen.
-const RECENT_CHATS: usize = 6;
+const RECENT_CHATS: usize = 10;
 /// A new chat's timeline is filled to this many items (at most this many pages) before it's shown.
 const PREFILL_ITEMS: usize = 30;
 const PREFILL_PAGES: usize = 3;
+/** Fewer items than this right after opening: fill before showing. */
+const PREFILL_MIN: usize = 12;
 /// Messages loaded around a search result.
 const FOCUS_CONTEXT_EVENTS: u16 = 30;
 
@@ -305,7 +307,10 @@ impl crate::Core {
         // events and receipts. Without it, the echo of our own read receipt could wait for the
         // next message there, leaving the chat marked unread in the list after reading it. Kept
         // until another chat opens, so the echo also arrives after going back to the list.
-        let list = self.with_active(|a| a.sync.room_list_service())?;
+        let (list, ticket) = self.with_active(|a| {
+            a.opening += 1;
+            (a.sync.room_list_service(), a.opening)
+        })?;
         let subscribed = room_id.clone();
         crate::rt::spawn(async move { list.set_room_subscriptions(&[&subscribed]).await });
         // Focused on one message (a search result): its surroundings, paginated both ways,
@@ -337,7 +342,9 @@ impl crate::Core {
             Some(timeline) => timeline,
             None => {
                 let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
-                if focus.is_none() {
+                // Only a nearly empty chat is filled first (there'd be nothing to show): one
+                // with a screenful already goes out at once, the UI loads more behind it.
+                if focus.is_none() && timeline.items().await.len() < PREFILL_MIN {
                     for _ in 0..PREFILL_PAGES {
                         if timeline.items().await.len() >= PREFILL_ITEMS
                             || timeline
@@ -359,8 +366,7 @@ impl crate::Core {
         let style = self.watch_chat_style(&room, on_style).await;
         let pins = self.watch_pins(&room, on_pins).await;
         self.with_active(|a| {
-            keep_recent(a);
-            a.chat = Some(OpenChat {
+            let chat = OpenChat {
                 room_id,
                 timeline,
                 live: focus.is_none(),
@@ -369,7 +375,19 @@ impl crate::Core {
                 _style: style,
                 _pins: pins,
                 thread: None,
-            })
+            };
+            // Another chat was asked for while this one loaded (the UI already ignores this
+            // one): it must not take the place of the newer one. Its timeline is kept for a
+            // quick reopen.
+            if a.opening != ticket {
+                let newer = a.chat.take();
+                a.chat = Some(chat);
+                keep_recent(a);
+                a.chat = newer;
+                return;
+            }
+            keep_recent(a);
+            a.chat = Some(chat);
         })
     }
 
@@ -681,10 +699,19 @@ impl crate::Core {
 
     pub async fn delete_message(&self, room_id: &str, item_id: &str) -> Result<()> {
         let timeline = self.timeline(room_id)?;
-        timeline
-            .redact(&parse_item_id(item_id)?, None)
-            .await
-            .map_err(timeline_err)
+        let id = parse_item_id(item_id)?;
+        match timeline.redact(&id, None).await {
+            Ok(()) => Ok(()),
+            // Offline: deleted when the connection is back.
+            Err(_)
+                if !crate::offline::online()
+                    && let TimelineEventItemId::EventId(event) = &id =>
+            {
+                crate::offline::later_redact(timeline.room(), event.as_str());
+                Ok(())
+            }
+            Err(e) => Err(timeline_err(e)),
+        }
     }
 
     /// Every version of an edited message, oldest first.
@@ -714,7 +741,26 @@ impl crate::Core {
         } else {
             ReceiptType::ReadPrivate
         };
-        timeline.mark_as_read(receipt).await.map_err(timeline_err)?;
+        if let Err(e) = timeline.mark_as_read(receipt.clone()).await {
+            if crate::offline::online() {
+                return Err(timeline_err(e));
+            }
+            // Offline: read up to the newest message once the connection is back.
+            crate::offline::later_read(timeline.room(), receipt == ReceiptType::ReadPrivate);
+            return Ok(());
+        }
+        // The live chat hides thread replies, so the SDK's receipt only covers the main
+        // conversation ("main" thread) and replies in threads stay unread on the server for
+        // ever (the badge never clears; we show no per-thread unread). Reading the chat also
+        // reads its newest event, threads included, with an unthreaded receipt.
+        let live_main = self.with_active(|a| {
+            a.chat
+                .as_ref()
+                .is_some_and(|c| c.live && c.room_id.as_str() == room_id)
+        })?;
+        if live_main && let Err(e) = read_everything(timeline.room(), receipt).await {
+            warn!("unthreaded read receipt: {e}");
+        }
         Ok(())
     }
 
@@ -731,6 +777,39 @@ impl crate::Core {
                 .map(|t| t.timeline.clone())
         })?
         .ok_or(Error::ChatNotOpen)
+    }
+}
+
+/// Unthreaded receipt on the room's newest loaded event (thread replies too), if not sent yet.
+async fn read_everything(room: &matrix_sdk::Room, receipt: ReceiptType) -> Result<()> {
+    let (cache, _handles) = room
+        .event_cache()
+        .await
+        .map_err(|e| Error::Timeline(e.to_string()))?;
+    let Some(latest) = cache
+        .rfind_map_event_in_memory_by(|e| e.event_id().map(|id| id.to_owned()))
+        .await
+        .map_err(|e| Error::Timeline(e.to_string()))?
+    else {
+        return Ok(());
+    };
+    let own = room.own_user_id();
+    let thread = matrix_sdk::ruma::events::receipt::ReceiptThread::Unthreaded;
+    let sent = room
+        .load_user_receipt(receipt_kind(&receipt), &thread, own)
+        .await?;
+    if sent.is_some_and(|(id, _)| id == latest) {
+        return Ok(());
+    }
+    room.send_single_receipt(receipt, thread, latest).await?;
+    Ok(())
+}
+
+fn receipt_kind(receipt: &ReceiptType) -> matrix_sdk::ruma::events::receipt::ReceiptType {
+    use matrix_sdk::ruma::events::receipt::ReceiptType as Kind;
+    match receipt {
+        ReceiptType::ReadPrivate => Kind::ReadPrivate,
+        _ => Kind::Read,
     }
 }
 
@@ -900,7 +979,7 @@ impl Mapper {
                             description: live.description().map(ToOwned::to_owned),
                             is_live: live.is_live(),
                             updated: latest.map(|l| l.ts().get().into()),
-                            ends_at: start + live.timeout().as_millis() as u64,
+                            ends_at: start.saturating_add(live.timeout().as_millis() as u64),
                         }
                     }
                     MsgLikeKind::Other(_) => MessageContent::Unsupported,

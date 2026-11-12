@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tr } from "$lib/i18n/index.svelte";
+  import { asList, stored } from "$lib/stored";
   import Clock from "@lucide/svelte/icons/clock";
   import Smile from "@lucide/svelte/icons/smile";
   import Hand from "@lucide/svelte/icons/hand";
@@ -48,7 +49,7 @@
   ];
 
   const RECENT_KEY = "alwychat.recentEmoji";
-  let recent = $state<string[]>(JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"));
+  let recent = $state<string[]>(asList(stored<unknown>(RECENT_KEY, [])));
   // Tab ids aren't translated (the French name used to leave the panel empty at first).
   let tab = $state(untrack(() => (recent.length ? "Recent" : "Smileys")));
 

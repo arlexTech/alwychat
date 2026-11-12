@@ -3,12 +3,13 @@
 // setting (Settings → Appearance, this device) and a per-chat override (chat settings, this
 // device: the right choice depends on the screen).
 import type { MessageLayout } from "$lib/backend";
+import { stored } from "$lib/stored";
 import { prefs } from "./prefs.svelte";
 
 const KEY = "alwychat.chatLayout";
 
 class Layouts {
-  #perChat = $state<Record<string, MessageLayout>>(JSON.parse(localStorage.getItem(KEY) ?? "{}"));
+  #perChat = $state<Record<string, MessageLayout>>(stored(KEY, {}));
 
   get general(): MessageLayout {
     return prefs.settings?.message_layout ?? "auto";

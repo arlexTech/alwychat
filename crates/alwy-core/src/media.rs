@@ -84,6 +84,18 @@ impl crate::Core {
     pub async fn event_media(&self, key: &str, thumbnail: bool) -> Result<(Vec<u8>, String)> {
         let client = self.client()?;
         let media = self.media.get(key)?;
+        // An encrypted video sent without a thumbnail has no preview: the whole video would
+        // be downloaded just to fail as a picture.
+        if thumbnail
+            && media.thumbnail.is_none()
+            && matches!(media.source, MediaSource::Encrypted(_))
+            && media
+                .mimetype
+                .as_deref()
+                .is_some_and(|m| !m.starts_with("image/"))
+        {
+            return Err(Error::InvalidMedia(format!("{key} has no preview")));
+        }
         let (request, mimetype) = match (thumbnail, &media.thumbnail, &media.source) {
             (true, Some(thumb), _) => (
                 MediaRequestParameters {
@@ -221,6 +233,22 @@ pub fn runs_when_opened(name: &str) -> bool {
         "hta",
         "lnk",
         "url",
+        "msc",
+        "msp",
+        "mst",
+        "gadget",
+        "application",
+        "appref-ms",
+        "scf",
+        "chm",
+        "hlp",
+        "diagcab",
+        "vb",
+        "ws",
+        "wsc",
+        "sct",
+        "ps2",
+        "psd1",
         "reg",
         "inf",
         "jar",
@@ -294,14 +322,31 @@ pub fn sniff(bytes: &[u8]) -> &'static str {
             b'P',
             ..,
         ] => "image/webp",
-        [_, _, _, _, b'f', b't', b'y', b'p', ..] => "video/mp4",
+        // ISO media: the brand tells photos (AVIF, HEIC) from videos.
+        [_, _, _, _, b'f', b't', b'y', b'p', brand @ ..] => match brand.get(..4) {
+            Some(b"avif" | b"avis") => "image/avif",
+            Some(b"heic" | b"heix" | b"hevc" | b"hevx" | b"mif1" | b"msf1") => "image/heic",
+            Some(b"qt  ") => "video/quicktime",
+            Some(b"M4A " | b"M4B ") => "audio/mp4",
+            _ => "video/mp4",
+        },
         _ => "application/octet-stream",
     }
 }
 
 #[cfg(test)]
 mod file_name_tests {
-    use super::{runs_when_opened, safe_file_name};
+    use super::{runs_when_opened, safe_file_name, sniff};
+
+    #[test]
+    fn iso_media_by_brand() {
+        assert_eq!(sniff(b"\0\0\0\x1cftypavif\0\0\0\0"), "image/avif");
+        assert_eq!(sniff(b"\0\0\0\x18ftypheic\0\0\0\0"), "image/heic");
+        assert_eq!(sniff(b"\0\0\0\x14ftypqt  \0\0\0\0"), "video/quicktime");
+        assert_eq!(sniff(b"\0\0\0\x18ftypisom\0\0\0\0"), "video/mp4");
+        assert_eq!(sniff(b"\0\0\0\x18ftyp"), "video/mp4");
+        assert!(runs_when_opened("setup.MSC") && runs_when_opened("a.appref-ms"));
+    }
 
     #[test]
     fn names_from_messages() {

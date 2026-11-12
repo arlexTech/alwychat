@@ -5,6 +5,9 @@
   import Plus from "@lucide/svelte/icons/plus";
   import Star from "@lucide/svelte/icons/star";
   import Volume2 from "@lucide/svelte/icons/volume-2";
+  import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
+  import SpaceOrderPage from "./SpaceOrderPage.svelte";
+  import { peek, remember } from "$lib/cache";
   import X from "@lucide/svelte/icons/x";
   import { onBack } from "$lib/back.svelte";
   import {
@@ -39,7 +42,9 @@
     onNewVoiceChannel: () => void;
   } = $props();
 
-  let details = $state<RoomDetails | null>(null);
+  // svelte-ignore state_referenced_locally
+  let details = $state<RoomDetails | null>(peek<RoomDetails>(`details:${spaceId}`) ?? null);
+  let ordering = $state(false);
   let error = $state<string | null>(null);
   let adding = $state(false);
   let creating = $state(false);
@@ -47,12 +52,15 @@
 
   function load() {
     roomDetails(spaceId)
-      .then((d) => (details = d))
+      .then((d) => (details = remember(`details:${spaceId}`, d)))
       .catch((e) => (error = String(e)));
   }
   $effect(load);
   $effect(() => {
     if (adding) return onBack(() => (adding = false));
+  });
+  $effect(() => {
+    if (ordering) return onBack(() => (ordering = false));
   });
   $effect(() => {
     if (creating) return onBack(() => (creating = false));
@@ -106,6 +114,11 @@
       <button class="m-row" onclick={() => (adding = true)}>
         <span class="m-icon"><Plus size={20} /></span><span class="m-text"><strong>{tr("Add an existing chat")}</strong></span>
       </button>
+      {#if rooms.length > 1}
+        <button class="m-row" onclick={() => (ordering = true)}>
+          <span class="m-icon"><ArrowUpDown size={20} /></span><span class="m-text"><strong>{tr("Change the order")}</strong><small>{tr("Chats, voice channels and categories")}</small></span>
+        </button>
+      {/if}
     {/if}
     {#each rooms as c (c.id)}
       <div class="m-row">
@@ -135,6 +148,10 @@
   {/if}
   {#if error}<p class="m-error">{error}</p>{/if}
 </Page>
+
+{#if ordering}
+  <SpaceOrderPage {spaceId} {children} onClose={() => (ordering = false)} />
+{/if}
 
 {#if adding}
   <Page title={tr("Add to {value}", { value: details?.name ?? 'the space' })} onClose={() => (adding = false)}>
