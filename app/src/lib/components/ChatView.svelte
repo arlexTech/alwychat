@@ -64,6 +64,7 @@
     type Emote,
     editHistory,
     isAndroid,
+    touchKeyboard,
     setSecureScreen,
     takeKeyboardContent,
     editMessage,
@@ -1011,7 +1012,9 @@
         return;
       }
     }
-    const enterSends = prefs.settings?.enter_sends ?? true;
+    // On-screen keyboards: Enter is always a new line (the send button sends); a hardware
+    // keyboard plugged into a phone can still send with Ctrl+Enter.
+    const enterSends = !touchKeyboard && (prefs.settings?.enter_sends ?? true);
     if (
       event.key === "Enter" &&
       !event.isComposing &&
@@ -1790,6 +1793,7 @@
         onpaste={onPaste}
         onkeydown={onKeydown}
         rows="1"
+        enterkeyhint={touchKeyboard ? "enter" : "send"}
         placeholder={pending.length ? "Add a caption" : "Message"}
       ></textarea>
       <button type="button" class="emoji-toggle" class:on={emojiOpen} onclick={toggleEmoji} aria-label={tr("Emoji")}><SmilePlus size={22} /></button>

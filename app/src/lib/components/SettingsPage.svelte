@@ -7,7 +7,7 @@
   import { onMount } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { profiles, ourZone } from "$lib/stores/profiles.svelte";
-  import { isAndroid, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus, isTauri, type MessageLayout } from "$lib/backend";
+  import { isAndroid, touchKeyboard, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus, isTauri, type MessageLayout } from "$lib/backend";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { spaces } from "$lib/stores/spaces.svelte";
   import { presence } from "$lib/stores/presence.svelte";
@@ -776,7 +776,7 @@
     </button>
     <h3 class="section">{tr("Media")}</h3>
     {#each media as t (t.key)}{@render row(t)}{/each}
-    {#if !isAndroid}
+    {#if !touchKeyboard}
       <label class="toggle">
         <span><strong>{tr("Enter sends")}</strong><small>{settings.enter_sends ? tr("Shift+Enter adds a new line.") : tr("Enter adds a new line, Ctrl+Enter sends.")}</small></span>
         <input type="checkbox" role="switch" checked={settings.enter_sends} onchange={() => toggle("enter_sends")} />

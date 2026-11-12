@@ -9,6 +9,14 @@ export const hasBackend = isTauri || isWeb;
 export { isTauri, isWeb };
 
 export const isAndroid = /Android/.test(navigator.userAgent);
+/** Typing happens on an on-screen keyboard (phones, tablets, also the web version there): Enter
+ *  adds a new line and the send button sends, like WhatsApp/Telegram/Signal/Element on mobile.
+ *  Computers keep "Enter sends, Shift+Enter new line" (Discord, Slack, WhatsApp Web). */
+export const touchKeyboard =
+  isAndroid ||
+  /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) ||
+  (matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches);
 /** Computer apps draw their own window buttons (TitleBar.svelte, decorations are off). */
 export const hasTitlebar = isTauri && !isAndroid && !/iPhone|iPad/.test(navigator.userAgent);
 export const windowMinimize = () => invoke<void>("plugin:window|minimize", { label: "main" });
