@@ -2,6 +2,7 @@
   import { tr } from "$lib/i18n/index.svelte";
   import { fade, fly } from "svelte/transition";
   import Copy from "@lucide/svelte/icons/copy";
+  import LinkIcon from "@lucide/svelte/icons/link";
   import Download from "@lucide/svelte/icons/download";
   import Forward from "@lucide/svelte/icons/forward";
   import SquareCheck from "@lucide/svelte/icons/square-check";
@@ -21,6 +22,8 @@
     reply?: () => void;
     thread?: () => void;
     copy?: () => void;
+    /** Long-pressed on a link: copy that link. */
+    copyLink?: () => void;
     forward?: () => void;
     /** Present when we may pin in this chat. */
     pin?: { pinned: boolean; toggle: () => void };
@@ -65,6 +68,7 @@
     <div class="any"><EmojiPicker onPick={(e) => run(() => actions.react(e))} /></div>
   {:else}
   <div class="list">
+    {#if actions.copyLink}<button onclick={() => run(actions.copyLink!)}><LinkIcon size={20} />{tr("Copy link")}</button>{/if}
     {#if actions.reply}<button onclick={() => run(actions.reply!)}><Reply size={20} />{tr("Reply")}</button>{/if}
     {#if actions.thread}<button onclick={() => run(actions.thread!)}><MessagesSquare size={20} />{tr("Reply in thread")}</button>{/if}
     {#if actions.copy}<button onclick={() => run(actions.copy!)}><Copy size={20} />{tr("Copy text")}</button>{/if}

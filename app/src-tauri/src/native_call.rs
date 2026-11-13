@@ -175,6 +175,30 @@ pub fn native_call_set_muted_for_me(user_id: String, muted: bool) -> Result<(), 
     }
 }
 
+/// How loud one person is for us (gain).
+#[tauri::command]
+pub fn native_call_set_volume(user_id: String, volume: f32) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    return with_call(|c| c.set_volume(&user_id, volume));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (user_id, volume);
+        unsupported()
+    }
+}
+
+/// How loud others' soundboard sounds are for us (gain).
+#[tauri::command]
+pub fn native_call_set_soundboard_volume(volume: f32) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    return with_call(|c| c.set_soundboard_volume(volume));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = volume;
+        unsupported()
+    }
+}
+
 /// Hear others' soundboard sounds or not (the volume slider at 0).
 #[tauri::command]
 pub fn native_call_set_soundboard_off(off: bool) -> Result<(), String> {

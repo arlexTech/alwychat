@@ -442,6 +442,9 @@ export const nativeCallSetDeafened = (deafened: boolean) => invoke<void>("native
 export const nativeCallSetMutedForMe = (userId: string, muted: boolean) =>
   invoke<void>("native_call_set_muted_for_me", { userId, muted });
 export const nativeCallSetSoundboardOff = (off: boolean) => invoke<void>("native_call_set_soundboard_off", { off });
+/** How loud one person / others' soundboard sounds are for us (gain, 1 = as sent). */
+export const nativeCallSetVolume = (userId: string, volume: number) => invoke<void>("native_call_set_volume", { userId, volume });
+export const nativeCallSetSoundboardVolume = (volume: number) => invoke<void>("native_call_set_soundboard_volume", { volume });
 
 export interface Presence {
   user_id: string;

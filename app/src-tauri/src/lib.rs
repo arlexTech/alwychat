@@ -2680,6 +2680,8 @@ pub fn run() {
             native_call::native_call_set_deafened,
             native_call::native_call_set_muted_for_me,
             native_call::native_call_set_soundboard_off,
+            native_call::native_call_set_volume,
+            native_call::native_call_set_soundboard_volume,
             native_call::native_call_set_setup,
             native_call::native_devices,
             native_call::native_camera_preview,

@@ -10,6 +10,8 @@ livekit = { version = "0.10", default-features = false, features = ["native", "r
 # Two TLS crypto backends end up in the build (ring, aws-lc): rustls then needs one chosen.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util.workspace = true
+# Our patched copy (vendor/webrtc-sys): per-track playback volume for per-person volume.
+webrtc-sys = "=0.3.52"
 # Video frames for the UI: fast pure-Rust JPEG.
 jpeg-encoder = "0.7"
 serde.workspace = true

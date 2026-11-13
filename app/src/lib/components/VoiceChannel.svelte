@@ -88,7 +88,7 @@
           >
             <span class="avatar"><Avatar name={p.name} mxc={p.avatar} size={24} /></span>
             <span class="who">{p.name}</span>
-            {#if connected && !p.isMe && call.isMutedForMe(p.userId)}<VolumeX size={13} />{:else if connected && !p.isMe && call.volumeOf(p.userId) < 1}<small>{Math.round(call.volumeOf(p.userId) * 100)}%</small>{/if}
+            {#if connected && !p.isMe && call.isMutedForMe(p.userId)}<VolumeX size={13} />{:else if connected && !p.isMe && call.volumeOf(p.userId) !== 1}<small>{Math.round(call.volumeOf(p.userId) * 100)}%</small>{/if}
             {#if p.isMe && call.deafened}<HeadphoneOff size={13} />{:else if p.muted}<MicOff size={13} />{/if}
           </button>
         </li>

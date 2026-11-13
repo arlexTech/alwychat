@@ -1,6 +1,7 @@
 // The call we're in: MatrixRTC signalling in the core, audio/video with livekit-client here,
 // or in Rust where the webview has no WebRTC (Linux desktop: `native`; pictures arrive as frames,
 // see nativeVideo.svelte.ts).
+import { loudness, playCue, type CallCue } from "$lib/callSounds";
 import {
   ConnectionState,
   Room,
@@ -31,6 +32,8 @@ import {
   nativeCallSetMic,
   nativeCallSetMutedForMe,
   nativeCallSetSoundboardOff,
+  nativeCallSetSoundboardVolume,
+  nativeCallSetVolume,
   nativeCallSetSetup,
   nativeCallSetCamera,
   nativeCallSetScreen,
@@ -96,6 +99,8 @@ export interface CallPrefs {
   muted: string[];
   /** How loud soundboard sounds are for us, ours and others' (0–1). */
   soundboardVolume: number;
+  /** The "Call sounds" slider, 0–1 (0 = off; callSounds.ts turns it into loudness). */
+  callSoundLevel: number;
 }
 
 /** Someone in a call or a voice channel, as the person menu shows them. */
@@ -122,6 +127,7 @@ function loadPrefs(): CallPrefs {
     volumes: {},
     muted: [],
     soundboardVolume: 1,
+    callSoundLevel: 0.5,
   };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
@@ -153,6 +159,13 @@ class CallStore {
   speaker = $state(false);
   /** Mic state to restore when undeafening. */
   #micBeforeDeafen = true;
+  /** Who else is in the call (LiveKit identities) and who shares a screen, as last heard: null
+   * until we're connected, so the people already there make no sound. */
+  #present: Set<string> | null = null;
+  /** Voices boosted above 100 % (by track SID), see `#boostTrack`. */
+  #boosted = new Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode }>();
+  #boostContext: AudioContext | null = null;
+  #sharing = new Set<string>();
   prefs = $state<CallPrefs>(loadPrefs());
   /** Push-to-talk: the talk button / key is held. */
   talking = $state(false);
@@ -392,13 +405,15 @@ class CallStore {
           if (event.kind === "members") {
             this.#nativeMembers = event.members;
             this.#sync();
-          } else if (event.kind === "connected") this.status = "connected";
+          } else if (event.kind === "connected") this.#connectedNow();
           else if (event.kind === "reconnecting") this.status = "reconnecting";
           else if (event.kind === "screen_ended") this.screenOn = false;
           else if (this.#nativeIn) void this.leave();
         }, (key, jpeg) => nativeVideo.push(key, jpeg));
-        this.status = "connected";
+        this.#connectedNow();
         for (const userId of this.prefs.muted) void nativeCallSetMutedForMe(userId, true).catch(() => {});
+        for (const [userId, volume] of Object.entries(this.prefs.volumes)) void nativeCallSetVolume(userId, loudness(volume)).catch(() => {});
+        void nativeCallSetSoundboardVolume(loudness(this.prefs.soundboardVolume)).catch(() => {});
         if (this.prefs.soundboardVolume < 0.01) void nativeCallSetSoundboardOff(true).catch(() => {});
         if (video) await nativeCallSetCamera(true).catch((e) => this.#fail("camera", e));
         this.#sync();
@@ -443,7 +458,7 @@ class CallStore {
         .on(RoomEvent.LocalTrackUnpublished, () => this.#sync())
         .on(RoomEvent.ActiveSpeakersChanged, () => this.#sync())
         .on(RoomEvent.ConnectionStateChanged, (state) => {
-          if (state === ConnectionState.Connected) this.status = "connected";
+          if (state === ConnectionState.Connected) this.#connectedNow();
           else if (state === ConnectionState.Reconnecting) this.status = "reconnecting";
         })
         .on(RoomEvent.Disconnected, () => {
@@ -451,7 +466,7 @@ class CallStore {
           if (this.#lk === lk) void this.leave();
         });
       await lk.connect(url, jwt);
-      this.status = "connected";
+      this.#connectedNow();
       // Before the microphone is published, so nothing goes out in clear.
       if (encrypted && worker) {
         await lk.setE2EEEnabled(true);
@@ -485,7 +500,7 @@ class CallStore {
     const local = ctx.createBufferSource();
     local.buffer = buffer;
     const volume = ctx.createGain();
-    volume.gain.value = 0.7 * this.prefs.soundboardVolume;
+    volume.gain.value = 0.7 * loudness(this.prefs.soundboardVolume);
     this.#sbGain = volume;
     local.connect(volume).connect(ctx.destination);
     local.start();
@@ -513,8 +528,29 @@ class CallStore {
     this.#sbPlaying.push(out);
   }
 
+  #cue(cue: CallCue) {
+    playCue(cue, this.prefs.callSoundLevel);
+  }
+
+  /** Connected (first time, or back after reconnecting): our join sound the first time. */
+  #connectedNow() {
+    const first = this.status !== "connected" && this.#present === null;
+    this.status = "connected";
+    if (first) {
+      // Whoever is already there is the starting point (no sound for them).
+      this.#sync();
+      const others = this.tiles.filter((t) => !t.isMe);
+      this.#present = new Set(others.map((t) => t.id));
+      this.#sharing = new Set(others.filter((t) => t.screen || t.screenFrames).map((t) => t.id));
+      this.#cue("join");
+    }
+  }
+
   async leave() {
     clearTimeout(this.#noAnswer);
+    if (this.#present !== null) this.#cue("leave");
+    this.#present = null;
+    this.#sharing.clear();
     clearInterval(this.#meter);
     this.#meter = undefined;
     this.#voices.clear();
@@ -546,6 +582,9 @@ class CallStore {
     this.talking = false;
     for (const el of this.#audio.values()) el.remove();
     this.#audio.clear();
+    this.#boosted.clear();
+    void this.#boostContext?.close().catch(() => {});
+    this.#boostContext = null;
     await lk?.disconnect().catch(() => {});
     if (wasNative || (wasIn && this.native)) await nativeCallLeave().catch(() => {});
     if (wasIn) await leaveCall().catch(() => {});
@@ -555,6 +594,7 @@ class CallStore {
     if (!this.#connected) return;
     // Unmuting while deafened undeafens too (as Discord does).
     if (this.deafened && !this.micOn) this.#setDeafened(false);
+    this.#cue(this.micOn ? "mute" : "unmute");
     await this.#setMic(!this.micOn);
   }
 
@@ -566,6 +606,7 @@ class CallStore {
   async toggleDeafen() {
     if (!this.#connected) return;
     const deaf = !this.deafened;
+    this.#cue(deaf ? "deafen" : "undeafen");
     this.#setDeafened(deaf);
     if (deaf) {
       this.#micBeforeDeafen = this.micOn;
@@ -578,6 +619,8 @@ class CallStore {
   #setDeafened(deaf: boolean) {
     this.deafened = deaf;
     for (const el of this.#audio.values()) el.muted = deaf;
+    // Boosted voices play through their gain node: silence / restore those too.
+    for (const p of this.#lk?.remoteParticipants.values() ?? []) this.#applyVolume(p);
     if (this.#nativeIn) void nativeCallSetDeafened(deaf).catch(() => {});
   }
 
@@ -648,7 +691,7 @@ class CallStore {
 
   setVolume(userId: string, volume: number) {
     const volumes = { ...this.prefs.volumes };
-    if (volume >= 0.999) delete volumes[userId];
+    if (Math.abs(volume - 1) < 0.005) delete volumes[userId];
     else volumes[userId] = volume;
     this.prefs = { ...this.prefs, volumes };
     this.#savePrefs();
@@ -669,9 +712,9 @@ class CallStore {
   }
 
   #applyVolumeOf(userId: string) {
-    // Natively only on/off for now (the platform audio module mixes remote tracks itself).
     if (this.#nativeIn) {
       const silent = this.isMutedForMe(userId) || this.volumeOf(userId) < 0.01;
+      void nativeCallSetVolume(userId, loudness(this.volumeOf(userId))).catch(() => {});
       return void nativeCallSetMutedForMe(userId, silent).catch(() => {});
     }
     for (const p of this.#lk?.remoteParticipants.values() ?? []) {
@@ -681,11 +724,15 @@ class CallStore {
 
   #applyVolume(participant: RemoteParticipant) {
     const userId = userOf(participant.identity);
-    participant.setVolume(this.isMutedForMe(userId) ? 0 : this.volumeOf(userId));
+    // Sliders are positions, not power: the same hearing curve as call sounds.
+    const volume = this.isMutedForMe(userId) ? 0 : this.volumeOf(userId);
+    participant.setVolume(loudness(Math.min(volume, 1)));
+    const mic = participant.getTrackPublication(Track.Source.Microphone)?.track;
+    if (mic?.sid) this.#boostTrack(mic.sid, mic.mediaStreamTrack, volume > 1 ? loudness(volume) : null);
     // Their soundboard: its own track (setVolume above only touches the microphone).
     for (const pub of participant.audioTrackPublications.values()) {
       if (pub.trackName === "soundboard" && pub.audioTrack) {
-        (pub.audioTrack as RemoteAudioTrack).setVolume(this.isMutedForMe(userId) ? 0 : this.prefs.soundboardVolume);
+        (pub.audioTrack as RemoteAudioTrack).setVolume(this.isMutedForMe(userId) ? 0 : loudness(this.prefs.soundboardVolume));
       }
     }
   }
@@ -695,8 +742,11 @@ class CallStore {
   setSoundboardVolume(volume: number) {
     this.prefs = { ...this.prefs, soundboardVolume: volume };
     this.#savePrefs();
-    if (this.#sbGain) this.#sbGain.gain.value = 0.7 * volume;
-    if (this.#nativeIn) return void nativeCallSetSoundboardOff(volume < 0.01).catch(() => {});
+    if (this.#sbGain) this.#sbGain.gain.value = 0.7 * loudness(volume);
+    if (this.#nativeIn) {
+      void nativeCallSetSoundboardVolume(loudness(volume)).catch(() => {});
+      return void nativeCallSetSoundboardOff(volume < 0.01).catch(() => {});
+    }
     for (const p of this.#lk?.remoteParticipants.values() ?? []) this.#applyVolume(p);
   }
 
@@ -801,6 +851,40 @@ class CallStore {
     }, 100);
   }
 
+  /** Above 100 %: an audio element can't go louder than what was sent, so that person's voice
+   * plays through a gain node instead (their element stays attached but silent). `gain` null =
+   * back to the element. */
+  #boostTrack(sid: string, media: MediaStreamTrack, gain: number | null) {
+    const el = this.#audio.get(sid);
+    const now = this.#boosted.get(sid);
+    if (gain === null) {
+      if (now) {
+        now.source.disconnect();
+        now.gain.disconnect();
+        this.#boosted.delete(sid);
+      }
+      if (el) el.muted = this.deafened;
+      return;
+    }
+    if (!el) return;
+    try {
+      const ctx = (this.#boostContext ??= new AudioContext());
+      void ctx.resume().catch(() => {});
+      let node = now;
+      if (!node) {
+        const source = ctx.createMediaStreamSource(new MediaStream([media]));
+        const out = ctx.createGain();
+        source.connect(out).connect(ctx.destination);
+        node = { source, gain: out };
+        this.#boosted.set(sid, node);
+      }
+      node.gain.gain.value = this.deafened ? 0 : gain;
+      el.muted = true;
+    } catch (e) {
+      console.warn("volume boost", e);
+    }
+  }
+
   #attachAudio(track: RemoteTrack) {
     if (track.kind !== Track.Kind.Audio || !track.sid) return;
     const el = track.attach();
@@ -812,6 +896,7 @@ class CallStore {
 
   #detachAudio(track: RemoteTrack) {
     if (!track.sid) return;
+    this.#boostTrack(track.sid, track.mediaStreamTrack, null);
     track.detach().forEach((el) => el.remove());
     this.#audio.get(track.sid)?.remove();
     this.#audio.delete(track.sid);
@@ -862,6 +947,7 @@ class CallStore {
         clearTimeout(this.#noAnswer);
       }
       this.tiles = this.#nativeMembers.map((m) => this.#nativeTile(m));
+      this.#heard();
       return;
     }
     const lk = this.#lk;
@@ -875,6 +961,23 @@ class CallStore {
       this.#tile(lk.localParticipant, true),
       ...[...lk.remoteParticipants.values()].map((p) => this.#tile(p, false)),
     ];
+    this.#heard();
+  }
+
+  /** Sounds for people coming and going, and for a screen share starting. */
+  #heard() {
+    if (this.#present === null) return;
+    const others = this.tiles.filter((t) => !t.isMe);
+    const now = new Set(others.map((t) => t.id));
+    const sharing = new Set(others.filter((t) => t.screen || t.screenFrames).map((t) => t.id));
+    const joined = [...now].some((id) => !this.#present!.has(id));
+    const left = [...this.#present].some((id) => !now.has(id));
+    const shared = [...sharing].some((id) => !this.#sharing.has(id));
+    this.#present = now;
+    this.#sharing = sharing;
+    if (joined) this.#cue("peerJoin");
+    else if (left) this.#cue("peerLeave");
+    else if (shared) this.#cue("screen");
   }
 }
 

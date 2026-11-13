@@ -170,6 +170,9 @@ struct Shared {
     voices: HashMap<String, Voice>,
     /// User IDs muted for us only.
     muted_for_me: HashSet<String>,
+    /// Playback volume per user ID (gain, 1 when absent) and of others' soundboard sounds.
+    volumes: HashMap<String, f32>,
+    soundboard_volume: f32,
     /// Remote videos sent to the UI, by track SID.
     watching: HashMap<String, tokio::task::JoinHandle<()>>,
     camera: Option<video::Capture>,
@@ -282,6 +285,8 @@ impl NativeCall {
             soundboard_off: false,
             voices: HashMap::new(),
             muted_for_me: HashSet::new(),
+            volumes: HashMap::new(),
+            soundboard_volume: 1.0,
             watching: HashMap::new(),
             camera: None,
             screen: None,
@@ -415,6 +420,22 @@ impl NativeCall {
     /// Hear others' soundboard sounds or not.
     pub fn set_soundboard_off(&self, off: bool) {
         self.shared.lock().unwrap().soundboard_off = off;
+        apply_audio(&self.room, &self.shared);
+    }
+
+    /// How loud one person is for us (gain: 0–1, 1 = as sent), all their devices.
+    pub fn set_volume(&self, user_id: &str, volume: f32) {
+        self.shared
+            .lock()
+            .unwrap()
+            .volumes
+            .insert(user_id.to_owned(), volume.clamp(0.0, 4.0));
+        apply_audio(&self.room, &self.shared);
+    }
+
+    /// How loud others' soundboard sounds are for us (gain).
+    pub fn set_soundboard_volume(&self, volume: f32) {
+        self.shared.lock().unwrap().soundboard_volume = volume.clamp(0.0, 4.0);
         apply_audio(&self.room, &self.shared);
     }
 
@@ -702,18 +723,28 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
     out
 }
 
-/// Enable or disable every remote audio track for deafen / "mute for me".
+/// Every remote audio track: on or off (deafen, "mute for me") and its playback volume.
 fn apply_audio(room: &Room, shared: &Mutex<Shared>) {
     let shared = shared.lock().unwrap();
     for participant in room.remote_participants().values() {
-        let silent = shared.deafened
-            || shared
-                .muted_for_me
-                .contains(user_of(participant.identity().as_str()));
+        let user = user_of(participant.identity().as_str()).to_owned();
+        let silent = shared.deafened || shared.muted_for_me.contains(&user);
+        let volume = shared.volumes.get(&user).copied().unwrap_or(1.0);
         for publication in participant.track_publications().values() {
             if let Some(RemoteTrack::Audio(track)) = publication.track() {
-                let silent =
-                    silent || (shared.soundboard_off && publication.name() == SOUNDBOARD_TRACK);
+                let soundboard = publication.name() == SOUNDBOARD_TRACK;
+                let silent = silent || (shared.soundboard_off && soundboard);
+                let gain = if soundboard {
+                    shared.soundboard_volume
+                } else {
+                    volume
+                };
+                // libwebrtc's own per-source volume (our patched webrtc-sys); kept by the
+                // receiver, so it survives the on/off below.
+                webrtc_sys::audio_track::ffi::set_audio_track_volume(
+                    &track.rtc_track().id(),
+                    f64::from(gain),
+                );
                 if silent {
                     track.disable();
                 } else {

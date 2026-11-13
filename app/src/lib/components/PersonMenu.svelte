@@ -30,6 +30,8 @@
   let error = $state<string | null>(null);
 
   function setVolume(value: number) {
+    // 100 % is easy to land on again.
+    if (Math.abs(value - 100) <= 4) value = 100;
     volume = value;
     call.setVolume(person.userId, value / 100);
     // Moving the slider means they should be heard again.
@@ -113,21 +115,18 @@
         {#if mutedForMe}<Volume2 size={18} />{tr("Unmute for me")}{:else}<VolumeX size={18} />{tr("Mute for me")}{/if}
         {#if mutedForMe}<span class="check" aria-hidden="true"></span>{/if}
       </button>
-      <!-- Native calls (Linux desktop) can only silence someone for now. -->
-      {#if !call.native}
       <div class="volume">
         <span class="label"><Volume2 size={18} />{tr("User volume")} <b>{mutedForMe ? 0 : volume}%</b></span>
         <input
           type="range"
           min="0"
-          max="100"
+          max="200"
           step="1"
           value={mutedForMe ? 0 : volume}
           oninput={(e) => setVolume(Number(e.currentTarget.value))}
           aria-label={tr("Volume of {name}", { name: person.name })}
         />
       </div>
-      {/if}
     {/if}
   {/if}
 

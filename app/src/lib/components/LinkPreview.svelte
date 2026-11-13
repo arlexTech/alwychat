@@ -38,7 +38,7 @@
 </script>
 
 {#if preview}
-  <button class="card" class:wide onclick={() => openExternal(url).catch(() => {})} title={url}>
+  <button class="card" class:wide data-link={url} onclick={() => openExternal(url).catch(() => {})} title={url}>
     {#if preview.image}
       <img
         src={mediaUrl(preview.image, wide ? 320 : 72)}

@@ -58,3 +58,7 @@ opt-level = "z"
 # Video frames of native calls are encoded on every frame: keep it fast in dev builds too.
 [profile.dev.package.jpeg-encoder]
 opt-level = 3
+
+# webrtc-sys with one addition (per-track playback volume), see vendor/webrtc-sys/ALWYCHAT-PATCH.md.
+[patch.crates-io]
+webrtc-sys = { path = "vendor/webrtc-sys" }

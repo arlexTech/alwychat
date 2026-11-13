@@ -435,7 +435,7 @@
             {@render picture(t, false)}
             <span class="name">
               {#if t.isMe && call.deafened}<HeadphoneOff size={13} />{:else if !t.micOn}<MicOff size={13} />{/if}{t.isMe ? tr("You") : t.name}
-              {#if !t.isMe && call.isMutedForMe(t.userId)}<small><VolumeX size={13} /></small>{:else if !t.isMe && call.volumeOf(t.userId) < 1}<small>{Math.round(call.volumeOf(t.userId) * 100)}%</small>{/if}
+              {#if !t.isMe && call.isMutedForMe(t.userId)}<small><VolumeX size={13} /></small>{:else if !t.isMe && call.volumeOf(t.userId) !== 1}<small>{Math.round(call.volumeOf(t.userId) * 100)}%</small>{/if}
             </span>
             {/if}
           </div>

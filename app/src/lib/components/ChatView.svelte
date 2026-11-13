@@ -39,6 +39,7 @@
   import TextQuote from "@lucide/svelte/icons/text-quote";
   import Type from "@lucide/svelte/icons/type";
   import X from "@lucide/svelte/icons/x";
+  import Reply from "@lucide/svelte/icons/reply";
   import CopyIcon from "@lucide/svelte/icons/copy";
   import ForwardIcon from "@lucide/svelte/icons/forward";
   import Download from "@lucide/svelte/icons/download";
@@ -518,6 +519,7 @@
   $effect(() => {
     void room.id;
     void tl.focused;
+    atBottom = true;
     limit = FIRST_PAINT;
     widen = true;
   });
@@ -571,7 +573,26 @@
     }, 700);
   }
 
+  // Staying at the newest message: a bottom-up list should keep its place at the bottom when a
+  // message is added, but not every webview does (WebKitGTK on Linux leaves the view where it
+  // was, so a message we just sent sat below the fold). So: if we were at the bottom, or we just
+  // sent something, go back to the bottom whenever the timeline changes.
+  let atBottom = true;
+  let followUntil = 0;
+  /** We just sent something: show it when it lands, wherever we were. */
+  function followNewest() {
+    followUntil = Date.now() + 4000;
+  }
+  $effect(() => {
+    void tl.entries;
+    void shown.length;
+    // Not while looking at an older part of the chat (search result, timeline strip).
+    if (!scroller || tl.focused) return;
+    if ((atBottom || Date.now() < followUntil) && Math.abs(scroller.scrollTop) > 1) scroller.scrollTop = 0;
+  });
+
   function onScroll() {
+    atBottom = Math.abs(scroller.scrollTop) < 40;
     // Back down at the newest: what we scrolled past is read now.
     if (Math.abs(scroller.scrollTop) < 40 && (room.unread_messages > 0 || room.marked_unread)) readSoon(300);
     const up = Math.abs(scroller.scrollTop) > 600;
@@ -656,6 +677,7 @@
     await tick();
     autosize();
     scroller.scrollTo({ top: 0, behavior: "smooth" });
+    followNewest();
     try {
       await sendMessage(target, body, reply, mentions, emotes.usedIn(body));
     } catch (e) {
@@ -762,6 +784,7 @@
     await tick();
     autosize();
     scroller.scrollTo({ top: 0, behavior: "smooth" });
+    followNewest();
     sendingFiles = true;
     try {
       if (text && files.length > 1) await sendMessage(target, text, null);
@@ -844,6 +867,8 @@
     draft = editableText(msg);
     tick().then(() => {
       autosize();
+      // The message being edited stays in sight (the rest of the chat dims around it).
+      document.querySelector(`[data-event="${CSS.escape(msg.item_id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       input.focus();
       input.setSelectionRange(draft.length, draft.length);
     });
@@ -1068,7 +1093,7 @@
   }
 
   // Long-press action sheet (touch) and forwarding.
-  let actionFor = $state<{ msg: MessageEntry; album: MessageEntry[] | null } | null>(null);
+  let actionFor = $state<{ msg: MessageEntry; album: MessageEntry[] | null; link?: string | null } | null>(null);
   let forwardIds = $state<string[] | null>(null);
   $effect(() => {
     if (actionFor) return closeOnBack(() => (actionFor = null));
@@ -1099,7 +1124,7 @@
     flash(tr("Copied"));
   }
 
-  function actionsFor(msg: MessageEntry, album: MessageEntry[] | null): Actions {
+  function actionsFor(msg: MessageEntry, album: MessageEntry[] | null, link: string | null = null): Actions {
     const items = album ?? [msg];
     const remote = items.every((m) => m.item_id.startsWith("$"));
     const c = msg.content;
@@ -1113,6 +1138,7 @@
       react: (key) => react(msg, key),
       reply: msg.can_reply ? () => startReply(msg) : undefined,
       copy: text ? () => copyText(text) : undefined,
+      copyLink: link ? () => copyText(link) : undefined,
       forward: forwardable ? () => (forwardIds = items.map((m) => m.item_id)) : undefined,
       thread: !thread && remote && msg.can_reply ? () => (threadRoot = msg.item_id) : undefined,
       pin: chat.pins.can_pin && remote ? { pinned, toggle: () => setPin(msg.item_id, !pinned) } : undefined,
@@ -1495,7 +1521,7 @@
   <MessageActions
     msg={actionFor.msg}
     quickReaction={QUICK_REACTION}
-    actions={actionsFor(actionFor.msg, actionFor.album)}
+    actions={actionsFor(actionFor.msg, actionFor.album, actionFor.link)}
     onClose={() => (actionFor = null)}
   />
 {/if}
@@ -1574,7 +1600,8 @@
     {#each shown as row (row.key)}
       {#if row.kind === "message"}
         {@const isSelected = !!selected?.has(row.msg.item_id)}
-        <div data-event={row.msg.item_id} class="msg-row" class:selecting={!!selected} class:selected={isSelected}>
+        <div data-event={row.msg.item_id} class="msg-row" class:selecting={!!selected} class:selected={isSelected}
+          class:being-edited={editing?.item_id === row.msg.item_id} class:dimmed={!!editing && editing.item_id !== row.msg.item_id}>
           {#if selected}
             <!-- While selecting, a tap anywhere on the row picks it (the bubble's own taps wait). -->
             <button
@@ -1613,8 +1640,11 @@
             onThread={thread ? undefined : () => (threadRoot = row.msg.item_id)}
             onForward={actionsFor(row.msg, row.album).forward}
             onSelect={selectable(row.msg) ? () => startSelect(row.msg) : undefined}
-            onLongPress={() => (actionFor = { msg: row.msg, album: row.album })}
+            onLongPress={(link) => (actionFor = { msg: row.msg, album: row.album, link })}
+            onCopy={messageText(row.msg) ? () => copyText(messageText(row.msg)!) : undefined}
+            onCopyLink={copyText}
           />
+          {#if editing?.item_id === row.msg.item_id}<span class="edit-tag"><Pencil size={12} />{tr("Editing")}</span>{/if}
           {#snippet failed()}<p class="broken">{tr("Couldn't show this message")}</p>{/snippet}
           </svelte:boundary>
         </div>
@@ -1663,19 +1693,21 @@
 <form class="composer" onsubmit={send}>
   {#if editing}
     <div class="replying editing" transition:fly={{ y: 8, duration: 160 }}>
+      <span class="mode"><Pencil size={16} /></span>
       <div>
         <strong>{"caption" in editing.content ? tr("Editing caption") : tr("Editing message")}</strong>
         <span>{editableText(editing)}</span>
       </div>
-      <button type="button" onclick={cancelEdit} aria-label={tr("Cancel edit")}>×</button>
+      <button type="button" onclick={cancelEdit} aria-label={tr("Cancel edit")}><X size={18} /></button>
     </div>
   {:else if replyTo}
     <div class="replying" transition:fly={{ y: 8, duration: 160 }}>
+      <span class="mode"><Reply size={16} /></span>
       <div>
-        <strong>{tr("Replying to {value}", { value: replyTo.is_own ? "yourself" : replyTo.sender_name })}</strong>
+        <strong>{replyTo.is_own ? tr("Replying to yourself") : tr("Replying to {value}", { value: replyTo.sender_name })}</strong>
         <span>{replyText(replyTo)}</span>
       </div>
-      <button type="button" onclick={() => (replyTo = null)} aria-label={tr("Cancel reply")}>×</button>
+      <button type="button" onclick={() => (replyTo = null)} aria-label={tr("Cancel reply")}><X size={18} /></button>
     </div>
   {/if}
   {#if pending.length}
@@ -1782,7 +1814,7 @@
         e.currentTarget.value = "";
       }}
     />
-    <div class="field">
+    <div class="field" class:editing={!!editing}>
       <textarea
         bind:this={input}
         bind:value={draft}
@@ -1800,7 +1832,7 @@
     </div>
     {#if draft.trim() || editing || pending.length}
       <!-- Never takes the focus: the keyboard stays open for the next message. -->
-      <button class="send" aria-label={editing ? tr("Save edit") : tr("Send")} onmousedown={keepFocus} transition:fly={{ x: 8, duration: 140 }}
+      <button class="send" class:editing={!!editing} aria-label={editing ? tr("Save edit") : tr("Send")} onmousedown={keepFocus} transition:fly={{ x: 8, duration: 140 }}
         >{#if editing}<Check size={20} />{:else}<SendHorizontal size={20} />{/if}</button
       >
     {:else}
@@ -1933,6 +1965,27 @@
   .msg-row.selecting {
     padding-left: 36px;
     transition: padding 0.18s var(--ease, ease);
+  }
+  /* Editing: the message stands out (pink band + "Editing" tag), everything else fades. */
+  .msg-row {
+    transition: opacity 0.2s var(--ease, ease);
+  }
+  .msg-row.dimmed {
+    opacity: 0.3;
+  }
+  .msg-row.being-edited {
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--accent-b) 16%, transparent);
+  }
+  .edit-tag {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    padding: 0 12px 4px;
+    color: var(--accent-b);
+    font-size: 0.75rem;
+    font-weight: 600;
   }
   .msg-row.selected {
     background: color-mix(in srgb, var(--accent-a) 14%, transparent);
@@ -2260,13 +2313,50 @@
     text-overflow: ellipsis;
     color: var(--muted);
   }
+  /* Replying = violet with a reply arrow; editing = pink with a pencil, tinted, and the field
+     outlined, so the two can't be mixed up at a glance. */
+  .replying strong {
+    color: var(--accent-a);
+  }
+  .mode {
+    display: grid;
+    flex: none;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent-a) 18%, transparent);
+    color: var(--accent-a);
+  }
   .replying.editing {
-    border-left-color: var(--accent-b);
+    border-left-color: transparent;
+    background: var(--accent-b);
+    color: white;
+  }
+  .replying.editing strong,
+  .replying.editing span,
+  .replying.editing button {
+    color: white;
+  }
+  .replying.editing span {
+    opacity: 0.85;
+  }
+  .replying.editing .mode {
+    background: rgb(255 255 255 / 0.25);
+    color: white;
+  }
+  .field.editing {
+    border-radius: 20px;
+    box-shadow: inset 0 0 0 1.5px var(--accent-b);
   }
   .replying button {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
     border: none;
+    border-radius: 50%;
     background: none;
-    font-size: 1.3rem;
     color: var(--muted);
     cursor: pointer;
   }
@@ -2315,6 +2405,9 @@
     place-items: center;
     background: var(--accent);
     color: white;
+  }
+  .send.editing {
+    background: var(--accent-b);
   }
   .quick {
     background: none;

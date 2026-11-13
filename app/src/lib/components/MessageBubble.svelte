@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Copy from "@lucide/svelte/icons/copy";
+  import LinkIcon from "@lucide/svelte/icons/link";
   import { viewOnce } from "$lib/stores/viewOnce.svelte";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import FileText from "@lucide/svelte/icons/file-text";
@@ -52,6 +54,8 @@
     onPin,
     roomId,
     onLongPress,
+    onCopy,
+    onCopyLink,
     onThread,
     onForward,
     onSelect,
@@ -79,7 +83,11 @@
     onSaveToGallery: () => void;
     roomId: string;
     /** Touch long-press: the chat shows its action sheet (instead of the small menu). */
-    onLongPress?: () => void;
+    onLongPress?: (link: string | null) => void;
+    /** Copy the message's text (absent when it has none). */
+    onCopy?: () => void;
+    /** Copy a link the menu was opened on. */
+    onCopyLink?: (url: string) => void;
     /** Open the thread on this message (absent inside a thread). */
     onThread?: () => void;
     /** Forward to another chat (absent when the message can't be forwarded). */
@@ -223,14 +231,22 @@
   const albumSize = $derived(album && album.length > 1 ? album.length : 0);
   const canSaveToGallery = $derived(albumSize > 0 || ((c.kind === "image" || c.kind === "video") && !muted));
   const hasMenu = $derived(
-    msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || !!onForward || !!onSelect || (!!onThread && remote && msg.can_reply),
+    !!onCopy || msg.can_edit || msg.can_delete || (msg.is_edited && remote) || canSaveToGallery || !!onForward || !!onSelect || (!!onThread && remote && msg.can_reply),
   );
 
   // Right-click (desktop) or long-press (touch) opens the same menu as ⋯.
   let pressTimer: ReturnType<typeof setTimeout> | undefined;
   let pressOrigin = { x: 0, y: 0 };
+  /** The link under a right-click / long-press (text links and the preview card). */
+  let menuLink = $state<string | null>(null);
+  function linkAt(target: EventTarget | null): string | null {
+    const el = (target as Element | null)?.closest?.("a[href], [data-link]") as HTMLElement | null;
+    const url = el?.dataset.link ?? el?.getAttribute("href") ?? null;
+    return url && /^(https?|mailto|geo|matrix):/i.test(url) ? url : null;
+  }
   function openMenu(event: Event) {
-    if (!hasMenu) return;
+    menuLink = linkAt(event.target);
+    if (!hasMenu && !menuLink) return;
     event.preventDefault();
     pickerOpen = false;
     menuOpen = true;
@@ -241,7 +257,7 @@
     if (onLongPress || hasMenu) {
       pressTimer = setTimeout(() => {
         navigator.vibrate?.(10);
-        if (onLongPress) onLongPress();
+        if (onLongPress) onLongPress(linkAt(event.target));
         else openMenu(event);
       }, 450);
     }
@@ -543,7 +559,7 @@
             <button onclick={onReply} aria-label={tr("Reply")}><Reply size={18} /></button>
           {/if}
           {#if hasMenu}
-            <button onclick={() => ((menuOpen = !menuOpen), (pickerOpen = false))} aria-label={tr("More")}><Ellipsis size={18} /></button>
+            <button onclick={() => ((menuLink = null), (menuOpen = !menuOpen), (pickerOpen = false))} aria-label={tr("More")}><Ellipsis size={18} /></button>
           {/if}
         </div>
       {/if}
@@ -566,6 +582,11 @@
       {/if}
       {#if menuOpen}
         <div class="menu" transition:fade={{ duration: 100 }}>
+          {#if menuLink && onCopyLink}
+            {@const url = menuLink}
+            <button onclick={() => pick(() => onCopyLink(url))}><LinkIcon size={16} />{tr("Copy link")}</button>
+          {/if}
+          {#if onCopy}<button onclick={() => pick(onCopy)}><Copy size={16} />{tr("Copy text")}</button>{/if}
           {#if canSaveToGallery}
             <button onclick={() => pick(onSaveToGallery)}><Download size={16} />{albumSize ? tr("Save all ({albumSize})", { albumSize: albumSize }) : tr("Save")}</button>
           {/if}

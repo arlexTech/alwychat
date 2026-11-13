@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { playCue, type CallCue } from "$lib/callSounds";
   import { tr } from "$lib/i18n/index.svelte";
   // Settings → Voice & video (after Discord's): devices, a mic test, audio processing,
   // push-to-talk key, camera with preview. Saved on this device (call preferences).
@@ -49,6 +50,19 @@
   function set(change: Partial<CallPrefs>) {
     void call.setPrefs(change);
   }
+
+  /** Every cue, to listen to in Settings. */
+  const CUE_NAMES: [CallCue, string][] = [
+    ["join", tr("You join")],
+    ["leave", tr("You leave")],
+    ["peerJoin", tr("Someone joins")],
+    ["peerLeave", tr("Someone leaves")],
+    ["mute", tr("Mute")],
+    ["unmute", tr("Unmute")],
+    ["deafen", tr("Deafen")],
+    ["undeafen", tr("Undeafen")],
+    ["screen", tr("Screen share")],
+  ];
 
   // ── Mic test: a live level meter ──
   let testing = $state(false);
@@ -182,6 +196,31 @@
 </div>
 <p class="m-hint">{tr("Speak: the bars should move. Changes apply to a call in progress too.")}</p>
 
+<h3 class="m-section">{tr("Sounds")}</h3>
+<div class="m-row">
+  <span class="m-text"><strong>{tr("Call sounds")}</strong><small>{tr("A sound when you or others join or leave, mute or deafen")}</small></span>
+  <input
+    class="cue-level"
+    type="range"
+    min="0"
+    max="1"
+    step="0.05"
+    value={call.prefs.callSoundLevel}
+    aria-label={tr("Call sounds volume")}
+    oninput={(e) => set({ callSoundLevel: Number(e.currentTarget.value) })}
+    onchange={(e) => playCue("peerJoin", Number(e.currentTarget.value))}
+  />
+  <span class="cue-value">{call.prefs.callSoundLevel < 0.01 ? tr("Off") : `${Math.round(call.prefs.callSoundLevel * 100)} %`}</span>
+</div>
+<div class="m-row join-sounds">
+  <span class="m-text"><strong>{tr("Listen")}</strong><small>{tr("Tap one to hear it")}</small></span>
+  <div class="chips">
+    {#each CUE_NAMES as [cue, name] (cue)}
+      <button class="chip" onclick={() => playCue(cue, Math.max(call.prefs.callSoundLevel, 0.2))}>{name}</button>
+    {/each}
+  </div>
+</div>
+
 <h3 class="m-section">{tr("Audio processing")}</h3>
 <label class="m-row toggle">
   <span class="m-text"><strong>{tr("Echo cancellation")}</strong><small>{tr("Stops others hearing themselves through your speakers")}</small></span>
@@ -309,5 +348,37 @@
     height: 100%;
     object-fit: cover;
     transform: scaleX(-1);
+  }
+  .cue-level {
+    width: min(160px, 35vw);
+    accent-color: var(--accent-a);
+  }
+  .cue-value {
+    min-width: 3.2em;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: right;
+  }
+  .join-sounds {
+    flex-wrap: wrap;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .chip:active {
+    border-color: var(--accent-a);
+    background: color-mix(in srgb, var(--accent-a) 18%, transparent);
   }
 </style>
