@@ -1643,6 +1643,7 @@
             onLongPress={(link) => (actionFor = { msg: row.msg, album: row.album, link })}
             onCopy={messageText(row.msg) ? () => copyText(messageText(row.msg)!) : undefined}
             onCopyLink={copyText}
+            onProfile={room.is_dm ? undefined : (user) => (call.profile = user)}
           />
           {#if editing?.item_id === row.msg.item_id}<span class="edit-tag"><Pencil size={12} />{tr("Editing")}</span>{/if}
           {#snippet failed()}<p class="broken">{tr("Couldn't show this message")}</p>{/snippet}

@@ -1,6 +1,17 @@
-import { closeChat, loadNewer, loadOlder, openChat, type ChatStyle, type Pins, type TimelineEntry } from "$lib/backend";
+import {
+  closeChat,
+  loadNewer,
+  loadOlder,
+  openChat,
+  peekChat,
+  type ChatStyle,
+  type Pins,
+  type RoomSummary,
+  type TimelineEntry,
+} from "$lib/backend";
 import { applyDiffs } from "./list";
 import { peek, remember } from "$lib/cache";
+import { eventMediaUrl } from "$lib/media";
 
 /** Older messages are fetched until at least this many entries are loaded. */
 const MIN_ENTRIES = 30;
@@ -8,17 +19,25 @@ const MIN_ENTRIES = 30;
 // What a chat showed when we left it, drawn the moment it's opened again (also after a
 // restart) while the core rebuilds its timeline; the live one then takes over in place.
 const SNAPSHOT_ENTRIES = 30;
-const SNAPSHOT_ROOMS = 15;
+const SNAPSHOT_ROOMS = 24;
+/** Chats at the top of the list kept ready (latest messages loaded) before they're opened. */
+const READY_TOP = 8;
 const SNAPSHOT_KEY = "alwychat.snapshots";
 
 function loadSnapshots(): Map<string, TimelineEntry[]> {
   try {
     const raw = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) ?? "[]");
-    return new Map(Array.isArray(raw) ? raw : []);
+    const snaps = new Map<string, TimelineEntry[]>(Array.isArray(raw) ? raw : []);
+    // A "new messages" line from the last run would be in the wrong place by now.
+    for (const [id, entries] of snaps) snaps.set(id, entries.filter((e) => e.type !== "read_marker"));
+    return snaps;
   } catch {
     return new Map();
   }
 }
+
+/** What tells a snapshot entry and the same one in the live timeline are one row. */
+const rowId = (e: TimelineEntry) => (e.type === "message" ? e.item_id : e.key.replace(/^snap:/, ""));
 
 /** Row keys shared by a snapshot message and the same message in the live timeline, so the
  *  swap redraws nothing (prefixed: they never clash with the core's own keys). */
@@ -58,9 +77,15 @@ class Chat {
         .slice(-SNAPSHOT_ENTRIES)
         .filter((e) => e.type !== "read_marker" && !(e.type === "message" && !e.item_id.startsWith("$"))),
     );
+    this.#saveSnapshots(now);
+  }
+
+  #saveSnapshots(now = false) {
+    const snaps = (this.#snapshots ??= loadSnapshots());
     while (snaps.size > SNAPSHOT_ROOMS) snaps.delete(snaps.keys().next().value!);
     clearTimeout(this.#saveTimer);
     const write = () => {
+      this.#unsaved = false;
       try {
         localStorage.setItem(SNAPSHOT_KEY, JSON.stringify([...snaps]));
       } catch {
@@ -69,13 +94,114 @@ class Chat {
     };
     // Written when the app is idle, not while the next chat opens (at once when hidden:
     // timers stop in the background).
+    this.#unsaved = true;
     if (now) write();
     else this.#saveTimer = setTimeout(write, 1500);
+  }
+  #unsaved = false;
+
+  // Chats are made ready BEFORE they're opened: the core hands over their latest messages
+  // (and keeps their timeline), so a click shows the chat as it is now, with nothing left to
+  // arrive. Done for the top of the list, for any chat whose list row changes (a new
+  // message), and again when a row is pointed at or pressed.
+  #seen = new Map<string, string>();
+  #queue: string[] = [];
+  #warming = false;
+  #warmed = new Map<string, number>();
+
+  /** Follow the chat list: `rooms` is every chat, `top` the first ones on screen. */
+  watch(rooms: RoomSummary[], top: string[]) {
+    for (const r of rooms) {
+      const mark = `${r.latest?.timestamp ?? 0}|${r.latest?.text ?? ""}|${r.unread_messages}`;
+      const before = this.#seen.get(r.id);
+      this.#seen.set(r.id, mark);
+      // Only what changed while we watched (a chat seen for the first time is just the list
+      // filling in; if it's new and on top, the line below takes it).
+      if (before !== undefined && before !== mark) this.warm(r.id);
+    }
+    for (const id of top.slice(0, READY_TOP)) if (!this.#warmed.has(id)) this.warm(id);
+  }
+
+  /** Get `roomId` ready to open. `now`: it's about to be opened (pointed at, pressed). */
+  warm(roomId: string, now = false) {
+    if (this.roomId === roomId && this.#live) return;
+    if (now) {
+      // Just done: nothing new to fetch.
+      if (Date.now() - (this.#warmed.get(roomId) ?? 0) < 800) return;
+      void this.#peek(roomId);
+      return;
+    }
+    if (!this.#queue.includes(roomId)) this.#queue.push(roomId);
+    // Catching up after a long sleep: the latest changes matter most.
+    if (this.#queue.length > 12) this.#queue.shift();
+    if (this.#warming) return;
+    this.#warming = true;
+    // One at a time, with a breath in between: never in the way of what the user is doing.
+    const next = async () => {
+      const id = this.#queue.shift();
+      if (id === undefined) return void (this.#warming = false);
+      await this.#peek(id);
+      setTimeout(next, 60);
+    };
+    setTimeout(next, 150);
+  }
+
+  async #peek(roomId: string) {
+    if (this.roomId === roomId && this.#live) return;
+    this.#warmed.set(roomId, Date.now());
+    try {
+      const entries = (await peekChat(roomId)).filter((e) => !(e.type === "message" && !e.item_id.startsWith("$")));
+      if (!entries.length) return;
+      const snaps = (this.#snapshots ??= loadSnapshots());
+      // The open chat is newer than any peek once its live timeline answered.
+      if (this.roomId === roomId && this.#live) return;
+      snaps.delete(roomId);
+      snaps.set(roomId, entries);
+      this.#saveSnapshots();
+      // Its newest photos too, so they're there when it opens (never a view-once one).
+      let photos = 0;
+      for (let i = entries.length - 1; i >= 0 && photos < 4; i--) {
+        const e = entries[i];
+        if (e.type !== "message") continue;
+        const c = e.content;
+        if ((c.kind === "image" && !c.view_once) || c.kind === "sticker" || (c.kind === "video" && c.has_thumbnail && !c.view_once)) {
+          new Image().src = eventMediaUrl(c.media, true);
+          photos++;
+        }
+      }
+      // Opened meanwhile and still showing the older snapshot: show this one.
+      if (this.roomId === roomId && !this.focused) {
+        this.entries = entries.map((e) => ({ ...e, key: snapKey(e) }));
+        this.loaded = true;
+      }
+    } catch {
+      // Not ready (offline, a chat we left): opening it loads it the usual way.
+      this.#warmed.delete(roomId);
+    }
+  }
+
+  /** Signed out: nothing of the account's chats stays on the device. */
+  forget() {
+    clearTimeout(this.#saveTimer);
+    this.#unsaved = false;
+    this.#snapshots = new Map();
+    // (Closing the open chat right after must not keep it again.)
+    this.entries = [];
+    this.loaded = false;
+    this.#seen.clear();
+    this.#warmed.clear();
+    this.#queue = [];
+    try {
+      localStorage.removeItem(SNAPSHOT_KEY);
+    } catch {
+      // Nothing kept then.
+    }
   }
 
   /** Save the open chat's look now (the app is going to the background). */
   persist() {
     this.#keepSnapshot(true);
+    if (this.#unsaved) this.#saveSnapshots(true);
   }
   /** Pinned messages (newest pin first). */
   pins = $state<Pins>({ messages: [], can_pin: false });
@@ -134,15 +260,22 @@ class Chat {
     const snapshot = focus ? undefined : (this.#snapshots ??= loadSnapshots()).get(roomId);
     this.entries = snapshot?.map((e) => ({ ...e, key: snapKey(e) })) ?? [];
     this.loaded = !!snapshot?.length;
-    const snapped = new Set(snapshot?.flatMap((e) => (e.type === "message" ? [e.item_id] : [])));
+    // Messages by their event, the rest (day lines, "new messages") by the core's key, which
+    // a snapshot peeked from the kept timeline shares with it.
+    const snapped = new Set(snapshot?.map(rowId));
     const renamed = new WeakMap<TimelineEntry, TimelineEntry>();
     const shared = (e: TimelineEntry): TimelineEntry => {
-      if (e.type !== "message" || !snapped.has(e.item_id)) return e;
+      if (!snapped.has(rowId(e))) return e;
       let copy = renamed.get(e);
       if (!copy) renamed.set(e, (copy = { ...e, key: snapKey(e) }));
       return copy;
     };
     let live: TimelineEntry[] | null = null;
+    // The first live batch can come after `openChat` returns (the snapshot shows meanwhile):
+    // filling a short chat with older pages waits for it, else nothing would load them (a chat
+    // too short to scroll never asks).
+    let firstBatch = () => {};
+    const arrived = new Promise<void>((resolve) => (firstBatch = resolve));
     this.#live = false;
     this.atStart = false;
     this.error = null;
@@ -162,6 +295,7 @@ class Chat {
           // Diffs apply to the live list, never to the snapshot shown meanwhile.
           live = live ? live.slice() : [];
           this.#live = true;
+          firstBatch();
           applyDiffs(live, diffs);
           this.entries = snapped.size ? live.map(shared) : live;
           this.loaded = true;
@@ -179,6 +313,7 @@ class Chat {
         },
         focus,
       );
+      if (!focus) await Promise.race([arrived, new Promise((r) => setTimeout(r, 8000))]);
       while (current() && !focus && !this.atStart && ((live as TimelineEntry[] | null)?.length ?? 0) < MIN_ENTRIES) {
         if (!(await this.older())) break;
       }

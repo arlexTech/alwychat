@@ -2,6 +2,8 @@
 // file input elsewhere; resized to a square-ish JPEG small enough to travel base64 over IPC.
 import { discardPicked, isAndroid, pickFiles } from "$lib/backend";
 import { pickedMediaUrl } from "$lib/media";
+import { mount, unmount } from "svelte";
+import ImageCropper, { type Crop } from "$lib/components/ImageCropper.svelte";
 
 const AVATAR_MAX = 512;
 
@@ -14,7 +16,8 @@ export interface PickedImage {
 
 async function pickBlob(): Promise<Blob | null> {
   if (isAndroid) {
-    const [file] = await pickFiles("media");
+    // One photo only: the picker doesn't let several be ticked.
+    const [file] = await pickFiles("photo");
     if (!file) return null;
     try {
       return await (await fetch(pickedMediaUrl(file.path))).blob();
@@ -32,48 +35,62 @@ async function pickBlob(): Promise<Blob | null> {
   });
 }
 
-/** Null when cancelled. */
-export async function pickImage(max = AVATAR_MAX): Promise<PickedImage | null> {
-  const blob = await pickBlob();
-  if (!blob) return null;
-  const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
-  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const jpeg = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("couldn't encode the photo"))), "image/jpeg", 0.88),
-  );
-  const bytes = new Uint8Array(await jpeg.arrayBuffer());
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return { data: btoa(binary), preview: URL.createObjectURL(jpeg) };
+/** Let the person move and zoom the photo inside a frame of `aspect`; null when cancelled. */
+function cropImage(blob: Blob, bitmap: ImageBitmap, aspect: number, round: boolean): Promise<Crop | null> {
+  const url = URL.createObjectURL(blob);
+  return new Promise((resolve) => {
+    const cropper = mount(ImageCropper, {
+      target: document.body,
+      props: {
+        bitmap,
+        url,
+        aspect,
+        round,
+        onDone: (crop: Crop | null) => {
+          void unmount(cropper, { outro: true });
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          resolve(crop);
+        },
+      },
+    });
+  });
 }
 
-/** A wide banner (3:1, centre-cropped, 1500×500 JPEG); null when cancelled. */
-export async function pickBanner(): Promise<PickedImage | null> {
+async function jpegBase64(canvas: HTMLCanvasElement, quality: number): Promise<PickedImage> {
+  const jpeg = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("couldn't encode the photo"))), "image/jpeg", quality),
+  );
+  return { data: await toBase64(jpeg), preview: URL.createObjectURL(jpeg) };
+}
+
+/** Pick a photo, choose its part in the cropper, draw it at `width`×`height`. */
+async function pickCropped(width: number, height: number, round: boolean, quality: number): Promise<PickedImage | null> {
   const blob = await pickBlob();
   if (!blob) return null;
   const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
-  const [W, H] = [1500, 500];
-  // The largest 3:1 area in the middle of the photo.
-  const sw = Math.min(bitmap.width, bitmap.height * 3);
-  const sh = sw / 3;
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  canvas.getContext("2d")!.drawImage(bitmap, (bitmap.width - sw) / 2, (bitmap.height - sh) / 2, sw, sh, 0, 0, W, H);
-  bitmap.close();
-  const jpeg = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("couldn't encode the photo"))), "image/jpeg", 0.85),
-  );
-  const bytes = new Uint8Array(await jpeg.arrayBuffer());
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return { data: btoa(binary), preview: URL.createObjectURL(jpeg) };
+  try {
+    const crop = await cropImage(blob, bitmap, width / height, round);
+    if (!crop) return null;
+    // Never upscale a small photo beyond its own pixels.
+    const scale = Math.min(1, crop.sw / width);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
+    return await jpegBase64(canvas, quality);
+  } finally {
+    bitmap.close();
+  }
 }
+
+/** A square avatar (the part chosen in the cropper, ≤`max` px); null when cancelled. `round`:
+ * the frame is drawn as a circle, like people's avatars (spaces are rounded squares). */
+export const pickImage = (max = AVATAR_MAX, round = true) => pickCropped(max, max, round, 0.88);
+
+/** A wide banner (3:1, the part chosen in the cropper, 1500×500 JPEG); null when cancelled. */
+export const pickBanner = () => pickCropped(1500, 500, false, 0.85);
 
 export interface PickedEmote {
   /** Base64 image, for `uploadEmote`. */

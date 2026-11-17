@@ -26,6 +26,8 @@ class MainActivity : TauriActivity() {
 
     /** In a call (set with the call notification): leaving the app shrinks it to picture-in-picture. */
     @Volatile var inCall = false
+    /** A live location share is running: the page keeps following the position. */
+    @Volatile var sharingLocation = false
     /** The mic state for the picture-in-picture button (null: no button, push to talk). */
     @Volatile var muted: Boolean? = null
     @Volatile var muteLabel = "Mute"
@@ -94,6 +96,11 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     keepShare(intent)
+    // Already on screen (a floating window, split screen): the page never becomes "visible"
+    // again, so tell it a share is waiting.
+    if (share != null) webView(window.decorView)?.let { view ->
+      view.post { view.evaluateJavascript("window.dispatchEvent(new Event('alwychat-share'))", null) }
+    }
   }
 
   override fun onResume() {
@@ -108,7 +115,8 @@ class MainActivity : TauriActivity() {
     super.onPause()
     // The generated activity pauses the WebView here, which hides the page: in a call (picture-
     // in-picture or in the background) it must keep drawing and running the call.
-    if (inCall) webView(window.decorView)?.onResume()
+    // Same while sharing a live location (the page follows the position).
+    if (inCall || sharingLocation) webView(window.decorView)?.onResume()
   }
 
   private fun webView(view: View): android.webkit.WebView? {

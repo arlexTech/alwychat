@@ -1,6 +1,7 @@
 // Our live location shares: follow the position while AlwyChat runs and send it to each chat
 // (Element-compatible beacons), until the chosen time is up or "Stop".
-import { startLiveLocation, stopLiveLocation, updateLiveLocation } from "$lib/backend";
+import { isAndroid, locationNotification, onCallAction, startLiveLocation, stopLiveLocation, updateLiveLocation } from "$lib/backend";
+import { chatList } from "./chatList.svelte";
 import { locale, tr } from "$lib/i18n/index.svelte";
 import { asList, stored } from "$lib/stored";
 import { clockTime } from "$lib/format";
@@ -40,9 +41,37 @@ class LiveLocation {
   #last: { at: number; coords: GeolocationCoordinates } | null = null;
   #endTimer: ReturnType<typeof setInterval> | undefined;
 
+  #listening = false;
+
   /** Resume shares still running from before a restart. */
   start() {
+    if (!this.#listening && isAndroid) {
+      this.#listening = true;
+      // "Stop sharing" on the Android notification.
+      void onCallAction((action) => {
+        if (action === "stop_location") for (const s of this.shares) void this.stop(s.roomId);
+      });
+    }
     if (this.shares.length) this.#follow();
+    this.#notify();
+  }
+
+  /** Android: the ongoing notification says where we share and until when (it also keeps the
+   * app following the position in the background); gone once nothing is shared. */
+  #notify() {
+    if (!isAndroid) return;
+    const now = Date.now();
+    const shares = this.shares.filter((s) => s.endsAt > now);
+    if (!shares.length) return void locationNotification(false).catch(() => {});
+    const names = shares.map((s) => chatList.rooms.find((r) => r.id === s.roomId)?.name ?? tr("a chat"));
+    const endsAt = Math.max(...shares.map((s) => s.endsAt));
+    const texts = {
+      title: tr("Sharing your live location"),
+      text: tr("With {names} · until {time}", { names: names.join(", "), time: untilTime(endsAt) }),
+      stop: tr("Stop sharing"),
+      channel: tr("Live location"),
+    };
+    locationNotification(true, texts, shares.length === 1 ? shares[0].roomId : null, endsAt).catch((e) => console.warn("location notification", e));
   }
 
   sharing(roomId: string) {
@@ -55,12 +84,14 @@ class LiveLocation {
     this.#last = { at: Date.now(), coords: first };
     this.#save();
     this.#follow();
+    this.#notify();
   }
 
   async stop(roomId: string) {
     this.shares = this.shares.filter((s) => s.roomId !== roomId);
     this.#save();
     if (!this.shares.length) this.#unfollow();
+    this.#notify();
     await stopLiveLocation(roomId).catch((e) => (this.error = String(e)));
   }
 

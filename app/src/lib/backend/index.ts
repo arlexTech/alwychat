@@ -1,5 +1,7 @@
 // The only module allowed to call Tauri's invoke(). Everything else imports from here.
-import { Channel, getVersion, invoke, isTauri, isWeb, listen, onBackButtonPress, openUrl, webLogin } from "./platform";
+import { Channel, getVersion, invoke, isTauri, isWeb, listen, onBackButtonPress, openUrl, holdUntilRestored, warmUpWeb, webHasFile, webHasSession } from "./platform";
+import { cancelSignIn, lookUpServer, prepareSignIn, signIn, signInError } from "./webSignIn";
+export { holdUntilRestored, warmUpWeb, webHasFile, webHasSession };
 import { eventMediaUrl } from "$lib/media";
 import type { VideoMeta } from "$lib/videoMeta";
 
@@ -44,8 +46,11 @@ export interface ServerInfo {
   sliding_sync: boolean;
 }
 
+// Web: looked up by the page itself (a few small requests), not by the core still downloading.
 export const discoverServer = (server: string) =>
-  invoke<ServerInfo>("discover_server", { server });
+  isWeb ? lookUpServer(server).then((s) => s.info) : invoke<ServerInfo>("discover_server", { server });
+/** Web: get the sign-in ready in the background, so the button opens the server's page at once. */
+export const prepareLogin = (server: string, invite?: string | null) => void (isWeb && prepareSignIn(server, invite ?? null));
 
 export interface Account {
   user_id: string;
@@ -54,9 +59,18 @@ export interface Account {
 }
 
 export const restoreSession = () => invoke<Account | null>("restore_session");
-export const login = (server: string) =>
-  isWeb ? (webLogin(server) as Promise<Account>) : invoke<Account>("login", { server });
-export const cancelLogin = () => invoke<void>("cancel_login");
+/** `invite`: create an account instead (a registration token, or "" for none). */
+export const login = async (server: string, invite?: string): Promise<Account> => {
+  if (!isWeb) return invoke<Account>("login", { server, invite: invite ?? null });
+  let done;
+  try {
+    done = await signIn(server, invite ?? null);
+  } catch (e) {
+    throw signInError(e);
+  }
+  return invoke<Account>("login_with_tokens", { done });
+};
+export const cancelLogin = () => (isWeb ? Promise.resolve(cancelSignIn()) : invoke<void>("cancel_login"));
 export const logout = () => invoke<void>("logout");
 /** Stop using a session the server ended, keeping local data (unlike logout). */
 export const endSession = () => invoke<void>("end_session");
@@ -75,7 +89,9 @@ export type CallSignal =
       /** ms since epoch. */
       expires_at: number;
     }
-  | { kind: "declined"; room_id: string };
+  | { kind: "declined"; room_id: string; user_id: string }
+  /** Our ring rings on one of their devices (AlwyChat answers this; other apps don't). */
+  | { kind: "ringing"; room_id: string; user_id: string; device_id: string };
 
 export const onCallSignal = (handler: (signal: CallSignal) => void) =>
   listen<CallSignal>("call-signal", (e) => handler(e.payload));
@@ -109,11 +125,33 @@ export type CallLink = {
 export const onCallLink = (handler: (link: CallLink) => void) => listen<CallLink>("call-link", (e) => handler(e.payload));
 /** The incoming call notification that launched the app, if any. */
 export const launchCall = () => invoke<CallLink | null>("launch_call");
-export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off";
+export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off" | "stop_location";
 export const onCallAction = (handler: (action: CallAction) => void) =>
   listen<CallAction>("call-action", (e) => handler(e.payload));
 export const declineCall = (roomId: string, notificationId: string) =>
   invoke<void>("decline_call", { roomId, notificationId });
+/** An incoming ring while the app isn't in front: a notification (computers), the full-screen
+ * call notification (Android without push). Nothing in a browser. */
+export const callAlert = (ring: Extract<CallSignal, { kind: "ring" }>, title: string, body: string) =>
+  invoke<void>("call_alert", {
+    roomId: ring.room_id,
+    notificationId: ring.notification_id,
+    callerName: ring.caller_name,
+    video: ring.video,
+    expiresAt: ring.expires_at,
+    title,
+    body,
+  });
+/** Android: the ongoing live-location notification (keeps following the position in the
+ * background); `active` false removes it. Nothing elsewhere. */
+export const locationNotification = (
+  active: boolean,
+  texts: { title: string; text: string; stop: string; channel: string } | null = null,
+  roomId: string | null = null,
+  endsAt: number | null = null,
+) => invoke<void>("location_notification", { active, texts, roomId, endsAt });
+/** Ring one person into the call we're in. */
+export const ringUser = (userId: string) => invoke<void>("ring_user", { userId });
 
 /** Unsent composer text, synced between our devices. */
 export type Draft = { text: string; reply_to?: string | null; updated: number };
@@ -275,7 +313,8 @@ export type MessageContent =
       is_mine: boolean;
     }
   | { kind: "redacted" }
-  | { kind: "unable_to_decrypt" }
+  /** `reason`: see the core's `MessageContent::UnableToDecrypt`. */
+  | { kind: "unable_to_decrypt"; reason: "before_joined" | "withheld" | "unverified_sender" | "before_device" | "unknown" }
   | { kind: "unsupported" };
 
 export interface MessageEntry {
@@ -475,10 +514,12 @@ export interface SystemStatus {
   notifications: boolean;
   batteryUnrestricted: boolean;
   backgroundData: boolean;
+  /** Android 14+: incoming calls may cover the locked screen. */
+  fullScreenCalls: boolean;
 }
 
 /** Read the status, or with `fix`, ask Android / open its settings page for that item. */
-export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData" | "appSettings") =>
+export const systemStatus = (fix?: "notifications" | "battery" | "backgroundData" | "fullScreenCalls" | "appSettings") =>
   invoke<SystemStatus>("system_status", { fix: fix ?? null });
 
 /** The system's clock: `h24` when the system says (Android), else the locale of its time
@@ -557,6 +598,8 @@ export const unlockApp = (pin: string) => invoke<UnlockResult>("unlock_app", { p
 /** The system fingerprint / face prompt; true once recognised. */
 export const unlockBiometric = () => invoke<boolean>("unlock_biometric");
 export const setSecureScreen = (secure: boolean) => invoke<void>("set_secure_screen", { secure });
+/** Android: back to the app we came from (a cancelled share). */
+export const leaveApp = () => invoke<void>("leave_app");
 
 export interface ThreadInfo {
   replies: number;
@@ -861,7 +904,8 @@ export async function sendVoice(
 }
 
 /** Android: open the photo picker ("media") or the document picker ("files"). */
-export const pickFiles = (kind: "media" | "files") => invoke<Picked[]>("pick_files", { kind });
+/** "photo": a single photo (avatars, banners, emoji); "media": photos and videos, several. */
+export const pickFiles = (kind: "media" | "photo" | "files") => invoke<Picked[]>("pick_files", { kind });
 /** Android: the phone's camera app; empty when cancelled. */
 export const capture = (kind: "photo" | "video") => invoke<Picked[]>("capture", { kind });
 
@@ -984,6 +1028,8 @@ export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke<void>("set_settings", { settings });
 
 export const closeChat = () => invoke<void>("close_chat");
+/** The latest messages of a chat that isn't open (the core keeps it ready to open). */
+export const peekChat = (roomId: string) => invoke<TimelineEntry[]>("peek_chat", { roomId });
 /** Resolves to true once the start of the room is reached. */
 export const loadOlder = (roomId: string) => invoke<boolean>("load_older", { roomId });
 /** A mention picked in the composer; `text` is what the draft shows (e.g. "@Léa"). */
@@ -1219,6 +1265,10 @@ export const renameDevice = (deviceId: string, name: string) => invoke<void>("re
 export const accountUrl = (action: string) => invoke<string>("account_url", { action });
 export const securityStatus = () => invoke<SecurityStatus>("security_status");
 export const newRecoveryKey = () => invoke<string>("new_recovery_key");
+/** New encryption keys made on this device: the server's approval page (or null if none needed). */
+export const beginIdentityReset = () => invoke<string | null>("begin_identity_reset");
+export const finishIdentityReset = () => invoke<void>("finish_identity_reset");
+export const cancelIdentityReset = () => invoke<void>("cancel_identity_reset");
 export const ignoredUsers = () => invoke<UserResult[]>("ignored_users");
 export const setIgnored = (userId: string, ignored: boolean) => invoke<void>("set_ignored", { userId, ignored });
 export const notificationRules = () => invoke<NotificationRules>("notification_rules");
@@ -1267,9 +1317,15 @@ export const retrySend = (roomId: string, itemId: string) => invoke<void>("retry
 export interface PushTestResult {
   permission: boolean;
   token: boolean;
+  /** When the last real push reached this phone (ms; 0 = never). */
+  last_push: number;
+  /** Private gateway: a sample notification was shown instead of a real one. */
+  sample_shown: boolean;
   registered?: boolean;
   gateway_ok?: boolean;
   rejected?: boolean;
+  /** The gateway is reachable by the homeserver only (can't be tested from the phone). */
+  internal?: boolean;
   error?: string | null;
 }
 /** Android: check push end to end; a test notification should appear. */

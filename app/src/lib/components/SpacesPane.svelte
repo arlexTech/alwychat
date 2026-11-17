@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tr, trn } from "$lib/i18n/index.svelte";
   import { asList, stored } from "$lib/stored";
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { fade, fly } from "svelte/transition";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -252,6 +253,60 @@
     }
   }
 
+  // ── Opening a space opens a chat in it (two panes only: on a phone the chat would cover the
+  // space's list): the one used last there, else the first in the space's order. ──
+  const twoPanes = new MediaQuery("min-width: 721px");
+  const LAST_CHAT_KEY = "alwychat.spaceLastChat";
+  let lastChat: Record<string, string> = stored<Record<string, string>>(LAST_CHAT_KEY, {});
+  /** A space just opened from the list, waiting for its chats to be known. */
+  let autoOpen = $state<{ id: string; until: number } | null>(null);
+
+  function enterSpace(space: Ref) {
+    path = [space];
+    autoOpen = twoPanes.current ? { id: space.id, until: Date.now() + 10_000 } : null;
+  }
+
+  /** The first chat in the space's order; undefined while a section before it is still loading. */
+  const firstChat = $derived.by((): string | null | undefined => {
+    for (const section of sections) {
+      if (section === "chats" && joinedChats[0]) return joinedChats[0].id;
+      if (section !== "spaces") continue;
+      for (const sub of subSpaces) {
+        const cat = categories.find((c) => c.id === sub.id);
+        if (!cat) return undefined;
+        const chat = cat.children.find((c) => !c.is_voice && !c.is_space && roomsById.has(c.id));
+        if (chat) return chat.id;
+      }
+    }
+    return loading ? undefined : null;
+  });
+
+  $effect(() => {
+    const wanted = autoOpen;
+    if (!wanted) return;
+    if (path.length !== 1 || currentId !== wanted.id || Date.now() > wanted.until) return void (autoOpen = null);
+    const rooms = spaces.list.find((s) => s.id === wanted.id)?.rooms ?? [];
+    const last = lastChat[wanted.id];
+    const target = last && rooms.includes(last) && roomsById.has(last) ? last : firstChat;
+    if (target === undefined) return;
+    autoOpen = null;
+    if (target && target !== untrack(() => selectedId)) onSelect(target);
+  });
+
+  // Remember the chat used last in each space.
+  $effect(() => {
+    const id = selectedId;
+    const top = path[0]?.id;
+    if (!id || !top || lastChat[top] === id) return;
+    if (!untrack(() => spaces.list.find((s) => s.id === top)?.rooms.includes(id))) return;
+    lastChat = { ...lastChat, [top]: id };
+    try {
+      localStorage.setItem(LAST_CHAT_KEY, JSON.stringify(lastChat));
+    } catch {
+      /* only a convenience */
+    }
+  });
+
   async function enterVoice(child: SpaceChild, room: RoomSummary | null) {
     error = null;
     if (room) return void call.join(room, false, false, true);
@@ -313,7 +368,7 @@
       {@const unread = unreadIn(space.rooms)}
       <button
         class="space"
-        onclick={() => (path = [{ id: space.id, name: space.name, avatar: space.avatar }])}
+        onclick={() => enterSpace({ id: space.id, name: space.name, avatar: space.avatar })}
         oncontextmenu={(e) => openSpaceMenu(e, { id: space.id, name: space.name, avatar: space.avatar })}
       >
         <Avatar name={space.name} mxc={space.avatar} size={48} square />

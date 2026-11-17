@@ -12,6 +12,18 @@
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <!-- Shown by the browser before any script has arrived (slow networks): removed as soon as
+         the app draws its first screen (lib/splash.ts). -->
+    <div id="splash" aria-hidden="true">
+      <style>
+        #splash { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; background: #0e1014; transition: opacity 0.18s ease; }
+        #splash svg { border-radius: 18px; box-shadow: 0 10px 30px rgb(91 91 214 / 0.35); animation: splash 1.4s ease-in-out infinite alternate; }
+        @keyframes splash { to { transform: scale(0.94); opacity: 0.85; } }
+        @media (prefers-color-scheme: light) { #splash { background: #ffffff; } }
+        @media (prefers-reduced-motion: reduce) { #splash svg { animation: none; } }
+      </style>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="72" height="72"><rect width="72" height="72" rx="130" fill="#5B5BD6"/><g transform="translate(256 268) scale(0.92) translate(-256 -256)" fill="none" stroke="#fff" stroke-width="66" stroke-linecap="round" stroke-linejoin="round"><path d="M84 206 L156 378 Q164 396 172 378 L236 176 Q256 112 276 176 L340 378 Q348 396 356 378 L428 206"/><path d="M191 318 H321"/></g></svg>
+    </div>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

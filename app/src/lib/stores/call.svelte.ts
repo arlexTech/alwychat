@@ -2,18 +2,8 @@
 // or in Rust where the webview has no WebRTC (Linux desktop: `native`; pictures arrive as frames,
 // see nativeVideo.svelte.ts).
 import { loudness, playCue, type CallCue } from "$lib/callSounds";
-import {
-  ConnectionState,
-  Room,
-  RoomEvent,
-  ScreenSharePresets,
-  Track,
-  VideoPresets,
-  type Participant,
-  type RemoteAudioTrack,
-  type RemoteParticipant,
-  type RemoteTrack,
-} from "livekit-client";
+import type { Participant, RemoteAudioTrack, RemoteParticipant, RemoteTrack, Room, Track as LkTrack } from "livekit-client";
+import type { MatrixKeyProvider as KeyProvider } from "$lib/callKeys";
 import {
   isAndroid,
   launchCall,
@@ -44,6 +34,9 @@ import {
   type NativeAudioSetup,
   type NativeCallMember,
   roomMembers,
+  ringUser,
+  callAlert,
+  isWeb,
   type CallSignal,
   type Member,
   type RoomSummary,
@@ -54,11 +47,30 @@ import { nav } from "./nav.svelte";
 import { chatList } from "./chatList.svelte";
 import { nativeVideo } from "./nativeVideo.svelte";
 import { tr } from "$lib/i18n/index.svelte";
-import { MatrixKeyProvider, e2eeWorker } from "$lib/callKeys";
+
+// livekit-client is a large part of the app's code and only calls in the web view need it
+// (never Linux, which has its own engine): it's loaded when the first such call starts.
+type LiveKit = typeof import("livekit-client");
+let Track!: LiveKit["Track"];
+let engine: Promise<[LiveKit, typeof import("$lib/callKeys")]> | null = null;
+function loadEngine() {
+  engine ??= Promise.all([import("livekit-client"), import("$lib/callKeys")]);
+  engine.catch(() => (engine = null));
+  return engine.then((loaded) => ((Track = loaded[0].Track), loaded));
+}
 
 type Ring = Extract<CallSignal, { kind: "ring" }>;
 /** A 1:1 call nobody answers ends after this. */
 const NO_ANSWER_MS = 45_000;
+/** How long a ring into a call lasts (the core's ring lifetime). */
+const INVITE_RING_MS = 30_000;
+
+/** Someone we rang into the call. "calling": sent, no device said it rings (it may still: only
+ * AlwyChat says so); "ringing": rings on `devices` of theirs. */
+export interface Invite {
+  status: "calling" | "ringing" | "declined" | "no_answer" | "failed";
+  devices: string[];
+}
 
 export interface Tile {
   /** LiveKit identity: "@user:server:DEVICE". */
@@ -69,8 +81,8 @@ export interface Tile {
   isMe: boolean;
   speaking: boolean;
   micOn: boolean;
-  camera: Track | null;
-  screen: Track | null;
+  camera: LkTrack | null;
+  screen: LkTrack | null;
   /** Native calls: frame keys of the camera / screen (drawn by NativeVideo.svelte). */
   cameraFrames: string | null;
   screenFrames: string | null;
@@ -207,6 +219,15 @@ class CallStore {
   incoming = $state<Ring | null>(null);
   /** We're calling someone in a 1:1 chat and they haven't joined yet. */
   calling = $state(false);
+  /** Their devices that said our ring rings there (AlwyChat only: other apps don't tell). */
+  ringingDevices = $state<string[]>([]);
+  /** People rung into this call, by user ID (until they join). */
+  invites = $state<Record<string, Invite>>({});
+  #inviteTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** The "Ring someone" panel is open in the call view. */
+  ringPanel = $state(false);
+  /** The call room's members (for ringing someone in). */
+  people = $state<Member[]>([]);
   #ringEnd: ReturnType<typeof setTimeout> | undefined;
   #noAnswer: ReturnType<typeof setTimeout> | undefined;
   #listening = false;
@@ -279,19 +300,50 @@ class CallStore {
       if (key.room_id === this.roomId) void this.#keys?.add(key).catch((e) => console.warn("call key", e));
     });
     void onCallSignal((signal) => {
-      if (signal.kind === "ring") this.#ring(signal);
-      else if (signal.room_id === this.roomId && this.calling) {
+      if (signal.kind === "ring") return this.#ring(signal);
+      if (signal.room_id !== this.roomId) return;
+      const invite = this.invites[signal.user_id];
+      if (signal.kind === "ringing") {
+        if (this.calling && !this.ringingDevices.includes(signal.device_id)) this.ringingDevices = [...this.ringingDevices, signal.device_id];
+        if (invite && invite.status !== "declined" && !invite.devices.includes(signal.device_id))
+          this.#setInvite(signal.user_id, { status: "ringing", devices: [...invite.devices, signal.device_id] });
+      } else if (this.calling) {
         void this.leave().then(() => this.#tell(tr("Call declined")));
+      } else if (invite) {
+        this.#setInvite(signal.user_id, { ...invite, status: "declined" });
       }
     });
   }
 
-  #ring(ring: Ring) {
+  #ring(ring: Ring, alert = true) {
     if (this.active || this.incoming) return;
     this.incoming = ring;
     if (!isAndroid || document.visibilityState === "visible") startRinging();
     clearTimeout(this.#ringEnd);
     this.#ringEnd = setTimeout(() => this.stopRing(), Math.max(0, ring.expires_at - Date.now()));
+    if (alert) this.#alert(ring);
+  }
+
+  /** Outside the window when the app isn't in front (hidden in the tray, behind other windows,
+   * a background tab): the ringing screen alone would go unseen. */
+  #alert(ring: Ring) {
+    const room = chatList.rooms.find((r) => r.id === ring.room_id);
+    const body =
+      room && !room.is_dm
+        ? tr("Calls you into {name}", { name: room.name })
+        : ring.video
+          ? tr("Incoming video call")
+          : tr("Incoming call");
+    if (!isWeb) return void callAlert(ring, ring.caller_name, body).catch((e) => console.warn("call alert", e));
+    if (document.visibilityState === "visible" && document.hasFocus()) return;
+    try {
+      if (Notification.permission !== "granted") return;
+      const n = new Notification(ring.caller_name, { body, tag: `call:${ring.room_id}`, requireInteraction: true });
+      n.onclick = () => (window.focus(), n.close());
+      setTimeout(() => n.close(), Math.max(0, ring.expires_at - Date.now()));
+    } catch {
+      /* no notifications in this browser */
+    }
   }
 
   /** From the incoming call notification: Answer joins the call, a tap shows it ringing. */
@@ -308,16 +360,50 @@ class CallStore {
       this.stopRing();
       await this.join(room, link.video, false);
     } else if (link.expires_at > Date.now()) {
-      this.#ring({
-        kind: "ring",
-        room_id: link.room_id,
-        notification_id: link.notification_id,
-        caller_name: link.caller_name,
-        caller_avatar: chatList.rooms.find((r) => r.id === link.room_id)?.avatar ?? null,
-        video: link.video,
-        expires_at: link.expires_at,
-      });
+      this.#ring(
+        {
+          kind: "ring",
+          room_id: link.room_id,
+          notification_id: link.notification_id,
+          caller_name: link.caller_name,
+          caller_avatar: chatList.rooms.find((r) => r.id === link.room_id)?.avatar ?? null,
+          video: link.video,
+          expires_at: link.expires_at,
+        },
+        false,
+      );
     }
+  }
+
+  /** Ring someone into this call (voice channel, group call): only their devices ring. */
+  async ringPerson(userId: string) {
+    if (!this.roomId) return;
+    this.#setInvite(userId, { status: "calling", devices: [] });
+    clearTimeout(this.#inviteTimers.get(userId));
+    this.#inviteTimers.set(
+      userId,
+      setTimeout(() => {
+        const invite = this.invites[userId];
+        if (invite && (invite.status === "calling" || invite.status === "ringing")) this.#setInvite(userId, { ...invite, status: "no_answer" });
+      }, INVITE_RING_MS),
+    );
+    try {
+      await ringUser(userId);
+    } catch (e) {
+      console.warn("ring", e);
+      this.#setInvite(userId, { status: "failed", devices: [] });
+    }
+  }
+
+  #setInvite(userId: string, invite: Invite | null) {
+    const next = { ...this.invites };
+    if (invite) next[userId] = invite;
+    else {
+      delete next[userId];
+      clearTimeout(this.#inviteTimers.get(userId));
+      this.#inviteTimers.delete(userId);
+    }
+    this.invites = next;
   }
 
   /** The ring ended without an answer here (timeout, caller hung up, answered elsewhere). */
@@ -330,7 +416,8 @@ class CallStore {
   async accept(room: RoomSummary) {
     const video = this.incoming?.video ?? false;
     this.stopRing();
-    await this.join(room, video, false);
+    // A voice channel joins like a tap on it (in place under the chat list on a computer).
+    await this.join(room, video, false, room.is_voice);
   }
 
   async decline() {
@@ -344,7 +431,7 @@ class CallStore {
    * smoothed: the ring lagged ~1 s behind the voice), by LiveKit identity. */
   #voices = new Map<string, { speaking: boolean; lastLoud: number }>();
   #meter: ReturnType<typeof setInterval> | undefined;
-  #keys: MatrixKeyProvider | null = null;
+  #keys: KeyProvider | null = null;
   // Soundboard: a Web Audio context (also plays our own sounds to us), and in webview calls the
   // published track sounds are played into.
   #sbContext: AudioContext | null = null;
@@ -374,6 +461,8 @@ class CallStore {
         if (this.calling && this.roomId === room.id) void this.leave().then(() => this.#tell(tr("No answer")));
       }, NO_ANSWER_MS);
     }
+    // Fetched while the call is being set up with the server, so it adds no wait.
+    if (!this.native) void loadEngine().catch(() => {});
     this.roomId = room.id;
     this.roomName = room.name;
     this.status = "connecting";
@@ -387,10 +476,13 @@ class CallStore {
     // Like phone apps: a call starts on the earpiece (voice channels and groups too), a video
     // call on the loudspeaker.
     this.speaker = video;
+    this.ringingDevices = [];
+    this.people = [];
     if (isAndroid) callAudio(this.speaker).catch((e) => console.warn("call audio", e));
     roomMembers(room.id)
       .then((list) => {
         this.#members = new Map(list.map((m) => [m.user_id, m]));
+        if (this.roomId === room.id) this.people = list;
         this.#sync();
       })
       .catch(() => {});
@@ -419,6 +511,8 @@ class CallStore {
         this.#sync();
         return;
       }
+      const [{ Room, RoomEvent, ConnectionState, VideoPresets, ScreenSharePresets }, { MatrixKeyProvider, e2eeWorker }] =
+        await loadEngine();
       const keys = new MatrixKeyProvider();
       const worker = await e2eeWorker();
       const lk = new Room({
@@ -561,6 +655,11 @@ class CallStore {
     void this.#sbContext?.close().catch(() => {});
     this.#sbContext = null;
     this.calling = false;
+    this.ringingDevices = [];
+    for (const timer of this.#inviteTimers.values()) clearTimeout(timer);
+    this.#inviteTimers.clear();
+    this.invites = {};
+    this.people = [];
     const lk = this.#lk;
     this.#lk = null;
     this.#keys = null;
@@ -814,7 +913,7 @@ class CallStore {
     const LEVEL = 0.03; // WebRTC audioLevel (0–1) that counts as speaking
     const HOLD = 400; // ms the ring stays after the voice drops, so it doesn't flicker
     let busy = false;
-    const levelOf = async (track: Track | undefined, type: "media-source" | "inbound-rtp") => {
+    const levelOf = async (track: LkTrack | undefined, type: "media-source" | "inbound-rtp") => {
       const report = await track?.getRTCStatsReport().catch(() => undefined);
       let level = 0;
       report?.forEach((s: { type?: string; kind?: string; audioLevel?: number }) => {
@@ -966,6 +1065,7 @@ class CallStore {
 
   /** Sounds for people coming and going, and for a screen share starting. */
   #heard() {
+    for (const t of this.tiles) if (!t.isMe && this.invites[t.userId]) this.#setInvite(t.userId, null);
     if (this.#present === null) return;
     const others = this.tiles.filter((t) => !t.isMe);
     const now = new Set(others.map((t) => t.id));
@@ -977,6 +1077,14 @@ class CallStore {
     this.#sharing = sharing;
     if (joined) this.#cue("peerJoin");
     else if (left) this.#cue("peerLeave");
+    // A 1:1 call ends when the other person hangs up (like phone apps); a short grace period
+    // so a reconnecting phone doesn't end it.
+    if (left && now.size === 0 && chatList.rooms.find((r) => r.id === this.roomId)?.is_dm) {
+      const roomId = this.roomId;
+      setTimeout(() => {
+        if (this.roomId === roomId && this.#present?.size === 0) void this.leave().then(() => this.#tell(tr("Call ended")));
+      }, 4000);
+    }
     else if (shared) this.#cue("screen");
   }
 }

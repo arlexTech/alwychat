@@ -1,4 +1,4 @@
-import { appLockState, hasBackend, type AppLockState } from "$lib/backend";
+import { appLockState, hasBackend, isWeb, webHasFile, type AppLockState } from "$lib/backend";
 import { prefs } from "./prefs.svelte";
 
 /** The optional app lock: whether the lock screen is up, and when to bring it back. */
@@ -11,6 +11,9 @@ class AppLock {
 
   async start() {
     if (!hasBackend) return;
+    // Web: the core takes seconds to download. Without a lock file there's no lock (it's
+    // removed on sign-out), so the app shows at once instead of under the cover.
+    if (isWeb && !webHasFile("app_lock.json")) this.checking = false;
     try {
       this.state = await appLockState();
       this.locked = this.state.enabled;

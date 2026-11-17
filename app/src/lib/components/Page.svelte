@@ -19,9 +19,11 @@
 <script lang="ts">
   import { tr } from "$lib/i18n/index.svelte";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import X from "@lucide/svelte/icons/x";
   import type { Snippet } from "svelte";
   import { fly } from "svelte/transition";
   import { sidePanels } from "$lib/stores/panel.svelte";
+  import { onBack } from "$lib/back.svelte";
 
   /** A full-screen page (settings and the like) that slides in over the app. */
   let {
@@ -29,7 +31,20 @@
     onClose,
     children,
     layout = getContext<PageLayout | undefined>(LAYOUT) ?? "full",
-  }: { title: string; onClose: () => void; children: Snippet; layout?: PageLayout } = $props();
+    cancel = false,
+  }: {
+    title: string;
+    onClose: () => void;
+    children: Snippet;
+    layout?: PageLayout;
+    /** Closing abandons something (a share from another app): ✕ "Cancel" instead of ←. */
+    cancel?: boolean;
+  } = $props();
+
+  // Android's back gesture does what the ← (or Cancel) button does, for every page: pages that
+  // forgot to register it let the gesture fall through to what was under them (a profile opened
+  // from a chat closed the chat instead). Registered after its opener's layers, so it's on top.
+  $effect(() => onBack(() => onClose()));
 
   // A side panel makes the chats layout narrower rather than covering the chat.
   $effect(() => {
@@ -42,8 +57,13 @@
 
 <div class="page {layout}" role="dialog" aria-modal="true" aria-label={title} transition:fly={{ x: 48, duration: 220 }}>
   <header data-tauri-drag-region="deep">
-    <button class="back" onclick={onClose} aria-label={tr("Back")}><ArrowLeft size={22} /></button>
-    <h2>{title}</h2>
+    {#if cancel}
+      <h2>{title}</h2>
+      <button class="cancel" onclick={onClose}><X size={18} />{tr("Cancel")}</button>
+    {:else}
+      <button class="back" onclick={onClose} aria-label={tr("Back")}><ArrowLeft size={22} /></button>
+      <h2>{title}</h2>
+    {/if}
   </header>
   <div class="body">
     <!-- A failing page says so (it used to just not open: "nothing happens"). -->
@@ -74,6 +94,23 @@
     gap: 8px;
     padding: 10px calc(12px + var(--window-controls)) 10px 12px;
     border-bottom: 1px solid var(--border);
+  }
+  .cancel {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 8px 14px;
+    border: none;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  h2:has(+ .cancel) {
+    padding-left: 8px;
   }
   h2 {
     margin: 0;

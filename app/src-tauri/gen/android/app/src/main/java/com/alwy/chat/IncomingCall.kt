@@ -10,6 +10,12 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationAttributes
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -87,19 +93,103 @@ object IncomingCall {
       .build()
     // Rings until answered (FLAG_INSISTENT repeats the sound).
     notification.flags = notification.flags or android.app.Notification.FLAG_INSISTENT
-    try {
-      manager.notify(TAG + roomId, ID, notification)
+    shownRoom = roomId
+    // Through a short foreground service, so the app stays awake while it rings (see RingService).
+    if (!RingService.start(context, notification) && !fallback(context, notification)) return
+    ring(context.applicationContext, roomId, left)
+  }
+
+  /** The room of the ring on screen. */
+  private var shownRoom: String? = null
+
+  /** The ring as a plain notification (no foreground service allowed). */
+  fun fallback(context: Context, notification: android.app.Notification): Boolean {
+    val room = shownRoom ?: return false
+    return try {
+      NotificationManagerCompat.from(context).notify(TAG + room, ID, notification)
+      true
     } catch (e: SecurityException) {
       Log.w("AlwyChat", "incoming call refused: $e")
+      false
     }
   }
 
+  // ── While it rings: vibrate like a phone call (the notification's own vibration runs once on
+  // some phones, OnePlus in vibrate mode), end it at its deadline (some phones ignore
+  // setTimeoutAfter for ongoing notifications), and stop when the caller hangs up or one of our
+  // devices answers (asked of the server every few seconds: a push-woken app doesn't sync). ──
+  private val main = Handler(Looper.getMainLooper())
+  private var ringing: String? = null
+  private const val CHECK_MS = 3000L
+
+  private fun vibrator(context: Context): Vibrator =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+      context.getSystemService(VibratorManager::class.java).defaultVibrator
+    else @Suppress("DEPRECATION") context.getSystemService(Vibrator::class.java)
+
+  private fun ring(context: Context, roomId: String, left: Long) {
+    stopRinging(context)
+    ringing = roomId
+    // Silent mode is left to Android (it mutes ringtone vibrations then): some phones report
+    // their vibrate mode as "silent" to apps (OnePlus), which would never vibrate otherwise.
+    val quiet = context.getSystemService(NotificationManager::class.java).currentInterruptionFilter !=
+      NotificationManager.INTERRUPTION_FILTER_ALL
+    if (!quiet) {
+      try {
+        val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+          vibrator(context).vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_RINGTONE))
+        else @Suppress("DEPRECATION") vibrator(context).vibrate(
+          effect,
+          AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build(),
+        )
+      } catch (e: Exception) {
+        Log.w("AlwyChat", "ring vibration: $e")
+      }
+    }
+    main.postDelayed({ if (ringing == roomId) cancel(context, roomId) }, left)
+    fun check() {
+      main.postDelayed({
+        if (ringing != roomId) return@postDelayed
+        Thread {
+          val state = try {
+            NativePush.ringActive(context, context.dataDir.absolutePath, roomId)
+          } catch (e: Throwable) {
+            Log.w("AlwyChat", "ring check: $e")
+            -1
+          }
+          main.post {
+            if (ringing != roomId) return@post
+            if (state == 0) cancel(context, roomId) else check()
+          }
+        }.start()
+      }, CHECK_MS)
+    }
+    check()
+  }
+
+  private fun stopRinging(context: Context) {
+    ringing = null
+    main.removeCallbacksAndMessages(null)
+    try {
+      vibrator(context).cancel()
+    } catch (_: Exception) {}
+  }
+
   fun cancel(context: Context, roomId: String) {
+    if (ringing == roomId) stopRinging(context.applicationContext)
+    if (shownRoom == roomId) {
+      shownRoom = null
+      RingService.stop(context)
+    }
     NotificationManagerCompat.from(context).cancel(TAG + roomId, ID)
   }
 
   /** The app is on screen: it shows calls itself. */
   fun cancelAll(context: Context) {
+    if (ringing != null) stopRinging(context.applicationContext)
+    shownRoom = null
+    RingService.stop(context)
     val manager = context.getSystemService(NotificationManager::class.java)
     for (n in manager.activeNotifications) if (n.tag?.startsWith(TAG) == true) manager.cancel(n.tag, n.id)
   }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tr } from "$lib/i18n/index.svelte";
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Mic from "@lucide/svelte/icons/mic";
   import MicOff from "@lucide/svelte/icons/mic-off";
@@ -26,6 +26,9 @@
   import EyeOff from "@lucide/svelte/icons/eye-off";
   import Drum from "@lucide/svelte/icons/drum";
   import SoundboardPanel from "./SoundboardPanel.svelte";
+  import RingPanel from "./RingPanel.svelte";
+  import PhoneCall from "@lucide/svelte/icons/phone-call";
+  import { chatList } from "$lib/stores/chatList.svelte";
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
   import { keyName } from "$lib/keys";
@@ -52,9 +55,16 @@
       : call.status === "reconnecting"
         ? tr("Reconnecting…")
         : call.calling
-          ? tr("Calling…")
+          ? // Their AlwyChat devices say when they ring; other apps don't, so it stays "Calling…".
+            call.ringingDevices.length > 1
+            ? trn(call.ringingDevices.length, "Ringing on {n} device", "Ringing on {n} devices")
+            : call.ringingDevices.length
+              ? tr("Ringing…")
+              : tr("Calling…")
           : null,
   );
+  /** Ringing people in: group calls and voice channels (a 1:1 call already rings). */
+  const canRing = $derived(!!call.roomId && chatList.rooms.find((r) => r.id === call.roomId)?.is_dm === false);
   type Tile = (typeof call.tiles)[number];
   type Spot = "screen" | "camera" | "person";
   const hasScreen = (t: Tile) => !!(t.screen || t.screenFrames);
@@ -243,7 +253,7 @@
   // This view outlives calls: the next one starts with panels closed and nothing focused.
   $effect(() => {
     if (call.active) return;
-    soundsOpen = optionsOpen = immersive = false;
+    soundsOpen = optionsOpen = call.ringPanel = immersive = false;
     focus = null;
   });
 
@@ -310,7 +320,12 @@
       <button class="icon chat" class:open={call.sideChat} onclick={() => call.toggleChat()} aria-label={tr("Chat")} title={tr("Chat")} aria-pressed={call.sideChat}>
         <MessageSquare size={20} />
       </button>
-      <button class="icon sounds" class:open={soundsOpen} onclick={() => ((soundsOpen = !soundsOpen), (optionsOpen = false))} aria-label={tr("Soundboard")} title={tr("Soundboard")} aria-expanded={soundsOpen}>
+      {#if canRing}
+        <button class="icon ring" class:open={call.ringPanel} onclick={() => ((call.ringPanel = !call.ringPanel), (soundsOpen = optionsOpen = false))} aria-label={tr("Ring someone")} title={tr("Ring someone")} aria-expanded={call.ringPanel}>
+          <PhoneCall size={20} />
+        </button>
+      {/if}
+      <button class="icon sounds" class:open={soundsOpen} onclick={() => ((soundsOpen = !soundsOpen), (optionsOpen = call.ringPanel = false))} aria-label={tr("Soundboard")} title={tr("Soundboard")} aria-expanded={soundsOpen}>
         <Drum size={20} />
       </button>
       <button class="icon options" class:open={optionsOpen} onclick={() => (optionsOpen = !optionsOpen)} aria-label={tr("Call options")} aria-expanded={optionsOpen}>
@@ -319,6 +334,9 @@
     </header>
     {#if soundsOpen && call.roomId}
       <SoundboardPanel roomId={call.roomId} onClose={() => (soundsOpen = false)} />
+    {/if}
+    {#if call.ringPanel}
+      <RingPanel onClose={() => (call.ringPanel = false)} />
     {/if}
     {#if optionsOpen}
       <div class="options-panel" transition:fly={{ y: -8, duration: 150 }}>
@@ -970,6 +988,7 @@
   }
   .chat.open,
   .sounds.open,
+  .ring.open,
   .options.open {
     background: var(--accent);
     color: #fff;

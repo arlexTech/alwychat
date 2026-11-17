@@ -23,5 +23,9 @@
 	header /index.html Cache-Control "no-cache"
 	header /media-sw.js Cache-Control "no-cache"
 
-	file_server
+	# scripts/finish-web.mjs writes Brotli copies (.br, best level) of the build: sent as they
+	# are to browsers that take Brotli (~30 % smaller than compressing on the fly).
+	file_server {
+		precompressed br
+	}
 }

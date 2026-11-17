@@ -32,6 +32,12 @@ use crate::{
 const PAGE_EVENTS: u16 = 40;
 /// Closed chats whose timeline is kept for a quick reopen.
 const RECENT_CHATS: usize = 10;
+/// Chats made ready before they're opened (the top of the list, ones with a new message).
+const WARM_CHATS: usize = 12;
+/// A chat scrolled back further than this many pages isn't kept when it closes.
+const KEPT_PAGES: u32 = 6;
+/// What a peek returns: the screenful a chat opens on.
+const PEEK_ITEMS: usize = 30;
 /// A new chat's timeline is filled to this many items (at most this many pages) before it's shown.
 const PREFILL_ITEMS: usize = 30;
 const PREFILL_PAGES: usize = 3;
@@ -218,8 +224,13 @@ pub enum MessageContent {
         is_mine: bool,
     },
     Redacted,
-    /// Encrypted and we don't have the key (yet).
-    UnableToDecrypt,
+    /// Encrypted and we don't have the key (yet). `reason`, from what the SDK knows:
+    /// "before_joined" (we weren't in the chat), "withheld" (the sender didn't share it with this
+    /// device), "unverified_sender" (sent from a device we can't trust), "before_device" (sent
+    /// before this device existed: needs the key backup) or "unknown".
+    UnableToDecrypt {
+        reason: &'static str,
+    },
     Unsupported,
 }
 
@@ -261,6 +272,8 @@ pub(crate) struct OpenChat {
     timeline: Arc<Timeline>,
     /// The live timeline (not one focused on a search result): kept for a quick reopen.
     live: bool,
+    /// Pages of older messages loaded while it was open.
+    older_pages: u32,
     task: crate::rt::AbortHandle,
     typing_task: crate::rt::AbortHandle,
     /// Keeps the theme/quick reaction/nicknames watch alive while the chat is open.
@@ -333,28 +346,14 @@ impl crate::Core {
         // so the chat appears whole instead of a few items followed by a loading spinner.
         let kept = match focus {
             Some(_) => None,
-            None => self.with_active(|a| {
-                let at = a.recent_chats.iter().position(|(id, _)| *id == room_id)?;
-                Some(a.recent_chats.remove(at).1)
-            })?,
+            None => self.with_active(|a| take_kept(a, &room_id))?,
         };
         let timeline = match kept {
             Some(timeline) => timeline,
             None => {
                 let timeline = Arc::new(builder.build().await.map_err(timeline_err)?);
-                // Only a nearly empty chat is filled first (there'd be nothing to show): one
-                // with a screenful already goes out at once, the UI loads more behind it.
-                if focus.is_none() && timeline.items().await.len() < PREFILL_MIN {
-                    for _ in 0..PREFILL_PAGES {
-                        if timeline.items().await.len() >= PREFILL_ITEMS
-                            || timeline
-                                .paginate_backwards(PAGE_EVENTS)
-                                .await
-                                .unwrap_or(true)
-                        {
-                            break;
-                        }
-                    }
+                if focus.is_none() {
+                    prefill(&timeline).await;
                 }
                 timeline
             }
@@ -370,6 +369,7 @@ impl crate::Core {
                 room_id,
                 timeline,
                 live: focus.is_none(),
+                older_pages: 0,
                 task,
                 typing_task,
                 _style: style,
@@ -393,6 +393,66 @@ impl crate::Core {
 
     pub fn close_chat(&self) -> Result<()> {
         self.with_active(keep_recent)
+    }
+
+    /// The latest messages of a chat that isn't open, for the UI to keep ready: opening it
+    /// then shows them at once. Its live timeline is kept (a few chats), so the opening itself
+    /// has nothing left to build either.
+    pub async fn peek_chat(&self, room_id: &str) -> Result<Vec<TimelineEntry>> {
+        let client = self.client()?;
+        let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
+        let known = self.with_active(|a| {
+            a.chat
+                .as_ref()
+                .filter(|c| c.live && c.room_id == room_id)
+                .map(|c| c.timeline.clone())
+                .or_else(|| {
+                    let kept = a.recent_chats.iter().chain(a.warm_chats.iter());
+                    kept.filter(|(id, _)| *id == room_id)
+                        .map(|(_, t)| t.clone())
+                        .next()
+                })
+        })?;
+        let timeline = match known {
+            Some(timeline) => timeline,
+            None => {
+                let room = client.get_room(&room_id).ok_or(Error::UnknownRoom)?;
+                if room.is_space() {
+                    return Ok(Vec::new());
+                }
+                let timeline = Arc::new(
+                    room.timeline_builder()
+                        .with_focus(TimelineFocus::Live {
+                            hide_threaded_events: true,
+                        })
+                        .build()
+                        .await
+                        .map_err(timeline_err)?,
+                );
+                prefill(&timeline).await;
+                self.with_active(|a| {
+                    // Opened (or peeked twice) meanwhile: that timeline is the one kept.
+                    let open = a.chat.as_ref().is_some_and(|c| c.room_id == room_id);
+                    let kept = a.recent_chats.iter().chain(a.warm_chats.iter());
+                    if !open && !kept.into_iter().any(|(id, _)| *id == room_id) {
+                        a.warm_chats.push((room_id, timeline.clone()));
+                        if a.warm_chats.len() > WARM_CHATS {
+                            a.warm_chats.remove(0);
+                        }
+                    }
+                })?;
+                timeline
+            }
+        };
+        let items = timeline.items().await;
+        let skip = items.len().saturating_sub(PEEK_ITEMS);
+        let mut mapper = Mapper {
+            timeline: timeline.clone(),
+            media: self.media.clone(),
+            readers: HashMap::new(),
+        };
+        mapper.load_readers(items.iter().skip(skip)).await;
+        Ok(items.iter().skip(skip).map(|i| mapper.entry(i)).collect())
     }
 
     /// Open the thread started on `root` (it may have no replies yet) in the open chat and
@@ -444,10 +504,16 @@ impl crate::Core {
     /// Load older messages. Returns `true` once the start of the room is reached.
     pub async fn load_older(&self, room_id: &str) -> Result<bool> {
         let timeline = self.timeline(room_id)?;
-        timeline
+        let at_start = timeline
             .paginate_backwards(PAGE_EVENTS)
             .await
-            .map_err(timeline_err)
+            .map_err(timeline_err)?;
+        self.with_active(|a| {
+            if let Some(chat) = a.chat.as_mut().filter(|c| c.room_id == room_id) {
+                chat.older_pages += 1;
+            }
+        })?;
+        Ok(at_start)
     }
 
     /// Load newer messages (a timeline focused on a search result). Returns `true` once
@@ -813,6 +879,33 @@ fn receipt_kind(receipt: &ReceiptType) -> matrix_sdk::ruma::events::receipt::Rec
     }
 }
 
+/// A new chat's timeline is filled before it's shown, so it appears whole instead of a few
+/// items followed by a loading spinner. Only a nearly empty one (there'd be nothing to show):
+/// one with a screenful already goes out at once, the UI loads more behind it.
+async fn prefill(timeline: &Timeline) {
+    if timeline.items().await.len() >= PREFILL_MIN {
+        return;
+    }
+    for _ in 0..PREFILL_PAGES {
+        if timeline.items().await.len() >= PREFILL_ITEMS
+            || timeline
+                .paginate_backwards(PAGE_EVENTS)
+                .await
+                .unwrap_or(true)
+        {
+            break;
+        }
+    }
+}
+
+/// The live timeline kept for `room_id` (opened recently, or made ready by a peek), if any.
+fn take_kept(active: &mut crate::session::Active, room_id: &OwnedRoomId) -> Option<Arc<Timeline>> {
+    let warm = active.warm_chats.iter().position(|(id, _)| id == room_id);
+    let warm = warm.map(|at| active.warm_chats.remove(at).1);
+    let recent = active.recent_chats.iter().position(|(id, _)| id == room_id);
+    recent.map(|at| active.recent_chats.remove(at).1).or(warm)
+}
+
 /// Close the open chat, keeping its live timeline (a few chats) for a quick reopen.
 fn keep_recent(active: &mut crate::session::Active) {
     let Some(chat) = active.chat.take().filter(|c| c.live) else {
@@ -821,10 +914,18 @@ fn keep_recent(active: &mut crate::session::Active) {
     if chat.timeline.room().is_space() {
         return;
     }
+    // Read far back: all those messages would stay in memory for as long as the timeline is
+    // kept. Let it go; reopening builds a new one on the latest messages (stored locally).
+    if chat.older_pages > KEPT_PAGES {
+        active.warm_chats.retain(|(id, _)| *id != chat.room_id);
+        active.recent_chats.retain(|(id, _)| *id != chat.room_id);
+        return;
+    }
     let timeline = chat.timeline.clone();
     let room_id = chat.room_id.clone();
     drop(chat);
     active.recent_chats.retain(|(id, _)| *id != room_id);
+    active.warm_chats.retain(|(id, _)| *id != room_id);
     active.recent_chats.push((room_id, timeline));
     if active.recent_chats.len() > RECENT_CHATS {
         active.recent_chats.remove(0);
@@ -970,7 +1071,12 @@ impl Mapper {
                         poll_content(p.results(), &own, event.sender().as_str() == own)
                     }
                     MsgLikeKind::Redacted => MessageContent::Redacted,
-                    MsgLikeKind::UnableToDecrypt(_) => MessageContent::UnableToDecrypt,
+                    MsgLikeKind::UnableToDecrypt(e) => {
+                        crate::encryption::fetch_backup_keys_once(self.timeline.room());
+                        MessageContent::UnableToDecrypt {
+                            reason: utd_reason(e),
+                        }
+                    }
                     MsgLikeKind::LiveLocation(live) => {
                         let latest = live.latest_location();
                         let start: u64 = live.ts().get().into();
@@ -1562,5 +1668,23 @@ mod reply_quote_tests {
             "banger"
         );
         assert_eq!(without_html_quote("<p>hi</p>"), "<p>hi</p>");
+    }
+}
+
+/// Why a message can't be decrypted, for the UI (see `MessageContent::UnableToDecrypt`).
+fn utd_reason(message: &matrix_sdk_ui::timeline::EncryptedMessage) -> &'static str {
+    use matrix_sdk_base::crypto::types::events::UtdCause;
+    let matrix_sdk_ui::timeline::EncryptedMessage::MegolmV1AesSha2 { cause, .. } = message else {
+        return "unknown";
+    };
+    match cause {
+        UtdCause::SentBeforeWeJoined => "before_joined",
+        UtdCause::WithheldBySender | UtdCause::WithheldForUnverifiedOrInsecureDevice => "withheld",
+        UtdCause::VerificationViolation | UtdCause::UnsignedDevice | UtdCause::UnknownDevice => {
+            "unverified_sender"
+        }
+        UtdCause::HistoricalMessageAndBackupIsDisabled
+        | UtdCause::HistoricalMessageAndDeviceIsUnverified => "before_device",
+        _ => "unknown",
     }
 }

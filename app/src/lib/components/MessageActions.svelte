@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tr } from "$lib/i18n/index.svelte";
+  import { messageStamp } from "$lib/format";
   import { fade, fly } from "svelte/transition";
   import Copy from "@lucide/svelte/icons/copy";
   import LinkIcon from "@lucide/svelte/icons/link";
@@ -58,6 +59,8 @@
 <div class="backdrop" transition:fade={{ duration: 140 }} onclick={onClose}></div>
 <div class="sheet" role="dialog" aria-label={tr("Message actions")} transition:fly={{ y: 40, duration: 200 }}>
   <div class="grip"></div>
+  <!-- Who and when: the only place to see it for a message that's just a link, on a phone. -->
+  <p class="when">{msg.is_own ? tr("You") : msg.sender_name} · {messageStamp(msg.timestamp)}</p>
   <div class="reactions">
     {#each reactions as key (key)}
       <button class:mine={mine.has(key)} onclick={() => run(() => actions.react(key))}>{key}</button>
@@ -92,6 +95,12 @@
 </div>
 
 <style>
+  .when {
+    margin: 0 0 6px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
   .backdrop {
     position: fixed;
     inset: 0;

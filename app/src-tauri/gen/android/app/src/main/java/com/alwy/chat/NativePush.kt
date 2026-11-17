@@ -30,6 +30,10 @@ object NativePush {
   @JvmStatic
   external fun answer(context: Context, dataDir: String, roomId: String, eventId: String, text: String): String
 
+  /** Whether a ring in `roomId` goes on: 1 yes, 0 the call ended / was answered elsewhere, -1 unknown. Blocks. */
+  @JvmStatic
+  external fun ringActive(context: Context, dataDir: String, roomId: String): Int
+
   /** Decline the call rung by `eventId` (from the incoming-call notification). Blocks. */
   @JvmStatic
   external fun decline(context: Context, dataDir: String, roomId: String, eventId: String)

@@ -19,12 +19,31 @@ interface WebCore {
   commands(): string[];
   media(path: string, query: string): Promise<{ bytes: Uint8Array; mime: string }>;
 }
-const wasmModules = import.meta.glob<WebCore>("./wasm/alwy_web.js");
+// (Only web builds, `VITE_ALWY_WEB`, bundle it: the apps would carry its 18 MB for nothing.)
+const wasmModules = import.meta.env.VITE_ALWY_WEB ? import.meta.glob<WebCore>("./wasm/alwy_web.js") : {};
 const wasmLoader = Object.values(wasmModules)[0];
 export const isWeb = !isTauri && !!wasmLoader;
 
 type Handler = (event: { payload: unknown }) => void;
 const listeners = new Map<string, Set<Handler>>();
+
+/** Web: whether a signed-in session is saved in this browser (the core's session file lives in
+ * localStorage as `alwychat:<folder>/session.json`). Without one, the sign-in screen can show
+ * right away instead of waiting for the 18 MB core to download and start. */
+export const webHasSession = () => webHasFile("session.json");
+
+/** Web: whether the core has a file named `name` (its files live in localStorage as
+ * `alwychat:<folder>/<name>`). Unknown counts as yes. */
+export function webHasFile(name: string): boolean {
+  try {
+    return Object.keys(localStorage).some((k) => k.startsWith("alwychat:") && (k.endsWith("/" + name) || k === "alwychat:" + name));
+  } catch {
+    return true;
+  }
+}
+
+/** Start downloading the core now (web), so it's ready by the time it's needed. */
+export const warmUpWeb = () => void (isWeb && web().catch(() => {}));
 
 let webCore: Promise<WebCore> | null = null;
 function web(): Promise<WebCore> {
@@ -34,6 +53,9 @@ function web(): Promise<WebCore> {
       for (const handler of listeners.get(name) ?? []) handler({ payload });
     });
     await startMediaWorker(mod);
+    // For bug reports from the browser console: `await alwychatLog()` prints the recent log
+    // (the same one "Report a problem" attaches).
+    (globalThis as Record<string, unknown>).alwychatLog = () => mod.invoke("recent_log", {});
     return mod;
   });
   return webCore;
@@ -57,8 +79,19 @@ function oneTab(): Promise<void> {
         return new Promise<void>(() => {}); // held while the page lives
       });
     let overlay: HTMLElement | null = null;
-    void navigator.locks.query().then((state) => {
+    void navigator.locks.query().then(async (state) => {
       if (!state.held?.some((l) => l.name === "alwychat-core")) return void hold();
+      // Right after a reload the page being left may still hold it for a moment: wait a little
+      // before saying another tab has it.
+      try {
+        return await navigator.locks.request("alwychat-core", { signal: AbortSignal.timeout(2000) }, () => {
+          ready();
+          channel.onmessage = (e) => e.data === "take-over" && location.reload();
+          return new Promise<void>(() => {});
+        });
+      } catch {
+        // Still held: another tab really runs it.
+      }
       overlay = elsewhere(() => {
         channel.postMessage("take-over");
         void hold();
@@ -101,7 +134,13 @@ async function startMediaWorker(mod: WebCore) {
       (e) => port.postMessage({ error: String(e) }),
     );
   });
-  await navigator.serviceWorker.register(new URL("media-sw.js", location.href), { scope: "./" });
+  try {
+    await navigator.serviceWorker.register(new URL("media-sw.js", location.href), { scope: "./" });
+  } catch (e) {
+    // Offline the browser can't re-check the worker: the installed one keeps working.
+    if (!navigator.serviceWorker.controller) console.warn("service worker:", e);
+    return;
+  }
   if (navigator.serviceWorker.controller) return;
   await new Promise<void>((resolve) => {
     navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
@@ -109,8 +148,18 @@ async function startMediaWorker(mod: WebCore) {
   });
 }
 
+/** Web: while a saved session is being restored (the app is already on screen), other commands
+ * wait for it, so nothing reaches the core before it has an account. */
+let restoring: Promise<unknown> | null = null;
+const NO_WAIT = new Set(["restore_session", "login", "cancel_login", "discover_server", "recent_log"]);
+export function holdUntilRestored(restore: Promise<unknown>) {
+  restoring = restore.catch(() => {});
+  restoring.then(() => (restoring = null));
+}
+
 export async function invoke<T>(cmd: string, args?: unknown, options?: core.InvokeOptions): Promise<T> {
   if (isTauri) return core.invoke<T>(cmd, args as core.InvokeArgs, options);
+  if (restoring && !NO_WAIT.has(cmd)) await restoring;
   return (await web()).invoke(cmd, args ?? {}) as Promise<T>;
 }
 
@@ -141,39 +190,3 @@ export async function openUrl(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/** Web sign-in: the server's page opens in a popup, which comes back to oauth-callback.html. */
-export const loginRedirect = () => new URL("oauth-callback.html", location.href).href;
-
-/** Open the sign-in popup right away (browsers only allow popups straight from a click), then
- * point it at the server's page once the core has it. */
-export async function webLogin(server: string): Promise<unknown> {
-  const popup = window.open("about:blank", "alwychat-login", "popup,width=480,height=720");
-  const mod = await web();
-  const unlisten = await listen<string>("login-url", ({ payload }) => {
-    if (popup && !popup.closed) popup.location.href = payload;
-    else window.open(payload, "alwychat-login", "popup,width=480,height=720");
-  });
-  // The callback page (static/oauth-callback.js) answers on both: postMessage needs the opener,
-  // which the server's sign-in page often cuts (Cross-Origin-Opener-Policy); the channel doesn't.
-  let done = false;
-  const finish = (data: unknown) => {
-    const d = data as { type?: string; url?: string } | null;
-    if (done || d?.type !== "alwychat-login" || !d.url) return;
-    done = true;
-    mod.finishLogin(String(d.url));
-  };
-  const onMessage = (e: MessageEvent) => e.origin === location.origin && finish(e.data);
-  window.addEventListener("message", onMessage);
-  const channel = new BroadcastChannel("alwychat-login");
-  channel.onmessage = (e) => finish(e.data);
-  // No cancel when the popup looks closed: once the opener link is cut, `closed` reads true while
-  // the sign-in is still going on. The waiting screen has its own Cancel.
-  try {
-    return await mod.invoke("login", { server, redirect: loginRedirect() });
-  } finally {
-    channel.close();
-    unlisten();
-    window.removeEventListener("message", onMessage);
-    if (popup && !popup.closed) popup.close();
-  }
-}

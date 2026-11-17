@@ -39,6 +39,7 @@ async fn login(
     app: tauri::AppHandle,
     core: State<'_, AppCore>,
     server: String,
+    invite: Option<String>,
 ) -> alwy_core::Result<Account> {
     // Mobile apps are paused while the browser is in front: no loopback server there.
     let redirect = if cfg!(mobile) {
@@ -46,7 +47,7 @@ async fn login(
     } else {
         LoginRedirect::Loopback
     };
-    core.login(&server, redirect, |url| {
+    core.login(&server, redirect, invite.as_deref(), |url| {
         app.opener()
             .open_url(url.as_str(), None::<&str>)
             .map_err(|e| e.to_string())
@@ -448,6 +449,22 @@ async fn new_recovery_key(core: State<'_, AppCore>) -> alwy_core::Result<String>
 }
 
 #[tauri::command]
+async fn begin_identity_reset(core: State<'_, AppCore>) -> alwy_core::Result<Option<String>> {
+    core.begin_identity_reset().await
+}
+
+#[tauri::command]
+async fn finish_identity_reset(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.finish_identity_reset().await
+}
+
+#[tauri::command]
+async fn cancel_identity_reset(core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.cancel_identity_reset().await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn ignored_users(
     core: State<'_, AppCore>,
 ) -> alwy_core::Result<Vec<alwy_core::manage::UserResult>> {
@@ -727,6 +744,12 @@ async fn decline_call(
     core.decline_call(&room_id, &notification_id).await
 }
 
+/// Ring someone into the call we're in (voice channel, group call).
+#[tauri::command]
+async fn ring_user(core: State<'_, AppCore>, user_id: String) -> alwy_core::Result<()> {
+    core.ring_user(&user_id).await
+}
+
 #[tauri::command]
 async fn create_poll(
     core: State<'_, AppCore>,
@@ -797,6 +820,13 @@ struct SystemStatus {
     notifications: bool,
     battery_unrestricted: bool,
     background_data: bool,
+    /// Android 14+: incoming calls may cover the locked screen.
+    #[serde(default = "yes")]
+    full_screen_calls: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// `fix`: None just reads the status; "notifications" / "battery" / "backgroundData" asks the
@@ -810,6 +840,7 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
             Some("notifications") => "fixNotifications",
             Some("battery") => "fixBattery",
             Some("backgroundData") => "fixBackgroundData",
+            Some("fullScreenCalls") => "fixFullScreenCalls",
             Some("appSettings") => "openAppSettings",
             Some(other) => return Err(format!("unknown setting {other}")),
         };
@@ -826,6 +857,7 @@ async fn system_status(app: tauri::AppHandle, fix: Option<String>) -> Result<Sys
             notifications: true,
             battery_unrestricted: true,
             background_data: true,
+            full_screen_calls: true,
         })
     }
 }
@@ -879,6 +911,124 @@ async fn call_notification(
     }
     #[cfg(not(target_os = "android"))]
     let _ = (app, active, texts, room_id, muted, camera);
+    Ok(())
+}
+
+/// An incoming ring, told outside the window when the app isn't in front (the UI shows its own
+/// ringing screen otherwise). Computers: a notification (a click shows that chat, where the
+/// ringing screen is) and the taskbar entry asks for attention. Android: the full-screen call
+/// notification, only when no push service shows it already. `title` / `body`: translated.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a command's arguments are the UI's named fields
+async fn call_alert(
+    app: tauri::AppHandle,
+    room_id: String,
+    notification_id: String,
+    caller_name: String,
+    video: bool,
+    expires_at: u64,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let _ = (&notification_id, &caller_name, video, expires_at);
+        let window = app.get_webview_window("main");
+        let in_front = window
+            .as_ref()
+            .and_then(|w| Some(w.is_visible().ok()? && w.is_focused().ok()?))
+            .unwrap_or(false);
+        if in_front {
+            return Ok(());
+        }
+        if let Some(window) = &window {
+            let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+        }
+        app.notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .extra("room_id", &room_id)
+            .show()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "android")]
+    {
+        let visible = app
+            .state::<Visible>()
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if visible || PUSH_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
+        let _ = body;
+        let args = serde_json::json!({
+            "room_id": room_id,
+            "title": title,
+            "call": {
+                "notification_id": notification_id,
+                "caller_name": caller_name,
+                "video": video,
+                "expires_at": expires_at,
+            },
+        });
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>("showMessage", args)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(any(desktop, target_os = "android")))]
+    let _ = (
+        app,
+        room_id,
+        notification_id,
+        caller_name,
+        video,
+        expires_at,
+        title,
+        body,
+    );
+    Ok(())
+}
+
+/// The live location notification's texts, translated by the UI.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocationTexts {
+    title: String,
+    text: String,
+    stop: String,
+    channel: String,
+}
+
+/// Android: the ongoing "sharing your live location" notification, whose foreground service
+/// keeps the app following the position in the background. Elsewhere: nothing.
+#[tauri::command]
+async fn location_notification(
+    app: tauri::AppHandle,
+    active: bool,
+    texts: Option<LocationTexts>,
+    room_id: Option<String>,
+    ends_at: Option<u64>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let mut args = serde_json::to_value(&texts).map_err(|e| e.to_string())?;
+        if !args.is_object() {
+            args = serde_json::json!({});
+        }
+        args["active"] = active.into();
+        args["roomId"] = serde_json::json!(room_id);
+        args["endsAt"] = ends_at.unwrap_or(0).into();
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>("locationNotification", args)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, active, texts, room_id, ends_at);
     Ok(())
 }
 
@@ -1074,6 +1224,24 @@ async fn unlock_biometric(
         core.biometric_unlocked().await;
     }
     Ok(ok)
+}
+
+/// Android: go back to the app we came from (a share from it was cancelled).
+#[tauri::command]
+async fn leave_app(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<()>("moveToBack", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(())
+    }
 }
 
 /// Android: hide the app's content in the app switcher and block screenshots (FLAG_SECURE).
@@ -1780,6 +1948,15 @@ async fn set_time_zone(
     core.set_time_zone(time_zone.as_deref()).await
 }
 
+/// The latest messages of a chat that isn't open, kept ready by the UI.
+#[tauri::command]
+async fn peek_chat(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Vec<TimelineEntry>> {
+    core.peek_chat(&room_id).await
+}
+
 #[tauri::command]
 async fn close_chat(core: State<'_, AppCore>) -> alwy_core::Result<()> {
     core.close_chat()
@@ -2203,6 +2380,10 @@ struct PushTestResult {
     permission: bool,
     /// This build has push (Firebase) and the phone got a token.
     token: bool,
+    /// When the last real push reached this phone (ms; 0 = never).
+    last_push: u64,
+    /// A sample notification was shown (private gateway: the direct test can't run).
+    sample_shown: bool,
     #[serde(flatten)]
     test: Option<alwy_core::push::PushTest>,
 }
@@ -2219,15 +2400,30 @@ async fn test_push(
             token: String,
         }
         #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct Status {
             notifications: bool,
+            #[serde(default)]
+            last_push: u64,
         }
         let plugin = &app.state::<android::System>().0;
-        let permission = plugin
+        let (permission, last_push) = plugin
             .run_mobile_plugin_async::<Status>("status", serde_json::json!({}))
             .await
-            .map(|s| s.notifications)
-            .unwrap_or(false);
+            .map(|s| (s.notifications, s.last_push))
+            .unwrap_or((false, 0));
+        // A private gateway can't be reached from here: show what a notification looks like
+        // instead (the real path is proven by `last_push`).
+        async fn sample<R: tauri::Runtime>(
+            plugin: &tauri::plugin::PluginHandle<R>,
+            test: &alwy_core::push::PushTest,
+        ) -> bool {
+            test.internal
+                && plugin
+                    .run_mobile_plugin_async::<()>("testNotification", serde_json::json!({}))
+                    .await
+                    .is_ok()
+        }
         if let Some(status) = unified_push_status(&app)
             .await
             .filter(|s| s.current.is_some())
@@ -2236,6 +2432,8 @@ async fn test_push(
                 return Ok(PushTestResult {
                     permission,
                     token: false,
+                    last_push,
+                    sample_shown: false,
                     test: None,
                 });
             };
@@ -2249,6 +2447,8 @@ async fn test_push(
             return Ok(PushTestResult {
                 permission,
                 token: true,
+                last_push,
+                sample_shown: sample(plugin, &test).await,
                 test: Some(test),
             });
         }
@@ -2261,6 +2461,8 @@ async fn test_push(
                 return Ok(PushTestResult {
                     permission,
                     token: false,
+                    last_push,
+                    sample_shown: false,
                     test: None,
                 });
             }
@@ -2273,6 +2475,8 @@ async fn test_push(
         Ok(PushTestResult {
             permission,
             token: true,
+            last_push,
+            sample_shown: sample(plugin, &test).await,
             test: Some(test),
         })
     }
@@ -2576,11 +2780,31 @@ pub fn run() {
                 .builder()
                 .title(title)
                 .body(n.body)
+                // Read back when it's clicked (see `on_action` in setup).
+                .extra("room_id", &n.room_id)
                 .show()
             {
                 tracing::warn!("couldn't show notification: {e}");
             }
         });
+        // A click on a message notification brings the window forward on that chat (Windows:
+        // only while the toast is on screen, not from the Action Center; Linux: servers that
+        // report the "default" action, like GNOME's and KDE's).
+        #[cfg(desktop)]
+        {
+            let handle = app.handle().clone();
+            app.notification().on_action(move |performed| {
+                let room = performed
+                    .notification()
+                    .and_then(|n| n.extra().get("room_id"))
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                show_window(&handle);
+                if let Some(room) = room {
+                    let _ = handle.emit("open-room", room);
+                }
+            })?;
+        }
         app.manage(core);
         app.manage(Visible(std::sync::atomic::AtomicBool::new(true)));
         // Picked files left over from a previous run were never sent.
@@ -2720,6 +2944,9 @@ pub fn run() {
             forward_messages,
             file_action,
             decline_call,
+            ring_user,
+            call_alert,
+            location_notification,
             drafts,
             subscribe_spaces,
             open_space,
@@ -2769,6 +2996,9 @@ pub fn run() {
             account_url,
             security_status,
             new_recovery_key,
+            begin_identity_reset,
+            finish_identity_reset,
+            cancel_identity_reset,
             ignored_users,
             set_ignored,
             notification_rules,
@@ -2792,6 +3022,7 @@ pub fn run() {
             unlock_app,
             unlock_biometric,
             set_secure_screen,
+            leave_app,
             set_draft,
             vote_poll,
             end_poll,
@@ -2836,6 +3067,7 @@ pub fn run() {
             unmute_space,
             set_marked_unread,
             close_chat,
+            peek_chat,
             load_older,
             send_message,
             room_members,
@@ -2991,7 +3223,19 @@ async fn serve_media(
         Some(key) => {
             let key = percent_encoding::percent_decode_str(key).decode_utf8_lossy();
             let thumb = param("thumb") == Some("1");
-            let media = core.event_media(&key, thumb).await;
+            // A video being played asks for one piece after another (and again on every
+            // seek): the file is fetched and decrypted once, not once per piece.
+            let ranged = !thumb && request.headers().contains_key(http::header::RANGE);
+            if ranged && let Some(playing) = playing_media(&key) {
+                return respond_with_range(request, &playing.0, &playing.1);
+            }
+            let media = match core.event_media(&key, thumb).await {
+                Ok((bytes, mime)) if ranged && !alwy_core::media::is_heic(&bytes) => {
+                    let playing = keep_playing(&key, bytes, mime);
+                    return respond_with_range(request, &playing.0, &playing.1);
+                }
+                other => other,
+            };
             // HEIC photos (many phones' camera format) can't be shown by the web view.
             #[cfg(target_os = "android")]
             let media = match media {
@@ -3020,7 +3264,7 @@ async fn serve_media(
     };
 
     match result {
-        Ok((bytes, mime)) => respond_with_range(request, bytes, &mime),
+        Ok((bytes, mime)) => respond_with_range(request, &bytes, &mime),
         Err(e) => {
             tracing::debug!("media {uri}: {e}");
             http::Response::builder()
@@ -3165,7 +3409,7 @@ fn serve_picked(
     match bytes {
         Some(bytes) => {
             let mime = alwy_core::media::sniff(&bytes).to_owned();
-            respond_with_range(request, bytes, &mime)
+            respond_with_range(request, &bytes, &mime)
         }
         None => http::Response::builder()
             .status(http::StatusCode::NOT_FOUND)
@@ -3177,7 +3421,7 @@ fn serve_picked(
 /// Full body, or the requested `Range` (videos need it to play and seek in WebKit).
 fn respond_with_range(
     request: &http::Request<Vec<u8>>,
-    bytes: Vec<u8>,
+    bytes: &[u8],
     mime: &str,
 ) -> http::Response<Vec<u8>> {
     let builder = http::Response::builder()
@@ -3208,9 +3452,49 @@ fn respond_with_range(
                 format!("bytes {start}-{end}/{total}"),
             )
             .body(bytes[start..=end].to_vec()),
-        None => builder.body(bytes),
+        None => builder.body(bytes.to_vec()),
     }
     .expect("valid response")
+}
+
+/// The media file being played in pieces (one at a time), with when it was last asked for.
+type Playing = std::sync::Arc<(Vec<u8>, String)>;
+static PLAYING: std::sync::Mutex<Option<(String, Playing, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+/// How long a played file stays in memory after its last piece was asked for.
+const PLAYING_KEPT: std::time::Duration = std::time::Duration::from_secs(45);
+/// Bigger files aren't kept (they'd hold that much memory while playing).
+const PLAYING_MAX: usize = 400 * 1024 * 1024;
+
+fn playing_media(key: &str) -> Option<Playing> {
+    let mut playing = PLAYING.lock().unwrap();
+    let (kept, media, used) = playing.as_mut()?;
+    (kept == key).then(|| {
+        *used = std::time::Instant::now();
+        media.clone()
+    })
+}
+
+fn keep_playing(key: &str, bytes: Vec<u8>, mime: String) -> Playing {
+    let media = std::sync::Arc::new((bytes, mime));
+    if media.0.len() <= PLAYING_MAX {
+        *PLAYING.lock().unwrap() = Some((key.to_owned(), media.clone(), std::time::Instant::now()));
+        // Freed once nothing asked for it for a while.
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(PLAYING_KEPT);
+                let mut playing = PLAYING.lock().unwrap();
+                match playing.as_ref() {
+                    Some((_, _, used)) if used.elapsed() < PLAYING_KEPT => {}
+                    _ => {
+                        *playing = None;
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    media
 }
 
 /// Android-only native bits (Kotlin side in gen/android/app/src/main/java/com/alwy/chat).
@@ -3388,6 +3672,36 @@ mod android {
                 }
             });
             Ok(())
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+    }
+
+    /// Asked every few seconds by the incoming-call notification: 1 = keep ringing, 0 = the
+    /// call is over or answered on another device, -1 = can't tell (keep ringing).
+    #[allow(unsafe_code)] // JNI entry points can't be mangled.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_alwy_chat_NativePush_ringActive<'c>(
+        mut env: jni::EnvUnowned<'c>,
+        _class: jni::objects::JClass<'c>,
+        context: jni::objects::JObject<'c>,
+        data_dir: jni::objects::JString<'c>,
+        room_id: jni::objects::JString<'c>,
+    ) -> jni::sys::jint {
+        env.with_env(|env| -> Result<_, jni::errors::Error> {
+            init_logging();
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            let (dir, room) = (data_dir.to_string(), room_id.to_string());
+            Ok(tauri::async_runtime::block_on(async move {
+                let core = super::shared_core(dir.into());
+                if !matches!(core.restore().await, Ok(Some(_))) {
+                    return -1;
+                }
+                match core.ring_still_on(&room).await {
+                    Some(true) => 1,
+                    Some(false) => 0,
+                    None => -1,
+                }
+            }))
         })
         .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
     }

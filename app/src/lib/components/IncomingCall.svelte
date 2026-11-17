@@ -28,7 +28,12 @@
     <div class="who" in:fly={{ y: 20, duration: 260 }}>
       <div class="pulse"><Avatar name={ring.caller_name} mxc={ring.caller_avatar} size={120} /></div>
       <strong>{ring.caller_name}</strong>
-      <span>{ring.video ? tr("Incoming video call") : tr("Incoming call")}</span>
+      {#if room && !room.is_dm}
+        <!-- Rung into a group call or a voice channel. -->
+        <span>{tr("Calls you into {name}", { name: room.name })}</span>
+      {:else}
+        <span>{ring.video ? tr("Incoming video call") : tr("Incoming call")}</span>
+      {/if}
     </div>
     <div class="buttons">
       <button class="decline" onclick={() => call.decline()} aria-label={tr("Decline")}>

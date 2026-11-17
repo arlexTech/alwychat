@@ -6,7 +6,21 @@ import {
   type VerificationUpdate,
 } from "$lib/backend";
 
-const NUDGE_KEY = "alwychat.recoveryNudgeAfter";
+const PENDING_KEY = "alwychat.recoveryUnconfirmed";
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function store(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {}
+}
 
 /** Whether this device can read encrypted history, and any emoji verification in progress. */
 class Encryption {
@@ -32,21 +46,27 @@ class Encryption {
     return !!s && s.device_verified && s.recovery === "incomplete";
   }
 
-  /** The account has no recovery at all (a new account): offer to set it up, at most once a
-   * week once dismissed. Without it, losing every device loses the encrypted history. */
-  get noRecovery() {
+  /** The recovery key screen (`RecoverySetup`) must be on screen: the account has no recovery
+   * yet (a new account: set up right away, it can't be skipped), or a key was made here but its
+   * owner never showed they saved it (the app was closed on the key: a new one is made). */
+  get mustSaveRecovery() {
     const s = this.status;
-    if (!s || !s.device_verified || s.recovery !== "disabled") return false;
-    void this.#nudgeTick; // depend on dismissals
-    return Date.now() > Number(localStorage.getItem(NUDGE_KEY) ?? 0);
+    if (!s || !s.device_verified) return false;
+    return s.recovery === "disabled" || this.#unconfirmed;
   }
-  /** Bumped to recompute `noRecovery` after a dismissal (localStorage isn't reactive). */
-  #nudgeTick = $state(0);
+  /** Opened by hand (Settings → Security: "Make a new recovery key"). */
+  recoveryOpen = $state(false);
+  #unconfirmed = $state(stored(PENDING_KEY) === "1");
 
-  /** "Not now": ask again in a week. */
-  dismissRecovery() {
-    localStorage.setItem(NUDGE_KEY, String(Date.now() + 7 * 24 * 3600 * 1000));
-    this.#nudgeTick++;
+  /** About to make a key: until `recoverySaved`, the screen comes back (even after a restart). */
+  recoveryPending() {
+    this.#unconfirmed = true;
+    store(PENDING_KEY, "1");
+  }
+  /** The key was typed back: it's saved somewhere. */
+  recoverySaved() {
+    this.#unconfirmed = false;
+    store(PENDING_KEY, null);
   }
 
   async start() {
@@ -69,6 +89,10 @@ class Encryption {
     this.status = null;
     this.verification = null;
     this.sheetOpen = false;
+    this.recoveryOpen = false;
+    // Signed out: the next account starts clean.
+    this.#unconfirmed = false;
+    store(PENDING_KEY, null);
   }
 }
 

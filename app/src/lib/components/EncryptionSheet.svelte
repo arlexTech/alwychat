@@ -3,7 +3,11 @@
   import { fade, fly, scale } from "svelte/transition";
   import {
     acceptVerification,
+    beginIdentityReset,
+    cancelIdentityReset,
     cancelVerification,
+    finishIdentityReset,
+    openExternal,
     confirmEmojis,
     confirmQrScanned,
     recover,
@@ -12,10 +16,14 @@
   } from "$lib/backend";
   import { encryption } from "$lib/stores/encryption.svelte";
   import QrScanner from "./QrScanner.svelte";
+  import Smartphone from "@lucide/svelte/icons/smartphone";
+  import KeyRound from "@lucide/svelte/icons/key-round";
+  import Sparkles from "@lucide/svelte/icons/sparkles";
+  import Camera from "@lucide/svelte/icons/camera";
 
   let scanning = $state(false);
 
-  type Mode = "choose" | "key";
+  type Mode = "choose" | "key" | "fresh" | "approve";
 
   let mode = $state<Mode>("choose");
   let key = $state("");
@@ -48,8 +56,33 @@
     });
   }
 
+  /** "Start fresh": the server's approval page, once asked for. */
+  let approvalUrl = $state<string | null>(null);
+  let waiting = $state(false);
+
+  async function startFresh() {
+    await run(async () => {
+      approvalUrl = await beginIdentityReset();
+      // No approval needed: already done (the status turns verified).
+      mode = approvalUrl ? "approve" : "choose";
+    });
+  }
+  /** Opened from the click itself (browsers block pages opened later), then waits for the
+   * approval (the SDK gives up after 2 minutes: the button then tries again). */
+  async function approve() {
+    if (!approvalUrl) return;
+    openExternal(approvalUrl);
+    waiting = true;
+    await run(finishIdentityReset);
+    waiting = false;
+    if (!error) mode = "choose";
+  }
+
   function close() {
     if (verifying) cancelVerification().catch(() => {});
+    if (mode === "approve") cancelIdentityReset().catch(() => {});
+    approvalUrl = null;
+    waiting = false;
     encryption.sheetOpen = false;
     encryption.verification = null;
     mode = "choose";
@@ -85,7 +118,7 @@
     {/if}
     {#if v.can_scan}
       <button class="option wide" disabled={busy} onclick={() => (scanning = true)}>
-        <span class="icon">📷</span>
+        <span class="icon"><Camera size={20} /></span>
         <span><strong>{tr("Scan the other device's code")}</strong><small>{tr("If it shows a QR code")}</small></span>
       </button>
     {/if}
@@ -137,6 +170,20 @@
     <div class="buttons">
       <button class="primary" onclick={close}>{tr("Done")}</button>
     </div>
+  {:else if mode === "fresh"}
+    <h2 id="unlock-title">{tr("Start fresh on this device?")}</h2>
+    <p>{tr("This device gets new encryption keys and is trusted right away. Encrypted messages from before stay locked here, and your other devices will need to be confirmed again.")}</p>
+    <div class="buttons">
+      <button class="secondary" disabled={busy} onclick={() => (mode = "choose")}>{tr("Back")}</button>
+      <button class="primary" disabled={busy} onclick={startFresh}>{busy ? tr("Preparing…") : tr("Start fresh")}</button>
+    </div>
+  {:else if mode === "approve"}
+    <h2 id="unlock-title">{tr("Approve on your account page")}</h2>
+    <p>{tr("For your safety, your server asks you to confirm this. Open the page, approve, then come back here.")}</p>
+    {#if waiting}<div class="spinner"></div>{/if}
+    <div class="buttons">
+      <button class="primary" disabled={waiting} onclick={approve}>{waiting ? tr("Waiting for approval…") : tr("Open account page")}</button>
+    </div>
   {:else if mode === "key"}
     <h2 id="unlock-title">{tr("Enter your recovery key")}</h2>
     <p>{tr("The key (or passphrase) you saved when you set up recovery in Element.")}</p>
@@ -157,24 +204,35 @@
       </div>
     </form>
   {:else}
-    <h2 id="unlock-title">{tr("Unlock your messages")}</h2>
+    <h2 id="unlock-title">{status?.recovery === "disabled" ? tr("Confirm this device") : tr("Unlock your messages")}</h2>
     {#if v?.state === "cancelled"}
       <p class="error">{tr("Verification stopped: {reason}", { reason: v.reason })}</p>
     {/if}
-    <p>{tr("This device can't read older encrypted messages yet. Choose how to unlock it:")}</p>
+    {#if status?.recovery === "disabled"}
+      <p>{tr("Your account has no recovery key, so confirm this device from one where you're already signed in, or start fresh here.")}</p>
+    {:else}
+      <p>{tr("This device can't read older encrypted messages yet. Choose how to unlock it:")}</p>
+    {/if}
     <div class="options">
       <button
         class="option"
         disabled={busy || !status?.can_verify_with_device}
         onclick={() => run(verifyThisDevice)}
       >
-        <span class="icon">📱</span>
+        <span class="icon"><Smartphone size={20} /></span>
         <span><strong>{tr("Use another device")}</strong><small>{tr("QR code or emoji, with Element")}</small></span>
       </button>
       {#if status?.recovery !== "disabled"}
         <button class="option" disabled={busy} onclick={() => (mode = "key")}>
-          <span class="icon">🔑</span>
+          <span class="icon"><KeyRound size={20} /></span>
           <span><strong>{tr("Enter recovery key")}</strong><small>{tr("The key you saved when setting up recovery")}</small></span>
+        </button>
+      {:else}
+        <!-- No recovery key exists on this account: nothing to type, but a way out when no
+             other device is at hand. -->
+        <button class="option" disabled={busy} onclick={() => ((mode = "fresh"), (error = null))}>
+          <span class="icon"><Sparkles size={20} /></span>
+          <span><strong>{tr("Start fresh here")}</strong><small>{tr("No other device? Use this one from now on")}</small></span>
         </button>
       {/if}
     </div>
@@ -260,7 +318,14 @@
     color: var(--muted);
   }
   .icon {
-    font-size: 1.6rem;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent-a) 20%, transparent);
+    color: var(--accent-a);
   }
   .option.wide {
     width: 100%;

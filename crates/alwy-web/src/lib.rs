@@ -20,6 +20,7 @@ mod generated {
 /// Handled below rather than generated (read by `build.rs`).
 const HANDWRITTEN: &[&str] = &[
     "login",
+    "login_with_tokens",
     "report_activity",
     "app_lock_state",
     "unlock_biometric",
@@ -35,13 +36,17 @@ const HANDWRITTEN: &[&str] = &[
     "system_status",
     "set_system_bars",
     "set_secure_screen",
+    "leave_app",
     "setup_push",
     "test_push",
     "launch_room",
     "clear_notifications",
+    "call_alert",
+    "location_notification",
     "log_ui_error",
     // Web only:
     "media_filename",
+    "recent_log",
 ];
 
 type Reply = Result<JsValue, JsValue>;
@@ -250,6 +255,7 @@ struct SystemStatus {
     notifications: bool,
     battery_unrestricted: bool,
     background_data: bool,
+    full_screen_calls: bool,
 }
 
 async fn handwritten(cmd: &str, args: &Args) -> Option<Reply> {
@@ -267,14 +273,47 @@ async fn handwritten(cmd: &str, args: &Args) -> Option<Reply> {
             let Ok(redirect) = url::Url::parse(&redirect) else {
                 return Some(Err(error("invalid redirect page")));
             };
+            // An invite link (chat…/register?token=…): create an account with that token.
+            let invite = args.get::<Option<String>>("invite").ok().flatten();
             let result = core
-                .login(&server, LoginRedirect::Web(redirect), |url| {
-                    // The page opens it (a popup must come from the click): hand it over.
-                    emit("login-url", url.as_str());
-                    Ok(())
-                })
+                .login(
+                    &server,
+                    LoginRedirect::Web(redirect),
+                    invite.as_deref(),
+                    |url| {
+                        // The page opens it (a popup must come from the click): hand it over.
+                        emit("login-url", url.as_str());
+                        Ok(())
+                    },
+                )
                 .await;
             fallible(result)
+        }
+        "login_with_tokens" => {
+            #[derive(serde::Deserialize)]
+            struct Done {
+                homeserver: String,
+                client_id: String,
+                user_id: String,
+                device_id: String,
+                access_token: String,
+                refresh_token: Option<String>,
+            }
+            let done: Done = match args.get("done") {
+                Ok(d) => d,
+                Err(e) => return Some(Err(e)),
+            };
+            fallible(
+                core.login_with_tokens(
+                    &done.homeserver,
+                    done.client_id,
+                    &done.user_id,
+                    &done.device_id,
+                    done.access_token,
+                    done.refresh_token,
+                )
+                .await,
+            )
         }
         "report_activity" => match args.get::<bool>("active") {
             Ok(active) => fallible(core.report_activity(active).await),
@@ -304,11 +343,18 @@ async fn handwritten(cmd: &str, args: &Args) -> Option<Reply> {
             notifications: true,
             battery_unrestricted: true,
             background_data: true,
+            full_screen_calls: true,
         }),
-        "set_system_bars" | "set_secure_screen" | "clear_notifications" | "discard_picked" => {
-            infallible(())
-        }
+        // Calls ringing in a hidden tab: the UI shows a browser notification itself.
+        "set_system_bars"
+        | "set_secure_screen"
+        | "leave_app"
+        | "clear_notifications"
+        | "discard_picked"
+        | "call_alert"
+        | "location_notification" => infallible(()),
         "setup_push" => infallible(false),
+        "recent_log" => infallible(alwy_core::logs::recent()),
         "take_share" | "launch_room" => infallible(None::<()>),
         "take_keyboard_content" => infallible(serde_json::json!({ "files": [] })),
         "log_ui_error" => {

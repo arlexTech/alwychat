@@ -10,4 +10,4 @@ cd "$(dirname "$0")/.."
 [ -f .dev-web.env ] && source .dev-web.env
 : "${ALWY_DEV_HOST:?set ALWY_DEV_HOST (the https name of the dev server) in app/.dev-web.env}"
 [ -f src/lib/backend/wasm/alwy_web.js ] || PROFILE=${PROFILE:-release} scripts/build-wasm.sh
-ALWY_WEB=1 ALWY_DEV_HOST="$ALWY_DEV_HOST" pnpm vite dev
+ALWY_WEB=1 VITE_ALWY_WEB=1 ALWY_DEV_HOST="$ALWY_DEV_HOST" pnpm vite dev

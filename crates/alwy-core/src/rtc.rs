@@ -15,7 +15,7 @@ use std::time::Duration;
 use matrix_sdk::{
     Room,
     ruma::{
-        OwnedRoomId,
+        OwnedEventId, OwnedRoomId, OwnedUserId, UserId,
         api::client::{
             delayed_events::{
                 DelayParameters, delayed_state_event,
@@ -62,8 +62,14 @@ pub enum CallSignal {
         /// When the ring stops on its own (ms since epoch).
         expires_at: u64,
     },
-    /// Our ring was declined.
-    Declined { room_id: String },
+    /// Our ring was declined (by `user_id`).
+    Declined { room_id: String, user_id: String },
+    /// Our ring is ringing on one of `user_id`'s devices (only AlwyChat says so).
+    Ringing {
+        room_id: String,
+        user_id: String,
+        device_id: String,
+    },
 }
 
 pub(crate) type CallSignalHandler = Box<dyn Fn(CallSignal) + Send + Sync>;
@@ -88,6 +94,9 @@ type DelayId = std::sync::Arc<std::sync::Mutex<Option<String>>>;
 pub(crate) struct ActiveCall {
     room: Room,
     state_key: String,
+    /// Our membership event: rings relate to it.
+    member_event: OwnedEventId,
+    video: bool,
     delay_id: DelayId,
     heartbeat: crate::rt::AbortHandle,
     /// Sharing our media key (encrypted rooms).
@@ -193,7 +202,7 @@ impl crate::Core {
             .iter()
             .any(|u| *u != user);
         if !others_in_call && room.is_direct().await.unwrap_or(false) {
-            ring(&room, &member_event, video).await;
+            ring(&room, &member_event, video, None).await;
         }
         let heartbeat = crate::rt::spawn(heartbeat(
             room.clone(),
@@ -211,6 +220,8 @@ impl crate::Core {
         *self.call.lock().await = Some(ActiveCall {
             room,
             state_key,
+            member_event,
+            video,
             delay_id,
             heartbeat,
             keys,
@@ -263,6 +274,56 @@ impl crate::Core {
         Ok(())
     }
 
+    /// Ring one person into the call we're in (a voice channel or group call): only their
+    /// devices ring. They must be in the room to get it.
+    pub async fn ring_user(&self, user_id: &str) -> Result<()> {
+        let user = OwnedUserId::try_from(user_id).map_err(|_| Error::Call("bad user ID".into()))?;
+        let (room, member_event, video) = {
+            let call = self.call.lock().await;
+            let call = call
+                .as_ref()
+                .ok_or_else(|| Error::Call("not in a call".into()))?;
+            (call.room.clone(), call.member_event.clone(), call.video)
+        };
+        if !ring(&room, &member_event, video, Some(&user)).await {
+            return Err(Error::Call("couldn't ring".into()));
+        }
+        Ok(())
+    }
+
+    /// Whether a ring in `room_id` should go on ringing, asked of the server (a phone woken by a
+    /// push doesn't sync): Some(false) once nobody else is in the call any more (the caller hung
+    /// up) or one of our own devices joined it (answered elsewhere); None if the server can't be
+    /// asked (keep ringing).
+    pub async fn ring_still_on(&self, room_id: &str) -> Option<bool> {
+        use matrix_sdk::ruma::api::client::state::get_state_events::v3 as state;
+        let room = self.room(room_id).ok()?;
+        let client = room.client();
+        let own = client.user_id()?.to_owned();
+        let response = client
+            .send(state::Request::new(room.room_id().to_owned()))
+            .await
+            .ok()?;
+        let mut others = false;
+        for event in &response.room_state {
+            if event.get_field::<String>("type").ok().flatten().as_deref() != Some(CALL_MEMBER) {
+                continue;
+            }
+            let Ok(Some(content)) = event.get_field::<serde_json::Value>("content") else {
+                continue;
+            };
+            if !in_call(&content) {
+                continue;
+            }
+            match event.get_field::<OwnedUserId>("sender").ok().flatten() {
+                Some(sender) if sender == own => return Some(false),
+                Some(_) => others = true,
+                None => {}
+            }
+        }
+        Some(others)
+    }
+
     /// The room of the call we're in.
     pub async fn current_call(&self) -> Option<OwnedRoomId> {
         self.call
@@ -273,15 +334,26 @@ impl crate::Core {
     }
 }
 
-/// Ring the other side (new and older Element formats). Best effort: the call still works.
-async fn ring(room: &Room, member_event: &matrix_sdk::ruma::EventId, video: bool) {
+/// Ring the other side (new and older Element formats): everyone in the room, or only `target`
+/// (its mention also makes the homeserver push it to them). Best effort: the call still works.
+/// True if at least one format went out.
+async fn ring(
+    room: &Room,
+    member_event: &matrix_sdk::ruma::EventId,
+    video: bool,
+    target: Option<&UserId>,
+) -> bool {
     let now = matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now();
     let intent = if video { "video" } else { "audio" };
+    let mentions = match target {
+        Some(user) => json!({ "user_ids": [user], "room": false }),
+        None => json!({ "user_ids": [], "room": true }),
+    };
     let notification = json!({
         "notification_type": "ring",
         "sender_ts": now,
         "lifetime": RING_LIFETIME.as_millis() as u64,
-        "m.mentions": { "user_ids": [], "room": true },
+        "m.mentions": mentions,
         "m.relates_to": { "rel_type": "m.reference", "event_id": member_event },
         "m.call.intent": intent,
     });
@@ -289,17 +361,106 @@ async fn ring(room: &Room, member_event: &matrix_sdk::ruma::EventId, video: bool
         "application": "m.call",
         "call_id": "",
         "notify_type": "ring",
-        "m.mentions": { "user_ids": [], "room": true },
+        "m.mentions": mentions,
     });
+    let mut sent = false;
     for (kind, content) in [(RTC_NOTIFICATION, notification), (CALL_NOTIFY, legacy)] {
-        if let Err(e) = room.send_raw(kind, content).await {
-            warn!("couldn't ring ({kind}): {e}");
+        match room.send_raw(kind, content).await {
+            // Known at once: an answer ("ringing", "declined") can come before our own copy.
+            Ok(r) => {
+                OUR_RINGS
+                    .lock()
+                    .unwrap()
+                    .insert(r.response.event_id.to_string());
+                sent = true;
+            }
+            Err(e) => warn!("couldn't ring ({kind}): {e}"),
         }
     }
+    sent
+}
+
+/// Tell the caller's devices that their ring is ringing here (`CallSignal::Ringing` there).
+/// Plain to-device: it says nothing the server doesn't know, and needs no encryption session.
+async fn say_ringing(
+    client: &matrix_sdk::Client,
+    room_id: &matrix_sdk::ruma::RoomId,
+    caller: &UserId,
+    notification_id: &str,
+) {
+    use matrix_sdk::ruma::{
+        TransactionId,
+        api::client::to_device::send_event_to_device::v3 as send,
+        events::{AnyToDeviceEventContent, ToDeviceEventType},
+        to_device::DeviceIdOrAllDevices,
+    };
+    let Some(device) = client.device_id() else {
+        return;
+    };
+    let content = json!({
+        "room_id": room_id,
+        "notification_id": notification_id,
+        "device_id": device,
+    });
+    let Ok(content) = Raw::new(&content) else {
+        return;
+    };
+    let messages = [(
+        caller.to_owned(),
+        [(
+            DeviceIdOrAllDevices::AllDevices,
+            content.cast_unchecked::<AnyToDeviceEventContent>(),
+        )]
+        .into(),
+    )]
+    .into();
+    let request = send::Request::new_raw(
+        ToDeviceEventType::from(crate::names::CALL_RINGING),
+        TransactionId::new(),
+        messages,
+    );
+    if let Err(e) = client.send(request).await {
+        warn!("couldn't tell the caller it rings: {e}");
+    }
+}
+
+/// `say_ringing` in the background: the ring shows meanwhile.
+pub(crate) fn say_ringing_soon(
+    client: &matrix_sdk::Client,
+    room_id: &matrix_sdk::ruma::RoomId,
+    caller: &UserId,
+    notification_id: &str,
+) {
+    let (client, room_id, caller, id) = (
+        client.clone(),
+        room_id.to_owned(),
+        caller.to_owned(),
+        notification_id.to_owned(),
+    );
+    crate::rt::spawn(async move {
+        say_ringing(&client, &room_id, &caller, &id).await;
+    });
+}
+
+#[derive(Deserialize)]
+struct RingingContent {
+    room_id: String,
+    notification_id: String,
+    device_id: String,
+}
+
+#[derive(Deserialize)]
+struct Mentions {
+    #[serde(default)]
+    user_ids: Vec<OwnedUserId>,
+    #[serde(default)]
+    room: bool,
 }
 
 #[derive(Deserialize)]
 struct NotificationContent {
+    #[serde(rename = "m.mentions", default)]
+    mentions: Option<Mentions>,
     #[serde(default)]
     notification_type: Option<String>,
     #[serde(default)]
@@ -332,6 +493,7 @@ pub(crate) fn install(
     client: &matrix_sdk::Client,
     handler: std::sync::Arc<std::sync::Mutex<Option<CallSignalHandler>>>,
 ) {
+    let ringing_handler = handler.clone();
     client.add_event_handler(
         move |event: Raw<matrix_sdk::ruma::events::AnySyncTimelineEvent>, room: Room| {
             let handler = handler.clone();
@@ -342,6 +504,33 @@ pub(crate) fn install(
                 if let Some(handler) = handler.lock().unwrap().as_ref() {
                     handler(signal);
                 }
+            }
+        },
+    );
+    // "It's ringing" from the people we ring.
+    client.add_event_handler(
+        move |event: Raw<matrix_sdk::ruma::events::AnyToDeviceEvent>| async move {
+            if event.get_field::<String>("type").ok().flatten().as_deref()
+                != Some(crate::names::CALL_RINGING)
+            {
+                return;
+            }
+            let (Ok(Some(sender)), Ok(Some(content))) = (
+                event.get_field::<OwnedUserId>("sender"),
+                event.get_field::<RingingContent>("content"),
+            ) else {
+                return;
+            };
+            if !OUR_RINGS.lock().unwrap().contains(&content.notification_id) {
+                return;
+            }
+            let signal = CallSignal::Ringing {
+                room_id: content.room_id,
+                user_id: sender.to_string(),
+                device_id: content.device_id,
+            };
+            if let Some(handler) = ringing_handler.lock().unwrap().as_ref() {
+                handler(signal);
             }
         },
     );
@@ -363,7 +552,7 @@ async fn call_signal(
                 OUR_RINGS.lock().unwrap().insert(event_id);
                 return None;
             }
-            let (video, expires_at) = fresh_ring(event)?;
+            let (video, expires_at) = fresh_ring(event, room.own_user_id())?;
             // Ringing with both formats: the legacy one is ignored if the other came first.
             if !RECENT_RINGS
                 .lock()
@@ -378,6 +567,7 @@ async fn call_signal(
             {
                 return None;
             }
+            say_ringing_soon(&room.client(), room.room_id(), &sender, &event_id);
             let member = room.get_member_no_sync(&sender).await.ok().flatten();
             Some(CallSignal::Ring {
                 room_id: room.room_id().to_string(),
@@ -399,16 +589,28 @@ async fn call_signal(
                 .contains(&content.relates_to.event_id)
                 .then(|| CallSignal::Declined {
                     room_id: room.room_id().to_string(),
+                    user_id: sender.to_string(),
                 })
         }
         _ => None,
     }
 }
 
-/// A ring that is still ringing: (video call, expiry in ms since epoch). Old rings come in with
-/// the backlog after a restart, and a push can arrive late: only fresh ones count.
+/// A call membership's content means "in the call": the per-device form (non-empty), or the
+/// older list form with at least one entry.
+fn in_call(content: &serde_json::Value) -> bool {
+    match content.get("memberships") {
+        Some(list) => list.as_array().is_some_and(|l| !l.is_empty()),
+        None => content.as_object().is_some_and(|o| !o.is_empty()),
+    }
+}
+
+/// A ring for `own` that is still ringing: (video call, expiry in ms since epoch). Old rings come
+/// in with the backlog after a restart, and a push can arrive late: only fresh ones count. A ring
+/// naming people (ringing someone into a voice channel) is only for them.
 pub(crate) fn fresh_ring(
     event: &Raw<matrix_sdk::ruma::events::AnySyncTimelineEvent>,
+    own: &UserId,
 ) -> Option<(bool, u64)> {
     let kind = event.get_field::<String>("type").ok()??;
     if !matches!(
@@ -419,6 +621,13 @@ pub(crate) fn fresh_ring(
     }
     let content: NotificationContent = event.get_field("content").ok()??;
     if content.notification_type.or(content.notify_type)? != "ring" {
+        return None;
+    }
+    if let Some(m) = &content.mentions
+        && !m.room
+        && !m.user_ids.is_empty()
+        && !m.user_ids.iter().any(|u| u == own)
+    {
         return None;
     }
     let sent = event
@@ -523,8 +732,13 @@ async fn heartbeat(room: Room, state_key: String, membership: serde_json::Value,
 
 #[cfg(test)]
 mod tests {
-    use super::fresh_ring;
-    use matrix_sdk::ruma::serde::Raw;
+    use matrix_sdk::ruma::{UserId, serde::Raw};
+
+    fn fresh_ring(
+        event: &Raw<matrix_sdk::ruma::events::AnySyncTimelineEvent>,
+    ) -> Option<(bool, u64)> {
+        super::fresh_ring(event, <&UserId>::try_from("@me:x").unwrap())
+    }
 
     fn event(
         kind: &str,
@@ -576,6 +790,37 @@ mod tests {
             fresh_ring(&event("m.rtc.notification", t, long)),
             Some((false, t + 120_000))
         );
+    }
+
+    #[test]
+    fn memberships() {
+        use serde_json::json;
+        assert!(super::in_call(
+            &json!({ "application": "m.call", "device_id": "D" })
+        ));
+        assert!(!super::in_call(&json!({})));
+        assert!(super::in_call(
+            &json!({ "memberships": [{ "device_id": "D" }] })
+        ));
+        assert!(!super::in_call(&json!({ "memberships": [] })));
+    }
+
+    #[test]
+    fn a_ring_for_someone_else() {
+        let t = now() - 1_000;
+        let mine = serde_json::json!({ "notification_type": "ring", "lifetime": 30_000,
+            "m.mentions": { "user_ids": ["@me:x"], "room": false } });
+        assert!(fresh_ring(&event("m.rtc.notification", t, mine)).is_some());
+        let theirs = serde_json::json!({ "notification_type": "ring", "lifetime": 30_000,
+            "m.mentions": { "user_ids": ["@other:x"], "room": false } });
+        assert_eq!(fresh_ring(&event("m.rtc.notification", t, theirs)), None);
+        // Everyone (a 1:1 call), or no names at all.
+        let all = serde_json::json!({ "notification_type": "ring", "lifetime": 30_000,
+            "m.mentions": { "user_ids": [], "room": true } });
+        assert!(fresh_ring(&event("m.rtc.notification", t, all)).is_some());
+        let unnamed =
+            serde_json::json!({ "notify_type": "ring", "lifetime": 30_000, "m.mentions": {} });
+        assert!(fresh_ring(&event("org.matrix.msc4075.call.notify", t, unnamed)).is_some());
     }
 
     #[test]

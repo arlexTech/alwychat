@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { encryption } from "$lib/stores/encryption.svelte";
   import Copy from "@lucide/svelte/icons/copy";
   import LinkIcon from "@lucide/svelte/icons/link";
   import { viewOnce } from "$lib/stores/viewOnce.svelte";
@@ -59,6 +60,7 @@
     onThread,
     onForward,
     onSelect,
+    onProfile,
     album = null,
     wide = false,
   }: {
@@ -70,6 +72,8 @@
     showSender: boolean;
     quickReaction: string;
     onReact: (key: string) => void;
+    /** Their photo or name tapped (groups): open their profile. */
+    onProfile?: (userId: string) => void;
     onReply: () => void;
     onJumpTo: (eventId: string) => void;
     onUnlock: () => void;
@@ -157,7 +161,18 @@
       case "redacted":
         return tr("Message deleted");
       case "unable_to_decrypt":
-        return tr("🔒 Can't read this message yet");
+        // Unlocking this device (or its key backup) can still bring it; otherwise say why not.
+        if (canUnlock) return tr("🔒 Can't read this message yet");
+        switch (c.reason) {
+          case "before_joined":
+            return tr("🔒 Sent before you joined this chat");
+          case "withheld":
+            return tr("🔒 The sender didn't share this message with this device");
+          case "unverified_sender":
+            return tr("🔒 Sent from a device that isn't verified");
+          default:
+            return tr("🔒 This device doesn't have the key for this message");
+        }
       case "unsupported":
         return tr("Unsupported message");
     }
@@ -219,6 +234,8 @@
     }
   }
 
+  /** Unlocking this device, or its key backup, could still decrypt locked messages. */
+  const canUnlock = $derived(encryption.locked || encryption.backupMissing);
   const muted = $derived(["redacted", "unable_to_decrypt", "unsupported"].includes(c.kind));
   const big = $derived((msg.only_emojis || onlyCustomEmoji) && c.kind === "text" && !msg.reply_to);
   /** Photos, videos, albums and stickers are drawn without a bubble background (not a
@@ -268,8 +285,25 @@
       if (swipeX >= SWIPE_REPLY) onReply();
       swiping = false;
       swipeX = 0;
+      gestureEnded = Date.now();
+    }
+    if (peeking) {
+      // Pulled far enough: the date and time stay under the message.
+      if (peekX >= PEEK_KEEP) timeShown = true;
+      peeking = false;
+      peekX = 0;
+      gestureEnded = Date.now();
     }
   }
+
+  // Swipe left: the time slides out from behind the message (any message, even one that's only
+  // a link, where a tap opens the link instead). Pulled far enough, the full date stays under it.
+  const PEEK_KEEP = 56;
+  const PEEK_MAX = 72;
+  let peeking = $state(false);
+  let peekX = $state(0);
+  /** The click that follows a swipe isn't a tap. */
+  let gestureEnded = 0;
 
   // Swipe right to reply (touch). Horizontal moves are ours; vertical ones scroll the timeline.
   const SWIPE_REPLY = 56;
@@ -284,6 +318,17 @@
     if (!swiping && msg.can_reply && dx > 12 && dx > Math.abs(dy) * 1.5) {
       swiping = true;
       (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    }
+    if (!swiping && !peeking && dx < -12 && -dx > Math.abs(dy) * 1.5) {
+      peeking = true;
+      (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    }
+    if (peeking) {
+      const pull = Math.max(0, -dx);
+      const next = pull <= PEEK_MAX ? pull : PEEK_MAX + (pull - PEEK_MAX) * 0.2;
+      if (peekX < PEEK_KEEP && next >= PEEK_KEEP) navigator.vibrate?.(8);
+      peekX = next;
+      return;
     }
     if (!swiping) return;
     // Rubber band past the max, a tick when crossing the threshold.
@@ -308,7 +353,8 @@
   let timeShown = $state(false);
   function toggleTime(event: MouseEvent) {
     const target = event.target as HTMLElement;
-    if (swiping || target.closest("a, button, input, video, audio, [data-mx-spoiler]:not(.revealed)")) return;
+    if (swiping || peeking || Date.now() - gestureEnded < 400) return;
+    if (target.closest("a, button, input, video, audio, [data-mx-spoiler]:not(.revealed)")) return;
     afterTap(() => (timeShown = !timeShown));
   }
 
@@ -384,7 +430,9 @@
   {#if wide}
     <div class="avatar-slot">
       {#if first}
-        <Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={36} />
+        <button class="who" onclick={() => onProfile?.(msg.sender)} aria-label={tr("{name}'s profile", { name: msg.sender_name })}>
+          <Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={36} />
+        </button>
       {:else}
         <time class="gutter-time">{clockTime(msg.timestamp)}</time>
       {/if}
@@ -398,16 +446,21 @@
   <div class="stack">
     {#if wide && first}
       <div class="head">
-        <strong>{msg.sender_name}</strong>
+        <button class="who name" onclick={() => onProfile?.(msg.sender)}><strong>{msg.sender_name}</strong></button>
         <time title={messageStamp(msg.timestamp)}>{messageStamp(msg.timestamp)}</time>
       </div>
     {:else if showSender && !msg.is_own && first}
-      <span class="sender">{msg.sender_name}</span>
+      <button class="who sender" onclick={() => onProfile?.(msg.sender)}>{msg.sender_name}</button>
     {/if}
 
     <div class="line">
       {#if !wide && showSender && !msg.is_own && last}
-        <span class="side-avatar"><Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={28} /></span>
+        <button class="who side-avatar" onclick={() => onProfile?.(msg.sender)} aria-label={tr("{name}'s profile", { name: msg.sender_name })}>
+          <Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={28} />
+        </button>
+      {/if}
+      {#if peekX > 0}
+        <span class="peek-time" style:opacity={Math.min(1, peekX / PEEK_KEEP)}>{clockTime(msg.timestamp)}</span>
       {/if}
       {#if swipeX > 0}
         <span class="swipe-reply" style:opacity={Math.min(1, swipeX / SWIPE_REPLY)} style:scale={swipeX >= SWIPE_REPLY ? 1.15 : 0.8 + (swipeX / SWIPE_REPLY) * 0.2}><Reply size={16} /></span>
@@ -425,8 +478,8 @@
         title={clockTime(msg.timestamp)}
         onclick={toggleTime}
         ondblclick={() => (clearTimeout(tapTimer), canReact && heart())}
-        class:swiping
-        style:transform={swipeX ? `translateX(${swipeX}px)` : undefined}
+        class:swiping={swiping || peeking}
+        style:transform={swipeX || peekX ? `translateX(${swipeX - peekX}px)` : undefined}
         oncontextmenu={openMenu}
         onpointerdown={pressStart}
         onpointerup={pressEnd}
@@ -542,7 +595,7 @@
         {#if (c.kind === "text" || c.kind === "notice") && c.link}
           <LinkPreview url={c.link} />
         {/if}
-        {#if c.kind === "unable_to_decrypt"}
+        {#if c.kind === "unable_to_decrypt" && canUnlock}
           <button class="unlock" onclick={onUnlock}>{tr("Unlock")}</button>
         {/if}
         {#if msg.is_edited}
@@ -1365,6 +1418,46 @@
   }
   .bubble.swiping {
     transition: none;
+  }
+  /* Behind the message, on its right: uncovered as the message slides left. */
+  .peek-time {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    translate: 0 -50%;
+    padding-left: 6px;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .who {
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .who:active {
+    opacity: 0.7;
+  }
+  /* A tap leaves the button focused (coming back from the profile showed Android's blue ring):
+     a ring only for keyboard use, in our colour. */
+  .who:focus {
+    outline: none;
+  }
+  .who:focus-visible {
+    outline: 2px solid var(--accent-a);
+    outline-offset: 2px;
+    border-radius: 999px;
+  }
+  .who.sender {
+    text-align: left;
+    font-size: 0.78rem;
+    color: var(--muted);
   }
   .swipe-reply {
     position: absolute;

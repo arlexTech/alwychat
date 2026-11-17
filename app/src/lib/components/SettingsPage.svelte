@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageStamp } from "$lib/format";
   import { peek, remember } from "$lib/cache";
   import Bug from "@lucide/svelte/icons/bug";
   import { emojiStyle } from "$lib/stores/emojiStyle.svelte";
@@ -181,6 +182,24 @@
     ];
     if (!t.token) return steps;
     steps.push({ label: tr("Your server knows this phone"), ok: !!t.registered, hint: t.registered ? undefined : "The registration didn't stick; try again in a moment." });
+    if (t.internal) {
+      // A private gateway (only the homeserver reaches it): the phone can't send
+      // through it. Proof instead: the last real notification that arrived, and a sample.
+      steps.push({
+        label: tr("This phone shows notifications"),
+        ok: t.sample_shown,
+        hint: t.sample_shown ? tr("A sample notification should be on screen now.") : tr("The sample notification couldn't be shown."),
+      });
+      const recent = t.last_push > 0 && Date.now() - t.last_push < 14 * 24 * 3600 * 1000;
+      steps.push({
+        label: t.last_push ? tr("Last notification from your server: {when}", { when: messageStamp(t.last_push) }) : tr("No notification from your server yet"),
+        ok: t.last_push ? recent : null,
+        hint: recent
+          ? tr("Your server, its push service and Google all reach this phone.")
+          : tr("To check the whole way, ask someone to send you a message while AlwyChat is closed."),
+      });
+      return steps;
+    }
     steps.push({
       label: tr("Push gateway → Google → this phone"),
       ok: !!t.gateway_ok && !t.rejected,
@@ -411,7 +430,7 @@
     if (isAndroid) setupPush(on).catch((e) => (error = `Push: ${e}`));
   }
 
-  async function fix(what: "notifications" | "battery" | "backgroundData") {
+  async function fix(what: "notifications" | "battery" | "backgroundData" | "fullScreenCalls") {
     error = null;
     try {
       system = await systemStatus(what);
@@ -559,6 +578,18 @@
           </small>
         </span>
         {#if !system.backgroundData}<button onclick={() => fix("backgroundData")}>{tr("Allow")}</button>{/if}
+      </div>
+      <div class="check">
+        <span class="mark" class:ok={system.fullScreenCalls}>{system.fullScreenCalls ? "✓" : "!"}</span>
+        <span>
+          <strong>{tr("Full-screen calls")}</strong>
+          <small>
+            {system.fullScreenCalls
+              ? tr("Incoming calls show over the lock screen.")
+              : tr("Incoming calls only show as a small banner on the locked phone.")}
+          </small>
+        </span>
+        {#if !system.fullScreenCalls}<button onclick={() => fix("fullScreenCalls")}>{tr("Allow")}</button>{/if}
       </div>
     {/if}
 

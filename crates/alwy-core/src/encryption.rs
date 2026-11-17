@@ -10,8 +10,8 @@ use futures_util::{StreamExt, stream};
 use matrix_sdk::{
     Client,
     encryption::{
-        VerificationState,
-        recovery::RecoveryState,
+        CrossSigningResetAuthType, VerificationState,
+        recovery::{IdentityResetHandle, RecoveryState},
         verification::{
             QrVerification, QrVerificationData, QrVerificationState, SasState, SasVerification,
             VerificationRequest, VerificationRequestState,
@@ -98,6 +98,8 @@ pub(crate) struct Verifications {
     last: Mutex<Option<VerificationUpdate>>,
     /// This device has a camera to scan QR codes (the UI says so).
     can_scan: AtomicBool,
+    /// "Start fresh": the identity reset waiting for the server's approval.
+    reset: Mutex<Option<Arc<IdentityResetHandle>>>,
 }
 
 /// The single verification in progress.
@@ -502,6 +504,60 @@ impl crate::Core {
             .map_err(|e| Error::Encryption(e.to_string()))
     }
 
+    /// "Start fresh": new encryption keys for the account, made on this device, which is then
+    /// trusted. For accounts without recovery, when no other device is at hand. Our other devices
+    /// must then be confirmed again, and older encrypted messages stay unreadable here.
+    /// Returns the page where the server asks to approve it (MAS), or None when already done;
+    /// then [`Core::finish_identity_reset`] waits for that approval.
+    pub async fn begin_identity_reset(&self) -> Result<Option<String>> {
+        let (client, hub) = self.with_active(|a| (a.client.clone(), a.verifications.clone()))?;
+        let handle = client
+            .encryption()
+            .recovery()
+            .reset_identity()
+            .await
+            .map_err(|e| Error::Encryption(e.to_string()))?;
+        let Some(handle) = handle else {
+            return Ok(None);
+        };
+        let url = match handle.auth_type() {
+            CrossSigningResetAuthType::OAuth(info) => info.approval_url.to_string(),
+            CrossSigningResetAuthType::Uiaa(_) => {
+                return Err(Error::Encryption(
+                    "this server asks for a password to reset encryption".into(),
+                ));
+            }
+        };
+        *hub.reset.lock().unwrap() = Some(Arc::new(handle));
+        Ok(Some(url))
+    }
+
+    /// Wait (up to 2 minutes, the SDK's limit) until the reset has been approved and the new keys
+    /// are uploaded.
+    pub async fn finish_identity_reset(&self) -> Result<()> {
+        let hub = self.with_active(|a| a.verifications.clone())?;
+        let handle = hub.reset.lock().unwrap().clone();
+        let Some(handle) = handle else {
+            return Err(Error::Encryption("no reset in progress".into()));
+        };
+        let result = handle.reset(None).await;
+        let mut slot = hub.reset.lock().unwrap();
+        if slot.as_ref().is_some_and(|h| Arc::ptr_eq(h, &handle)) {
+            *slot = None;
+        }
+        result.map_err(|e| Error::Encryption(e.to_string()))
+    }
+
+    pub async fn cancel_identity_reset(&self) {
+        let Ok(hub) = self.with_active(|a| a.verifications.clone()) else {
+            return;
+        };
+        let handle = hub.reset.lock().unwrap().take();
+        if let Some(handle) = handle {
+            handle.cancel().await;
+        }
+    }
+
     /// Ask our other devices to verify this one with emoji.
     pub async fn verify_this_device(&self) -> Result<()> {
         let (client, hub) = self.with_active(|a| (a.client.clone(), a.verifications.clone()))?;
@@ -702,4 +758,36 @@ mod tests {
         assert_eq!(super::find_qr(64, 64, &[128; 64 * 64]), None);
         assert_eq!(super::find_qr(64, 64, &[0; 10]), None);
     }
+}
+
+/// Chats whose keys were fetched from the key backup in this run (or are being fetched).
+static BACKUP_FETCHED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashSet<matrix_sdk::ruma::OwnedRoomId>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// A chat shows a message we can't decrypt: fetch the chat's keys from the key backup, once per
+/// run. The SDK only asks the backup when decryption fails, so messages that failed while this
+/// device was still locked (before the recovery key was entered) were never looked up again.
+/// Imported keys make the timeline decrypt those messages again by itself.
+pub(crate) fn fetch_backup_keys_once(room: &matrix_sdk::Room) {
+    let id = room.room_id().to_owned();
+    if !BACKUP_FETCHED.lock().unwrap().insert(id.clone()) {
+        return;
+    }
+    let client = room.client();
+    crate::rt::spawn(async move {
+        let backups = client.encryption().backups();
+        if !backups.are_enabled().await {
+            // Locked: try again once it's unlocked.
+            BACKUP_FETCHED.lock().unwrap().remove(&id);
+            return;
+        }
+        match backups.download_room_keys_for_room(&id).await {
+            Ok(()) => tracing::info!(room = %id, "fetched the chat's keys from the key backup"),
+            Err(e) => {
+                warn!(room = %id, "couldn't fetch keys from the key backup: {e}");
+                BACKUP_FETCHED.lock().unwrap().remove(&id);
+            }
+        }
+    });
 }

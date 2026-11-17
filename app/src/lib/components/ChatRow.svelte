@@ -14,6 +14,7 @@
   import { profiles } from "$lib/stores/profiles.svelte";
   import Avatar from "./Avatar.svelte";
   import { saved } from "$lib/stores/saved.svelte";
+  import { chat } from "$lib/stores/chat.svelte";
 
   let {
     room,
@@ -27,6 +28,9 @@
     oncontextmenu?: (event: MouseEvent) => void;
   } = $props();
 
+  // About to be opened (pointed at, pressed): its latest messages are fetched before the click.
+  const ready = () => !selected && !room.is_invite && !room.is_space && chat.warm(room.id, true);
+
   const unread = $derived(room.unread_messages > 0 || room.marked_unread || room.is_invite);
   // Telegram-style: an unsent draft replaces the preview (not on the chat being typed in).
   const draft = $derived(selected ? undefined : drafts.get(room.id));
@@ -38,7 +42,7 @@
   });
 </script>
 
-<button class="row" class:selected class:unread class:muted={room.is_muted} data-room={room.id} {onclick} {oncontextmenu}>
+<button class="row" class:selected class:unread class:muted={room.is_muted} data-room={room.id} {onclick} {oncontextmenu} onpointerenter={ready} onpointerdown={ready}>
   <span class="avatar">
     <Avatar name={room.name} mxc={room.avatar} size={52} saved={saved.is(room.id)} />
     {#if room.is_dm && presence.online(room.dm_user)}<span class="online" title={tr("Online")}></span>{/if}

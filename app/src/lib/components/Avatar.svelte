@@ -20,6 +20,9 @@
   } = $props();
 
   let failed = $state(false);
+  /** The photo is on screen: no coloured backdrop behind it any more (it showed as a ring
+   * around round photos with transparent corners). */
+  let loaded = $state(false);
   const src = $derived(failed ? null : mediaUrl(mxc, size));
 
   // Stable per-name hue so fallbacks are colourful but consistent.
@@ -28,6 +31,7 @@
   $effect(() => {
     mxc; // retry when the avatar changes
     failed = false;
+    loaded = false;
   });
 </script>
 
@@ -35,6 +39,7 @@
   class="avatar"
   class:square
   class:saved
+  class:loaded={loaded && !!src}
   style:width="{size}px"
   style:height="{size}px"
   style:font-size="{size * 0.4}px"
@@ -43,7 +48,7 @@
   {#if saved && !src}
     <Bookmark size={size * 0.46} fill="currentColor" />
   {:else if src}
-    <img {src} alt="" loading="lazy" decoding="async" onerror={() => (failed = true)} />
+    <img {src} alt="" loading="lazy" decoding="async" onload={() => (loaded = true)} onerror={() => (failed = true)} />
   {:else}
     {initials(name)}
   {/if}
@@ -68,6 +73,9 @@
     color: white;
     background: linear-gradient(135deg, hsl(var(--h) 70% 58%), hsl(calc(var(--h) + 40) 75% 52%));
     user-select: none;
+  }
+  .avatar.loaded {
+    background: none;
   }
   img {
     width: 100%;

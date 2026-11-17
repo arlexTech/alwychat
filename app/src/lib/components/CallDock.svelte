@@ -10,7 +10,9 @@
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import PhoneOff from "@lucide/svelte/icons/phone-off";
   import { slide } from "svelte/transition";
+  import PhoneCall from "@lucide/svelte/icons/phone-call";
   import { call } from "$lib/stores/call.svelte";
+  import { chatList } from "$lib/stores/chatList.svelte";
 
   /** The call's controls while the call screen is closed (Discord's voice panel): under the
    * chat list, and on narrow screens (one row) also above the composer of an open chat, where
@@ -23,9 +25,12 @@
       : call.status === "reconnecting"
         ? tr("Reconnecting…")
         : call.calling
-          ? tr("Calling…")
+          ? call.ringingDevices.length
+            ? tr("Ringing…")
+            : tr("Calling…")
           : tr("Connected"),
   );
+  const canRing = $derived(!!call.roomId && chatList.rooms.find((r) => r.id === call.roomId)?.is_dm === false);
 </script>
 
 {#if call.active && call.minimized && (!inChat || compact)}
@@ -60,6 +65,9 @@
       </button>
       {#if call.canShareScreen}
         <button class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-pressed={call.screenOn} aria-label={tr("Share screen")} title={tr("Share screen")}><MonitorUp size={19} /></button>
+      {/if}
+      {#if canRing}
+        <button onclick={() => ((call.ringPanel = true), (call.minimized = false))} aria-label={tr("Ring someone")} title={tr("Ring someone")}><PhoneCall size={19} /></button>
       {/if}
     </div>{/if}
   </section>

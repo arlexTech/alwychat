@@ -31,6 +31,7 @@
     setRoomName,
     setRoomTopic,
     spaceRoomsJoined,
+    userProfile,
     type RoomDetails,
   } from "$lib/backend";
   import { chatList } from "$lib/stores/chatList.svelte";
@@ -157,6 +158,23 @@
     if (mutes.roomUntil(room.id)) await mutes.unmuteRoom(room.id);
     await setNotifyMode(room.id, mode);
   }
+
+  /** The other person's own profile photo (1:1 chats). */
+  let dmUserPhoto = $state<string | null>(null);
+  $effect(() => {
+    const other = room.is_dm ? chatList.rooms.find((r) => r.id === room.id)?.dm_user : null;
+    if (other) userProfile(other).then((p) => (dmUserPhoto = p.avatar), () => {});
+  });
+  /** Just removed: hidden at once (the details only change once the server's copy syncs back). */
+  let removed = $state(false);
+  const photo = $derived(removed ? null : room.avatar);
+  /** A 1:1 chat without its own photo shows the other person's (as in the chat list). The list's
+   * summary still has the old chat photo right after a removal: then their profile photo. */
+  const dmPhoto = $derived.by(() => {
+    if (!room.is_dm || photo) return null;
+    const summary = chatList.rooms.find((r) => r.id === room.id)?.avatar ?? null;
+    return summary && summary !== room.avatar ? summary : (dmUserPhoto ?? null);
+  });
 </script>
 
 {#if part === "header"}
@@ -174,10 +192,10 @@
   <div class="header">
     <AvatarEdit
       name={room.name}
-      mxc={room.avatar}
+      mxc={photo ?? dmPhoto}
       square={room.is_space}
       disabled={!may("m.room.avatar")}
-      onPicked={(data) => act(() => setRoomAvatar(room.id, data))}
+      onPicked={(data) => ((removed = false), act(() => setRoomAvatar(room.id, data)))}
     />
     {#if editing}
       <input class="m-input" bind:value={editing.name} placeholder={room.is_dm ? tr("Chat name (empty: their name)") : tr("Name")} maxlength="80" disabled={!may("m.room.name")} />
@@ -201,8 +219,11 @@
           {#if may("m.room.name")}
             <button class="edit" onclick={() => (editing = { name: room.has_name ? room.name : "", topic: "" })}><Pencil size={14} /> {room.has_name ? tr("Rename chat") : tr("Name this chat")}</button>
           {/if}
-          {#if room.avatar && may("m.room.avatar")}
-            <button class="edit" onclick={() => act(() => setRoomAvatar(room.id, null))}><X size={14} /> {tr("Remove chat photo")}</button>
+          {#if !photo && dmPhoto}
+            <p class="no-photo">{tr("No chat photo: their profile photo is shown")}</p>
+          {/if}
+          {#if photo && may("m.room.avatar")}
+            <button class="edit" onclick={() => act(() => setRoomAvatar(room.id, null)).then(() => (removed = !error))}><X size={14} /> {tr("Remove chat photo")}</button>
           {/if}
         </div>
       {:else if may("m.room.name") || may("m.room.topic")}
@@ -357,6 +378,13 @@
 {/if}
 
 <style>
+  .no-photo {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
   .banner {
     position: relative;
     aspect-ratio: 3;

@@ -49,7 +49,8 @@ class FileArgs {
 
 @InvokeArg
 class PickArgs {
-  /** "media": the system photo picker (photos + videos); "files": any document. */
+  /** "media": the system photo picker (photos + videos, several); "photo": ONE photo (avatars,
+   * banners, emoji); "files": any document. */
   var kind: String = "media"
   /** Where to copy the picked files (the Rust side sends them from there, then deletes them). */
   lateinit var dir: String
@@ -131,12 +132,17 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     }.start()
   }
 
-  /** Opens the system picker (several items at once); no storage permission needed. */
+  /** Opens the system picker (several items at once, except "photo"); no storage permission needed. */
   @Command
   fun pick(invoke: Invoke) {
     val args = invoke.parseArgs(PickArgs::class.java)
     pickDir = File(args.dir)
-    val intent = if (args.kind == "media") {
+    val intent = if (args.kind == "photo") {
+      ActivityResultContracts.PickVisualMedia().createIntent(
+        activity,
+        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+      )
+    } else if (args.kind == "media") {
       ActivityResultContracts.PickMultipleVisualMedia().createIntent(
         activity,
         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),

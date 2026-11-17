@@ -33,6 +33,8 @@ name!(VIEW_ONCE, "view_once");
 name!(VIEW_ONCE_VIEWED, "view_once.viewed");
 // Global account data: the view-once messages we opened.
 name!(VIEWED_ONCE, "viewed_once");
+// To-device, callee → caller: our ring is ringing on that device (rtc.rs).
+name!(CALL_RINGING, "call.ringing");
 // Key in a homeserver's `/.well-known/matrix/client` naming its AlwyChat push gateway.
 name!(PUSH_WELL_KNOWN, "push");
 

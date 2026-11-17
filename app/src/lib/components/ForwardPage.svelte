@@ -13,25 +13,30 @@
     onPick,
     onClose,
     children,
+    cancel = false,
   }: {
     title?: string;
     onPick: (room: RoomSummary) => void;
     onClose: () => void;
     /** Shown above the search (what's being sent). */
     children?: Snippet;
+    /** ✕ Cancel instead of ← (a share from another app). */
+    cancel?: boolean;
   } = $props();
 
   let query = $state("");
-  // Saved messages first: keeping something for later is the most common forward.
+  // Saved messages first (keeping something for later is the most common forward), then pinned
+  // chats, then the most recent; archived ones last. The list is already newest first.
+  const rank = (r: RoomSummary) => (saved.is(r.id) ? 0 : r.is_favourite ? 1 : r.is_archived ? 3 : 2);
   const rooms = $derived(
     chatList.rooms
-      .filter((r) => !r.is_invite && !r.is_space)
+      .filter((r) => !r.is_invite && !r.is_space && !r.successor)
       .filter((r) => !query.trim() || r.name.toLowerCase().includes(query.trim().toLowerCase()))
-      .sort((a, b) => Number(saved.is(b.id)) - Number(saved.is(a.id))),
+      .sort((a, b) => rank(a) - rank(b)),
   );
 </script>
 
-<Page {title} {onClose}>
+<Page {title} {onClose} {cancel}>
   {@render children?.()}
   <input class="search" bind:value={query} placeholder={tr("Search chats")} />
   <ul>

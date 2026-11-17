@@ -22,6 +22,7 @@
   import { profiles } from "$lib/stores/profiles.svelte";
   import { can, roleName, ROLES } from "$lib/roles";
   import Avatar from "./Avatar.svelte";
+  import PhotoViewer from "./PhotoViewer.svelte";
   import Page from "./Page.svelte";
 
   /** Someone's profile; with `room`, also their role there and moderation. */
@@ -58,6 +59,7 @@
 
   const name = $derived(member?.name ?? profile?.name ?? userId);
   const avatar = $derived(member?.avatar ?? profile?.avatar ?? null);
+  let viewing = $state(false);
   const isMe = $derived(member?.is_me ?? false);
   const myPower = $derived(room?.my_power ?? 0);
   // Moderation needs a higher level than theirs (and the permission).
@@ -98,9 +100,15 @@
   }
 </script>
 
+{#if viewing && avatar}<PhotoViewer mxc={avatar} {name} onClose={() => (viewing = false)} />{/if}
+
 <Page title={name} {onClose}>
   <div class="head">
-    <Avatar {name} mxc={avatar} size={96} />
+    {#if avatar}
+      <button class="photo" onclick={() => (viewing = true)} aria-label={tr("See the photo")}><Avatar {name} mxc={avatar} size={96} /></button>
+    {:else}
+      <Avatar {name} mxc={avatar} size={96} />
+    {/if}
     <h2>{name}</h2>
     <button class="id" onclick={() => navigator.clipboard?.writeText(userId)} title={tr("Copy")}>{userId} <Copy size={13} /></button>
     {#if profiles.statusLabel(userId)}<p class="status">{profiles.statusLabel(userId)}</p>{/if}
@@ -166,6 +174,20 @@
 </Page>
 
 <style>
+  .photo {
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    cursor: zoom-in;
+  }
+  .photo:focus {
+    outline: none;
+  }
+  .photo:focus-visible {
+    outline: 2px solid var(--accent-a);
+    outline-offset: 3px;
+  }
   .head {
     display: flex;
     flex-direction: column;

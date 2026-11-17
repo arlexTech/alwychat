@@ -23,7 +23,7 @@ use matrix_sdk::{
         registration::{ApplicationType, ClientMetadata, Localized, OAuthGrantType},
     },
     encryption::{BackupDownloadStrategy, EncryptionSettings},
-    ruma::serde::Raw,
+    ruma::{api::client::discovery::get_authorization_server_metadata::v1::Prompt, serde::Raw},
     utils::UrlOrQuery,
 };
 use matrix_sdk_ui::sync_service::SyncService;
@@ -198,6 +198,11 @@ pub(crate) struct Active {
         matrix_sdk::ruma::OwnedRoomId,
         Arc<matrix_sdk_ui::timeline::Timeline>,
     )>,
+    /// Live timelines of chats made ready before being opened (`peek_chat`).
+    pub warm_chats: Vec<(
+        matrix_sdk::ruma::OwnedRoomId,
+        Arc<matrix_sdk_ui::timeline::Timeline>,
+    )>,
     pub verifications: Arc<crate::encryption::Verifications>,
     pub encryption_task: Option<crate::rt::AbortHandle>,
     /// Cleared when this session is torn down, so late token refreshes can't rewrite
@@ -336,10 +341,15 @@ impl Core {
     }
 
     /// Sign in with the server's web login. `open_url` must show the URL in the system browser.
+    /// With `invite`, the server's page opens on account creation instead; a non-empty invite is
+    /// a registration token, passed as `#invite=…` at the end of the URL: browsers keep a
+    /// fragment through the server's redirects, so it reaches its register page (customised MAS
+    /// templates read it there and fill in the token step).
     pub async fn login(
         &self,
         server: &str,
         redirect: LoginRedirect,
+        invite: Option<&str>,
         open_url: impl FnOnce(&Url) -> std::result::Result<(), String>,
     ) -> Result<Account> {
         info!(server, "signing in");
@@ -406,19 +416,33 @@ impl Core {
             }
         };
 
-        let auth = oauth
-            .login(
-                redirect_uri.clone(),
-                None,
-                Some(client_metadata(redirect_uri, web)?.into()),
-                None,
-            )
+        let mut builder = oauth.login(
+            redirect_uri.clone(),
+            None,
+            Some(client_metadata(redirect_uri, web)?.into()),
+            None,
+        );
+        if invite.is_some() {
+            builder = builder.prompt(vec![Prompt::Create]);
+        }
+        let auth = builder
             .build()
             .await
             .map_err(|e| Error::OAuth(e.to_string()))?;
+        let mut page = auth.url.clone();
+        if let Some(token) = invite.filter(|t| !t.is_empty()) {
+            let fragment = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("invite", token)
+                .finish();
+            page.set_fragment(Some(&fragment));
+        }
 
-        info!(redirect = kind, "opening the sign-in page");
-        open_url(&auth.url).map_err(Error::Browser)?;
+        info!(
+            redirect = kind,
+            create = invite.is_some(),
+            "opening the sign-in page"
+        );
+        open_url(&page).map_err(Error::Browser)?;
         info!("waiting for the sign-in redirect");
 
         // No need to clear `pending_login` afterwards: a stale sender just fails to send.
@@ -437,6 +461,62 @@ impl Core {
 
         self.activate(client.clone(), passphrase, store_dir).await?;
         info!(user = ?client.user_id(), "signed in");
+        Ok(account(&client).await)
+    }
+
+    /// Web: finish a sign-in the page did by itself. Registering the app, the server's page and
+    /// the token exchange happen in the page (a few small requests), so nobody waits for this
+    /// core to download first; it only gets the result. The tokens must belong to `user_id` and
+    /// `device_id` (checked with the server), then the session starts like after `login`.
+    pub async fn login_with_tokens(
+        &self,
+        homeserver: &str,
+        client_id: String,
+        user_id: &str,
+        device_id: &str,
+        access_token: String,
+        refresh_token: Option<String>,
+    ) -> Result<Account> {
+        info!("finishing a sign-in made by the page");
+        let homeserver =
+            Url::parse(homeserver).map_err(|e| Error::OAuth(format!("homeserver: {e}")))?;
+        let user_id = matrix_sdk::ruma::OwnedUserId::try_from(user_id)
+            .map_err(|e| Error::OAuth(format!("user ID: {e}")))?;
+        // The same fresh start as `login`: never mix keys from another account.
+        self.end_session().await;
+        self.wipe_local_data().await?;
+        let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 48);
+        let store_dir = format!(
+            "{STORE_PREFIX}{}",
+            Alphanumeric
+                .sample_string(&mut rand::rng(), 10)
+                .to_lowercase()
+        );
+        let client = self
+            .build_client(Server::Url(&homeserver), &passphrase, &store_dir)
+            .await?;
+        let session = OAuthSession {
+            client_id: ClientId::new(client_id),
+            user: UserSession {
+                meta: matrix_sdk::SessionMeta {
+                    user_id: user_id.clone(),
+                    device_id: device_id.into(),
+                },
+                tokens: matrix_sdk::SessionTokens {
+                    access_token,
+                    refresh_token,
+                },
+            },
+        };
+        client.restore_session(session).await?;
+        let me = client.whoami().await?;
+        if me.user_id != user_id || me.device_id.as_deref().map(|d| d.as_str()) != Some(device_id) {
+            return Err(Error::OAuth(
+                "the sign-in belongs to another account or device".into(),
+            ));
+        }
+        self.activate(client.clone(), passphrase, store_dir).await?;
+        info!(user = %user_id, "signed in");
         Ok(account(&client).await)
     }
 
@@ -494,7 +574,22 @@ impl Core {
             Server::Url(url) => Client::builder().homeserver_url(url.as_str()),
         };
         #[cfg(not(target_family = "wasm"))]
-        let builder = builder.sqlite_store(self.data_dir.join(store_dir), Some(passphrase));
+        let builder = {
+            // The SDK's default allows 4 database connections per processor core in each of
+            // its 4 stores, each with a 2 MB cache: far more than one person's app uses, and
+            // memory that is never given back. A few connections serve it as fast.
+            let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+            let config = matrix_sdk::SqliteStoreConfig::new(self.data_dir.join(store_dir))
+                .passphrase(Some(passphrase))
+                .pool_max_size(cores.clamp(2, 4))
+                .cache_size(if cfg!(any(target_os = "android", target_os = "ios")) {
+                    750_000
+                } else {
+                    2_000_000
+                })
+                .journal_size_limit(4_000_000);
+            builder.sqlite_store_with_config_and_cache_path(config, None::<&std::path::Path>)
+        };
         // In a browser: IndexedDB databases named after the store "folder".
         #[cfg(target_family = "wasm")]
         let builder = builder.indexeddb_store(store_dir, Some(passphrase));
@@ -616,6 +711,7 @@ impl Core {
             chat: None,
             opening: 0,
             recent_chats: Vec::new(),
+            warm_chats: Vec::new(),
             verifications,
             encryption_task: None,
             may_persist,

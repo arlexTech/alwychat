@@ -19,7 +19,7 @@
   import Plus from "@lucide/svelte/icons/plus";
   import SpacesPane from "./SpacesPane.svelte";
   import { viewOnce } from "$lib/stores/viewOnce.svelte";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { friendlyError } from "$lib/errors";
   import logo from "$lib/assets/logo.svg";
   import Download from "@lucide/svelte/icons/download";
@@ -91,7 +91,8 @@
   import Bug from "@lucide/svelte/icons/bug";
   import ReportPage from "./ReportPage.svelte";
   import SecurityPage from "./SecurityPage.svelte";
-  import KeyRound from "@lucide/svelte/icons/key-round";
+  import RecoverySetup from "./RecoverySetup.svelte";
+  import Lock from "@lucide/svelte/icons/lock";
   import { openExternal } from "$lib/backend";
   import { pickedMediaUrl } from "$lib/media";
   import ForwardPage from "./ForwardPage.svelte";
@@ -208,6 +209,13 @@
     return [...list.filter((r) => r.is_favourite), ...list.filter((r) => !r.is_favourite)];
   });
 
+  // Chats are loaded before they're opened: the first ones listed, and any with something new.
+  $effect(() => {
+    const rooms = chatList.rooms.filter((r) => !r.is_invite && !r.is_space);
+    const top = visible.filter((r) => !r.is_invite && !r.is_space).map((r) => r.id);
+    untrack(() => chat.watch(rooms, top));
+  });
+
   const folderUnread = (f: Folder) => chatList.rooms.filter((r) => inFolder(f, r) && isUnread(r)).length;
   const chatsUnread = $derived(chatList.rooms.filter((r) => !r.is_archived && spaces.inChats(r) && isUnread(r)).length);
   const spacesUnread = $derived(
@@ -257,13 +265,13 @@
   });
 
   onMount(() => {
-    chatList.start();
+    chatList.start(account.user_id);
     void me.refresh();
     share.start();
     connection.start();
     liveLocation.start();
     nav.attach(
-      (id) => ((selectedId = id), (newChatOpen = false), (settingsOpen = false)),
+      showChat,
       () => ((tab = "spaces"), (selectedId = null), (newChatOpen = false)),
     );
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
@@ -278,8 +286,8 @@
     startSearchBackfill().catch(() => {});
     messageSearch.start();
     // Tapped notifications open their chat (cold start, or while running).
-    launchRoom().then((id) => id && (selectedId = id), () => {});
-    const stopOpenRoom = onOpenRoom((id) => (selectedId = id));
+    launchRoom().then((id) => id && showChat(id), () => {});
+    const stopOpenRoom = onOpenRoom(showChat);
     // Re-register push each start: the token may have changed since. A new install asks
     // once for permission to show notifications (Android 13+), right after signing in;
     // after that, only the switch in Settings asks again.
@@ -321,6 +329,15 @@
   /** Security & recovery, opened from the "Set up recovery" banner. */
   let securityOpen = $state(false);
 
+  /** Open a chat from anywhere (a share, a notification, a profile's "Message"): pages that
+   * would cover it close first (they're drawn above the chat). */
+  function showChat(id: string) {
+    selectedId = id;
+    newChatOpen = settingsOpen = securityOpen = false;
+    folderEdit = null;
+    call.profile = null;
+  }
+
   /** Texts of Android's message notifications (shown by Kotlin, maybe without the UI). */
   function androidNotificationLabels(): Record<string, string> {
     const labels: Record<string, string> = {
@@ -329,6 +346,7 @@
       read: tr("Mark as read"),
       message: tr("Message"),
       not_sent: tr("Not sent: {text}", { text: "%s" }),
+      test: tr("Notifications work on this phone."),
     };
     // The core's English texts (sender / preview), translated.
     for (const [english, text] of Object.entries(coreTexts())) labels[`text:${english}`] = text;
@@ -406,19 +424,13 @@
     {/if}
     {#if encryption.locked}
       <button class="unlock-banner" onclick={() => (encryption.sheetOpen = true)} transition:fade>
-        <span>🔒</span>
-        <span><strong>{tr("Unlock your messages")}</strong><small>{tr("Verify this device to read encrypted history")}</small></span>
+        <span class="update-icon"><Lock size={18} /></span>
+        {#if encryption.status?.recovery === "disabled"}
+          <span><strong>{tr("Confirm this device")}</strong><small>{tr("With your other device, or start fresh here")}</small></span>
+        {:else}
+          <span><strong>{tr("Unlock your messages")}</strong><small>{tr("Verify this device to read encrypted history")}</small></span>
+        {/if}
       </button>
-    {/if}
-    {#if encryption.noRecovery}
-      <div class="unlock-banner app-offer" transition:fade>
-        <span class="update-icon"><KeyRound size={18} /></span>
-        <button class="app-offer-text" onclick={() => (securityOpen = true)}>
-          <strong>{tr("Set up recovery")}</strong>
-          <small>{tr("So you never lose your messages if you lose this device")}</small>
-        </button>
-        <button class="icon app-offer-close" onclick={() => encryption.dismissRecovery()} aria-label={tr("Not now")} title={tr("Not now")}><X size={18} /></button>
-      </div>
     {/if}
 
     {#if tab === "spaces"}
@@ -539,9 +551,11 @@
 
 {#if share.incoming}
   {@const s = share.incoming}
+  <div class="share-layer">
   <ForwardPage
     title={tr("Share to…")}
-    onClose={() => share.cancel()}
+    cancel
+    onClose={() => share.dismiss()}
     onPick={(r) => {
       share.deliver(r.id);
       nav.openChat(r.id);
@@ -555,6 +569,7 @@
       {#if s.text}<p>{s.text}</p>{/if}
     </div>
   </ForwardPage>
+  </div>
 {/if}
 
 {#if newChatOpen}
@@ -625,6 +640,9 @@
 {#if call.menu}<PersonMenu />{/if}
 {#if reporting}<ReportPage crashed onClose={() => (reporting = false)} />{/if}
 {#if securityOpen}<SecurityPage onClose={() => (securityOpen = false)} />{/if}
+{#if encryption.mustSaveRecovery || encryption.recoveryOpen}
+  <RecoverySetup replacing={!encryption.mustSaveRecovery} />
+{/if}
 {#if call.profile}
   <UserPage
     userId={call.profile}
@@ -635,6 +653,11 @@
 <IncomingCall />
 
 <style>
+  /* Above every other page, whatever is open when the share arrives (pages stack in order). */
+  .share-layer {
+    position: relative;
+    z-index: 55;
+  }
   .shell {
     display: grid;
     /* minmax(0, …): a bare 1fr won't shrink below its widest row (long previews). */
@@ -987,26 +1010,65 @@
     display: flex;
     flex-direction: column;
   }
+  .unlock-banner > span:not(.update-icon) {
+    flex: 1;
+    min-width: 0;
+  }
+  .unlock-banner strong {
+    font-size: 0.95rem;
+    line-height: 1.3;
+  }
+  .unlock-banner small {
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
   .update-bar {
     display: block;
     margin-top: 6px;
   }
   .update-icon {
     display: grid;
+    flex: none;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent-a) 22%, transparent);
     color: var(--accent-a);
   }
   .app-offer {
     cursor: default;
+    padding-right: 6px;
   }
+  /* Buttons inside the banner: no browser button look (grey box, border). */
   .app-offer-text {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: 1px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
     text-align: left;
     cursor: pointer;
   }
   .app-offer-close {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
     color: var(--muted);
+    cursor: pointer;
+  }
+  .app-offer-close:hover {
+    background: var(--surface-hover);
   }
   .unlock-banner:disabled {
     cursor: default;

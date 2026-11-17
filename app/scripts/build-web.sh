@@ -4,5 +4,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 scripts/build-wasm.sh
-ALWY_WEB=1 pnpm vite build
+ALWY_WEB=1 VITE_ALWY_WEB=1 pnpm vite build
+node scripts/finish-web.mjs build-web
 echo "web version in app/build-web/"

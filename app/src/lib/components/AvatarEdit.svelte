@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tr } from "$lib/i18n/index.svelte";
+  import { untrack } from "svelte";
   import Camera from "@lucide/svelte/icons/camera";
   import { pickImage } from "$lib/pickImage";
   import Avatar from "./Avatar.svelte";
@@ -23,13 +24,21 @@
   } = $props();
 
   let preview = $state<string | null>(null);
+  // The photo changed (the picked one arrived from the server, or it was removed): show that,
+  // not the preview of an earlier pick.
+  let shownMxc = untrack(() => mxc);
+  $effect(() => {
+    if (mxc === shownMxc) return;
+    shownMxc = mxc;
+    preview = null;
+  });
   let busy = $state(false);
   let error = $state<string | null>(null);
 
   async function pick() {
     error = null;
     try {
-      const image = await pickImage();
+      const image = await pickImage(undefined, !square);
       if (!image) return;
       preview = image.preview;
       busy = true;

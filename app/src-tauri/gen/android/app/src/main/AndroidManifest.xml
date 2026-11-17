@@ -11,7 +11,9 @@
     <!-- Video calls. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Calls: an ongoing notification whose service keeps the call going in the background. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <!-- Incoming calls: full screen on a locked phone (Android 14+ lets the user turn it off). -->
@@ -86,6 +88,14 @@
             android:name=".CallService"
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
+        <service
+            android:name=".LocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+        <service
+            android:name=".RingService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
         <service
             android:name=".PushService"
             android:exported="false">

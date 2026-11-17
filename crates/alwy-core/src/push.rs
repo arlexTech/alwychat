@@ -81,6 +81,9 @@ pub struct PushTest {
     pub gateway_ok: bool,
     /// Google said this phone's token is unknown (app reinstalled, data cleared…).
     pub rejected: bool,
+    /// The gateway is private (only the homeserver reaches it): it couldn't be
+    /// tested from the phone, which isn't a fault.
+    pub internal: bool,
     pub error: Option<String>,
 }
 
@@ -194,7 +197,7 @@ impl crate::Core {
                 }],
             },
         });
-        let (gateway_ok, rejected, error) = match reqwest::Client::new()
+        let (gateway_ok, rejected, internal, error) = match reqwest::Client::new()
             .post(gateway)
             .json(&body)
             .timeout(std::time::Duration::from_secs(20))
@@ -206,26 +209,29 @@ impl crate::Core {
                 let rejected = answer["rejected"]
                     .as_array()
                     .is_some_and(|a| a.iter().any(|k| k == token));
-                (true, rejected, None)
+                (true, rejected, false, None)
             }
             Ok(r) => (
+                false,
                 false,
                 false,
                 Some(format!("the push gateway answered {}", r.status())),
             ),
             // An internal gateway (only the homeserver reaches it) is fine: this direct test
-            // just can't run from the phone.
-            Err(e) if unreachable(&e) => (
+            // just can't run from the phone. The app checks the rest another way.
+            Err(e) if unreachable(&e) => (false, false, true, None),
+            Err(e) => (
                 false,
                 false,
-                Some("your server's push gateway can only be reached by the server itself, so this test can't run from here; send yourself a message from another device instead".into()),
+                false,
+                Some(format!("push gateway unreachable: {e}")),
             ),
-            Err(e) => (false, false, Some(format!("push gateway unreachable: {e}"))),
         };
         Ok(PushTest {
             registered,
             gateway_ok,
             rejected,
+            internal,
             error,
         })
     }
@@ -320,11 +326,13 @@ impl crate::Core {
         if let (NotificationEvent::Timeline(event), RawNotificationEvent::Timeline(raw)) =
             (&item.event, &item.raw_event)
             && Some(event.sender()) != own.as_deref()
-            && let Some((video, expires_at)) = crate::rtc::fresh_ring(raw)
+            && let Some(own) = own.as_deref()
+            && let Some((video, expires_at)) = crate::rtc::fresh_ring(raw, own)
         {
             if !first_ring(room_id, expires_at) {
                 return Ok(None);
             }
+            crate::rtc::say_ringing_soon(&client, room_id, event.sender(), event_id.as_str());
             return Ok(Some(PushNotification {
                 room_id: room_id.to_string(),
                 event_id: event_id.to_string(),
@@ -474,10 +482,11 @@ impl crate::Core {
         if Some(sender.as_ref()) == client.user_id() {
             return None;
         }
-        let (video, expires_at) = crate::rtc::fresh_ring(raw)?;
+        let (video, expires_at) = crate::rtc::fresh_ring(raw, client.user_id()?)?;
         if !first_ring(room_id, expires_at) {
             return None;
         }
+        crate::rtc::say_ringing_soon(client, room_id, &sender, event_id.as_str());
         let sent = raw
             .get_field::<u64>("origin_server_ts")
             .ok()

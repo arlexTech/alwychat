@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Uri
+import android.app.NotificationManager
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
@@ -21,6 +22,18 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
+
+@InvokeArg
+class LocationArgs {
+  var active: Boolean = false
+  var title: String = ""
+  var text: String = ""
+  var stop: String = ""
+  var channel: String = ""
+  var roomId: String? = null
+  /** When the (last) share ends, ms since epoch; 0 = until stopped. */
+  var endsAt: Long = 0
+}
 
 @InvokeArg
 class CallArgs {
@@ -102,12 +115,20 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     val net = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     return JSObject().apply {
       put("notifications", NotificationManagerCompat.from(activity).areNotificationsEnabled())
+      put("lastPush", PushService.lastReceived(activity))
       put("batteryUnrestricted", runCatching { power.isIgnoringBatteryOptimizations(pkg) }.getOrDefault(true))
       // Unknown counts as fine: a failed check shouldn't nag the user.
       put(
         "backgroundData",
         runCatching { net.restrictBackgroundStatus != ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED }
           .getOrDefault(true),
+      )
+      // Android 14+: incoming calls take over the locked screen only if the user allows it.
+      put(
+        "fullScreenCalls",
+        if (Build.VERSION.SDK_INT >= 34)
+          runCatching { activity.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() }.getOrDefault(true)
+        else true,
       )
     }
   }
@@ -170,6 +191,19 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity.isInPictureInPictureMode) {
         activity.runOnUiThread { activity.moveTaskToBack(false) }
       }
+    }
+    invoke.resolve()
+  }
+
+  /** The live location notification (and its foreground service) while sharing. */
+  @Command
+  fun locationNotification(invoke: Invoke) {
+    val args = invoke.parseArgs(LocationArgs::class.java)
+    MainActivity.sharingLocation = args.active
+    if (args.active) {
+      LocationService.start(activity, args.title, args.text, args.stop, args.channel, args.roomId, args.endsAt)
+    } else {
+      LocationService.stop(activity)
     }
     invoke.resolve()
   }
@@ -270,6 +304,16 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Command
+  fun fixFullScreenCalls(invoke: Invoke) {
+    try {
+      activity.startActivity(Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT", Uri.parse("package:$pkg")))
+    } catch (_: Exception) {
+      openAppDetails()
+    }
+    invoke.resolve(currentStatus())
+  }
+
+  @Command
   fun fixBackgroundData(invoke: Invoke) {
     try {
       activity.startActivity(
@@ -355,6 +399,23 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
+  /** The push test: a sample notification through the same code as real ones. */
+  @Command
+  fun testNotification(invoke: Invoke) {
+    PushService.handle(activity, "!alwychat-push-test:example.org", PushService.TEST_EVENT)
+    invoke.resolve()
+  }
+
+  /** Back to the app we came from (a share cancelled): the task goes behind, like Android's back
+   * on a screen opened by another app; a floating window closes. */
+  @Command
+  fun moveToBack(invoke: Invoke) {
+    activity.runOnUiThread {
+      activity.moveTaskToBack(true)
+      invoke.resolve()
+    }
+  }
+
   /** App lock: blank in the app switcher, no screenshots (FLAG_SECURE). */
   @Command
   fun setSecure(invoke: Invoke) {
@@ -376,10 +437,11 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve()
   }
 
-  /** A message notified by the running app (no push): shown like a pushed one. */
+  /** A message (or a ring) notified by the running app (no push): shown like a pushed one. */
   @Command
   fun showMessage(invoke: Invoke) {
-    PushService.show(activity, invoke.getArgs())
+    val n = invoke.getArgs()
+    if (n.has("call") && !n.isNull("call")) IncomingCall.show(activity, n) else PushService.show(activity, n)
     invoke.resolve()
   }
 

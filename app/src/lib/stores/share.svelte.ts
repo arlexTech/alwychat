@@ -1,6 +1,6 @@
 // "Share" from another app (Android): pick a chat, then the text and files wait in its composer
 // for a caption and Send.
-import { discardPicked, isAndroid, takeShare, type IncomingShare } from "$lib/backend";
+import { discardPicked, isAndroid, leaveApp, takeShare, type IncomingShare } from "$lib/backend";
 
 class ShareStore {
   /** Waiting for the user to pick a chat. */
@@ -17,6 +17,8 @@ class ShareStore {
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") void this.check();
     });
+    // Shared while the app was already on screen (MainActivity.onNewIntent).
+    window.addEventListener("alwychat-share", () => void this.check());
   }
 
   async check() {
@@ -37,6 +39,13 @@ class ShareStore {
     if (ready?.roomId !== roomId) return null;
     this.ready = null;
     return ready;
+  }
+
+  /** The person backed out of "Share to…": drop it and go back to the app they shared from
+   * (closes the floating window it may have opened in). */
+  dismiss() {
+    this.cancel();
+    if (isAndroid) leaveApp().catch(() => {});
   }
 
   cancel() {

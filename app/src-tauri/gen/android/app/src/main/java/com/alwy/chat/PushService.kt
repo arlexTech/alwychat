@@ -44,6 +44,7 @@ class PushService : FirebaseMessagingService() {
     /** Removes the notifications of chats read elsewhere (`unread`: the server's new count). */
     fun clearRead(context: Context, unread: String?) {
       Crashes.watch(context)
+      markReceived(context)
       val manager = context.getSystemService(NotificationManager::class.java) ?: return
       val shown = manager.activeNotifications
         .filter { it.id == 1 && it.tag?.startsWith("!") == true }
@@ -67,9 +68,10 @@ class PushService : FirebaseMessagingService() {
         show(context, JSONObject()
           .put("room_id", roomId)
           .put("title", "AlwyChat")
-          .put("body", "Notifications work: this one came from your server, through the push service, to this phone."))
+          .put("body", label(context, "test", "Notifications work on this phone.")))
         return
       }
+      markReceived(context)
       // On screen, the chat list already shows it.
       if (MainActivity.visible) return
       val json = try {
@@ -82,6 +84,17 @@ class PushService : FirebaseMessagingService() {
       val n = JSONObject(json)
       if (n.has("call") && !n.isNull("call")) IncomingCall.show(context, n) else show(context, n)
     }
+    /** When the last real push reached this phone (Settings → Notifications → Test: the only
+     * proof from the phone that the whole server → gateway → phone path works, now that the
+     * gateway is reachable by the homeserver alone). */
+    fun markReceived(context: Context) {
+      context.getSharedPreferences("alwychat_push", Context.MODE_PRIVATE)
+        .edit().putLong("last_push", System.currentTimeMillis()).apply()
+    }
+
+    fun lastReceived(context: Context): Long =
+      context.getSharedPreferences("alwychat_push", Context.MODE_PRIVATE).getLong("last_push", 0)
+
     /** Matches `alwy_core::push::TEST_EVENT`. */
     const val TEST_EVENT = "\$alwychat-push-test"
 
