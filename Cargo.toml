@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/alwy-core", "crates/alwy-web", "crates/alwy-call", "app/src-tauri"]
+members = ["crates/alwy-core", "crates/alwy-web", "crates/alwy-call", "crates/alwy-serve", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

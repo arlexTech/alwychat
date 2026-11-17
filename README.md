@@ -115,7 +115,7 @@ Your server needs the newer sign-in system, where you log in through your browse
 <a id="web-version"></a>
 ### Web version (host it yourself)
 
-The web version is the same app in a browser tab. There's no database and nothing to maintain: it's a small web server handing out the app, and messages are encrypted and decrypted in the browser, like in the apps. It's published as a Docker image, `ghcr.io/arlextech/alwychat-web`, for regular PCs and ARM boards (Raspberry Pi…).
+The web version is the same app in a browser tab. There's no database and nothing to maintain: messages are encrypted and decrypted in the browser, like in the apps, and the server only hands out the app. It's published as a Docker image, `ghcr.io/arlextech/alwychat-web`, for regular PCs and ARM boards (Raspberry Pi…). The image is tiny: about 10 MB, around 12 MB of memory, nothing inside but the app and its own small web server.
 
 **If you already have a reverse proxy** (Caddy, nginx, Traefik…), save this as `compose.yml` on your server:
 
@@ -138,14 +138,14 @@ chat.example.org {
 }
 ```
 
-**If nothing else runs on that server**, AlwyChat can get its own https certificate: point `chat.example.org` to the server in your DNS, then use [`docker/web/compose.https.yml`](docker/web/compose.https.yml) instead (set `ALWY_SERVER` and `ALWY_ADDRESS` in it).
+**If nothing else runs on that server**, use [`docker/web/compose.https.yml`](docker/web/compose.https.yml) instead: it adds [Caddy](https://caddyserver.com) in front, which gets the https certificate by itself. Point `chat.example.org` to the server in your DNS, and change the two lines marked ✏️ in the file.
 
 Open the address and sign in. It must be **https** (browsers only allow sign-in and encryption there), and allow popups for the site if your browser asks: the sign-in page opens in one.
 
 | Setting | What it does |
 |---|---|
 | `ALWY_SERVER` | The Matrix server the sign-in screen suggests (people can still type another). Default: matrix.org |
-| `ALWY_ADDRESS` | Only without a reverse proxy: your address, for the automatic certificate |
+| `ALWY_PORT` | The port inside the container. Default: 80 |
 
 **Updating:** `docker compose pull && docker compose up -d`. Open tabs switch to the new version the next time they're opened.
 

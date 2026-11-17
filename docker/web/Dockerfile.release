@@ -1,10 +1,19 @@
-# The image published by CI (ghcr.io/arlextech/alwychat-web): the web version already built by
-# `pnpm build:web`, served by Caddy. Context: a folder with this Caddyfile and the build in site/.
+# The image published by CI (ghcr.io/arlextech/alwychat-web): nothing but a ~0.8 MB static
+# web server (crates/alwy-serve) and the web version's files, Brotli-compressed (~9 MB in all,
+# ~12 MB of memory). No system, no shell. Context (made by CI, see .github/workflows/build.yml):
+#   bin/amd64/alwy-serve, bin/arm64/alwy-serve   static (musl) builds of alwy-serve
+#   site/                                        `pnpm build:web`, keeping only the .br copy
+#                                                of each compressed file
 # To build everything from source instead, use ./Dockerfile.
-FROM caddy:2-alpine
+FROM scratch
+ARG TARGETARCH
 LABEL org.opencontainers.image.source="https://github.com/arlexTech/alwychat" \
       org.opencontainers.image.description="AlwyChat web version: a Matrix chat app in the browser" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
-COPY Caddyfile /etc/caddy/Caddyfile
-COPY site /srv
-EXPOSE 80 443
+COPY bin/${TARGETARCH}/alwy-serve /alwy-serve
+COPY site /site
+# Any user: nothing is written. (Docker lets containers listen on port 80 without root.)
+USER 65534:65534
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD ["/alwy-serve", "check"]
+ENTRYPOINT ["/alwy-serve"]

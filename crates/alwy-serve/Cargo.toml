@@ -1,0 +1,16 @@
+[package]
+name = "alwy-serve"
+description = "The tiny web server of AlwyChat's web version Docker image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+brotli-decompressor = "6"
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["rt", "net", "macros", "signal", "time", "io-util"] }
