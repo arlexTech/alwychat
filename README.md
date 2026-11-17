@@ -49,6 +49,11 @@ chmod +x AlwyChat-linux-x86_64.AppImage
 ./AlwyChat-linux-x86_64.AppImage
 ```
 
+**🪟 Windows**
+1. Download the `.exe` file and open it.
+2. Windows may say it protected your PC (the installer isn't signed by a paid certificate yet): click **More info**, then **Run anyway**.
+3. AlwyChat installs for your user only (no administrator needed) and opens.
+
 **🐧 Linux, .deb or .rpm**
 1. Download the file for your distribution.
 2. Double-click it: your software center opens. Click **Install**.
@@ -84,7 +89,7 @@ See [docs/features.md](docs/features.md) for the full list, including what's pla
 What is protected, and what isn't (yet):
 
 - **Messages** in encrypted chats (all private chats by default) are end-to-end encrypted, with the same encryption as Element. Your server can't read them.
-- **Calls and voice channels** go through your server's LiveKit and are encrypted on the way, but **not end-to-end yet**: whoever runs that LiveKit server could listen. Voice channels are unencrypted on purpose, so people on Element can join them.
+- **Calls** in encrypted chats are end-to-end encrypted, the same way as Element Call: your server's LiveKit passes them on without being able to listen. **Voice channels** are only encrypted on the way (not end to end), on purpose, so people on Element can join them.
 - **Stored on your server, readable by its admins:** your drafts, chat folders and app settings (synced between your devices), and who is in which chat, as with every Matrix app.
 - **Android notifications**, where your server offers them, go through Google's push service and a push gateway, which only see a chat ID and a message ID. Your phone fetches and decrypts the message itself.
 - **On your device:** your sign-in is kept in the system keychain (computer) or the app's private storage (Android). The search index and message cache aren't encrypted on disk; the app lock (PIN, fingerprint) hides the app, it doesn't encrypt it. In the web version, the sign-in is kept in the browser's storage.
@@ -105,31 +110,51 @@ Your server needs the newer sign-in system, where you log in through your browse
 | Sync | A recent Synapse (simplified sliding sync is on by default) |
 | Calls and voice channels | [LiveKit](https://livekit.io) and [lk-jwt-service](https://github.com/element-hq/lk-jwt-service), listed in `/.well-known/matrix/client` under `org.matrix.msc4143.rtc_foci` (the same setup Element Call uses) |
 | Link previews | `url_preview_enabled: true` in Synapse |
-| Android notifications while AlwyChat is closed | Not available for other servers yet ([UnifiedPush](https://unifiedpush.org) support is planned). Until then, AlwyChat notifies you while it's open or in the background. |
+| Android notifications while AlwyChat is closed | Nothing: install a [UnifiedPush](https://unifiedpush.org) app such as [ntfy](https://ntfy.sh) on the phone and choose it in AlwyChat (Settings → Notifications → Push service). Without one, AlwyChat notifies you while it's open or in the background. |
 
 <a id="web-version"></a>
 ### Web version (host it yourself)
 
-The web version is the same app running in the browser. It's a folder of static files: no database, no server program. Messages are encrypted and decrypted in the browser, like in the apps.
+The web version is the same app in a browser tab. There's no database and nothing to maintain: it's a small web server handing out the app, and messages are encrypted and decrypted in the browser, like in the apps. It's published as a Docker image, `ghcr.io/arlextech/alwychat-web`, for regular PCs and ARM boards (Raspberry Pi…).
 
-1. Download [AlwyChat-web.zip](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-web.zip) and unzip it into a folder on your server, for example `/srv/alwychat`.
-2. Serve that folder over **https** on its own address, for example `chat.example.org`. Sign-in only works over https. With [Caddy](https://caddyserver.com):
+**If you already have a reverse proxy** (Caddy, nginx, Traefik…), save this as `compose.yml` on your server:
 
-   ```
-   chat.example.org {
-       root * /srv/alwychat
-       file_server
-       try_files {path} /index.html
-       header /_app/immutable/* Cache-Control "public, max-age=31536000, immutable"
-   }
-   ```
+```yaml
+services:
+  alwychat:
+    image: ghcr.io/arlextech/alwychat-web:beta
+    restart: unless-stopped
+    environment:
+      ALWY_SERVER: example.org   # your Matrix server, suggested on the sign-in screen
+    ports:
+      - "127.0.0.1:8080:80"
+```
 
-   Any web server works (nginx, Apache…), as long as it sends `.wasm` files as `application/wasm`.
-3. Open the address and sign in. The sign-in page opens in a popup, so allow popups for that site if your browser asks.
+Then start it with `docker compose up -d`, and point your reverse proxy's https address (for example `chat.example.org`) to `http://127.0.0.1:8080`. With Caddy that's one block:
 
-To serve it under a sub-path (like `example.org/chat/`), build it yourself with `ALWY_WEB_BASE=/chat pnpm build:web`.
+```
+chat.example.org {
+    reverse_proxy 127.0.0.1:8080
+}
+```
 
-What's different from the apps: there are no notifications while the tab is closed, and photos are downloaded instead of saved to a gallery.
+**If nothing else runs on that server**, AlwyChat can get its own https certificate: point `chat.example.org` to the server in your DNS, then use [`docker/web/compose.https.yml`](docker/web/compose.https.yml) instead (set `ALWY_SERVER` and `ALWY_ADDRESS` in it).
+
+Open the address and sign in. It must be **https** (browsers only allow sign-in and encryption there), and allow popups for the site if your browser asks: the sign-in page opens in one.
+
+| Setting | What it does |
+|---|---|
+| `ALWY_SERVER` | The Matrix server the sign-in screen suggests (people can still type another). Default: matrix.org |
+| `ALWY_ADDRESS` | Only without a reverse proxy: your address, for the automatic certificate |
+
+**Updating:** `docker compose pull && docker compose up -d`. Open tabs switch to the new version the next time they're opened.
+
+**Which tag:** `beta` gets every change as soon as it's made, like the Beta apps; `latest` will be the stable release once the first one is out. Each version also has its own tag (`0.2.40`…) if you want to stay on one.
+
+What's different from the apps: no notifications while the tab is closed, and photos are downloaded instead of saved to a gallery.
+
+To serve it under a sub-path (like `example.org/chat/`) or change anything else, build it yourself: `ALWY_WEB_BASE=/chat pnpm build:web`, or the whole image from source with [`docker/web/Dockerfile`](docker/web/Dockerfile).
+
 ---
 
 ## Build it yourself

@@ -6,6 +6,8 @@
 # Windows (each waits for the previous one's job, never for a slower platform's build).
 # No macOS build any more (2026-11-05): macOS runners are the costly ones; the steps below still
 # know macOS, so it can come back as a matrix entry.
+# The web version is published as a Docker image, ghcr.io/arlextech/alwychat-web (`beta` and
+# 0.2.N from the beta branch, `latest` and the version from v* tags; docker/web/compose.yml).
 # The combined latest.json comes last. Secrets TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] sign the
 # desktop updates; Android checks its own signing key.
 #
@@ -317,6 +319,9 @@ jobs:
   web:
     name: Web
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       # Releases (v* tags) and the beta branch get a version and their update feed: each platform
@@ -347,6 +352,9 @@ jobs:
           PY
           # Only the "updates itself" builds are compiled with it (ALWY_UPDATE_FEED).
           echo "ALWY_FEED_URL=$feed" >> "$GITHUB_ENV"
+          # The web image's tags: the channel and the exact version.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then channel=latest; else channel=beta; fi
+          echo "WEB_TAGS=$channel $version" >> "$GITHUB_ENV"
           echo "version $version, updates from $feed"
       - uses: pnpm/action-setup@v4
         with:
@@ -382,16 +390,31 @@ jobs:
             show_tail web
             exit 1
           fi
-      - name: Collect
+      # The image only adds the built files to Caddy (no build inside Docker): both
+      # architectures in seconds, no emulation.
+      - name: Image contents
+        if: env.WEB_TAGS != ''
         run: |
-          mkdir out
-          # Python's zip (the runner may have no zip command).
-          python3 -c "import shutil; shutil.make_archive('out/AlwyChat-web', 'zip', 'app/build-web')"
-          ls -la out
-      - uses: actions/upload-artifact@v4
+          mkdir image
+          cp docker/web/Caddyfile docker/web/Dockerfile.release image/
+          cp -r app/build-web image/site
+      - uses: docker/setup-buildx-action@v3
+        if: env.WEB_TAGS != ''
+      - uses: docker/login-action@v3
+        if: env.WEB_TAGS != ''
         with:
-          name: alwychat-Web
-          path: out/*
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish the image
+        if: env.WEB_TAGS != ''
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/alwychat-web"
+          args=()
+          for tag in $WEB_TAGS; do args+=(--tag "$image:$tag"); done
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            -f image/Dockerfile.release "${args[@]}" image
+          echo "::notice title=Web image::$image ($WEB_TAGS)"
 
   release:
     name: Draft release
@@ -422,8 +445,8 @@ jobs:
   beta:
     name: Newest version (beta)
     # Last: the platforms published themselves already (see "Publish (beta)"); this adds the
-    # web zip and the combined latest.json (apps from before the per-platform manifests), and
-    # dates the release notes. Runs even if a platform failed: the others are out.
+    # combined latest.json (apps from before the per-platform manifests), and dates the release
+    # notes. Runs even if a platform failed: the others are out.
     if: always() && github.ref == 'refs/heads/beta'
     needs: [desktop, android, web]
     runs-on: ubuntu-latest
@@ -445,8 +468,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release view beta >/dev/null 2>&1 || gh release create beta --prerelease --title "Beta" --notes "…"
-          upload=(out/latest.json)
-          if [ -f out/AlwyChat-web.zip ]; then upload+=(out/AlwyChat-web.zip); fi
-          gh release upload beta "${upload[@]}" --clobber
+          gh release upload beta out/latest.json --clobber
+          # The web version used to be a zip here; it's a Docker image now.
+          gh release delete-asset beta AlwyChat-web.zip --yes 2>/dev/null || true
           gh release edit beta --prerelease --title "Beta (updates itself)" \
             --notes "Version 0.2.${{ github.run_number }}, built from \`${GITHUB_SHA::7}\` on $(date -u +'%Y-%m-%d %H:%M UTC'): every change as soon as it's made. Installed from a -autoupdate file, AlwyChat updates itself to each new build."

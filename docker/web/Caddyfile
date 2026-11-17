@@ -1,10 +1,13 @@
-# Static files only. ALWY_ADDRESS: where to listen (default plain http on :80, for a reverse
-# proxy in front). ALWY_TLS: e.g. "tls internal" for a local https test.
+# AlwyChat web version: static files only (the app runs in the browser).
+# Settings (environment variables):
+#   ALWY_SERVER   the homeserver the sign-in screen suggests, e.g. example.org (default: matrix.org)
+#   ALWY_ADDRESS  where to listen: ":80" (default, plain http behind your reverse proxy), or a
+#                 domain like "chat.example.org" for automatic https with Let's Encrypt
+#   ALWY_TLS      e.g. "tls internal" for a local https test
 {$ALWY_ADDRESS::80} {
 	{$ALWY_TLS}
 	root * /srv
 	encode zstd gzip
-	try_files {path} /index.html
 
 	header {
 		# The page's own Content-Security-Policy is in index.html (it needs a hash of
@@ -23,9 +26,19 @@
 	header /index.html Cache-Control "no-cache"
 	header /media-sw.js Cache-Control "no-cache"
 
-	# scripts/finish-web.mjs writes Brotli copies (.br, best level) of the build: sent as they
-	# are to browsers that take Brotli (~30 % smaller than compressing on the fly).
-	file_server {
-		precompressed br
+	# This site's settings, read by the app at start (empty = the app's own default).
+	handle /config.json {
+		header Content-Type application/json
+		header Cache-Control "no-cache"
+		respond `{"default_server":"{$ALWY_SERVER}"}` 200
+	}
+
+	handle {
+		try_files {path} /index.html
+		# scripts/finish-web.mjs writes Brotli copies (.br, best level) of the build: sent as
+		# they are to browsers that take Brotli (~30 % smaller than compressing on the fly).
+		file_server {
+			precompressed br
+		}
 	}
 }

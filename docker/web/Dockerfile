@@ -1,8 +1,9 @@
-# AlwyChat web version: static files served by Caddy on port 80 (put it behind your reverse
-# proxy for https, like Element Web). There is no server program: the app runs in the browser.
+# AlwyChat web version built from source (the published image, ghcr.io/arlextech/alwychat-web,
+# is the same without the build: see docker/web/compose.yml). Static files served by Caddy on
+# port 80; put it behind your reverse proxy for https. Settings: see the Caddyfile.
 #
 #   docker build -f docker/web/Dockerfile -t alwychat-web .
-#   docker run -p 8080:80 alwychat-web
+#   docker run -p 8080:80 -e ALWY_SERVER=example.org alwychat-web
 
 FROM rust:1-bookworm AS build
 RUN rustup target add wasm32-unknown-unknown \

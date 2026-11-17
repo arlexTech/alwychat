@@ -1,0 +1,10 @@
+# The image published by CI (ghcr.io/arlextech/alwychat-web): the web version already built by
+# `pnpm build:web`, served by Caddy. Context: a folder with this Caddyfile and the build in site/.
+# To build everything from source instead, use ./Dockerfile.
+FROM caddy:2-alpine
+LABEL org.opencontainers.image.source="https://github.com/arlexTech/alwychat" \
+      org.opencontainers.image.description="AlwyChat web version: a Matrix chat app in the browser" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY site /srv
+EXPOSE 80 443

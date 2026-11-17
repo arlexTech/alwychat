@@ -44,7 +44,31 @@
   let slow = $state(false);
   setTimeout(() => (slow = true), 1200);
   // Builds may preset another server (VITE_ALWY_DEFAULT_SERVER, e.g. in a gitignored .env.local).
-  let server = $state(import.meta.env.VITE_ALWY_DEFAULT_SERVER || "matrix.org");
+  // The web version also asks the site that hosts it (`config.json`, the Docker image's
+  // ALWY_SERVER), remembered for the next visit so it's there at once.
+  const SITE_SERVER = "alwychat.siteServer";
+  const siteServer = () => {
+    try {
+      return localStorage.getItem(SITE_SERVER);
+    } catch {
+      return null;
+    }
+  };
+  let server = $state((isWeb && siteServer()) || import.meta.env.VITE_ALWY_DEFAULT_SERVER || "matrix.org");
+  /** The person typed a server: the site's choice no longer replaces it. */
+  let serverTyped = false;
+  if (isWeb)
+    fetch(new URL("config.json", document.baseURI), { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((config: { default_server?: string } | null) => {
+        const preset = config?.default_server?.trim();
+        if (!preset) return;
+        try {
+          localStorage.setItem(SITE_SERVER, preset);
+        } catch {}
+        if (!serverTyped) server = preset;
+      })
+      .catch(() => {});
   let account = $state<Account | null>(null);
   let error = $state<string | null>(null);
   /** From an invite link (/register?token=…): offer to create an account on this app's server. */
@@ -231,7 +255,7 @@
         <form onsubmit={signIn}>
           <label for="server">{tr("Your server")}</label>
           <div class="row">
-            <input id="server" bind:value={server} autocapitalize="off" spellcheck="false" />
+            <input id="server" bind:value={server} oninput={() => (serverTyped = true)} autocapitalize="off" spellcheck="false" />
             <button disabled={!hasBackend || !ready}>{tr("Sign in")}</button>
           </div>
           {#if check}
