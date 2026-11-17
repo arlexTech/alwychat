@@ -125,7 +125,7 @@ services:
     image: ghcr.io/arlextech/alwychat-web:beta
     restart: unless-stopped
     environment:
-      ALWY_SERVER: example.org   # your Matrix server, suggested on the sign-in screen
+      ALWY_DEFAULT_SERVER: example.org   # your Matrix server, suggested on the sign-in screen
     ports:
       - "127.0.0.1:8080:80"
 ```
@@ -144,7 +144,7 @@ Open the address and sign in. It must be **https** (browsers only allow sign-in 
 
 | Setting | What it does |
 |---|---|
-| `ALWY_SERVER` | The Matrix server the sign-in screen suggests (people can still type another). Default: matrix.org |
+| `ALWY_DEFAULT_SERVER` | The Matrix server the sign-in screen suggests (people can still type another). Default: matrix.org |
 | `ALWY_PORT` | The port inside the container. Default: 80 |
 
 **Updating:** `docker compose pull && docker compose up -d`. Open tabs switch to the new version the next time they're opened.

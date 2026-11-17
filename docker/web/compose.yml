@@ -1,5 +1,5 @@
 # AlwyChat web version, behind the reverse proxy you already have (Caddy, nginx, Traefik…).
-# 1. Change ALWY_SERVER below.
+# 1. Change ALWY_DEFAULT_SERVER below.
 # 2. docker compose up -d
 # 3. In your reverse proxy, send https://chat.example.org to http://127.0.0.1:8080
 # Update later: docker compose pull && docker compose up -d
@@ -8,6 +8,6 @@ services:
     image: ghcr.io/arlextech/alwychat-web:beta # :latest once the first stable release is out
     restart: unless-stopped
     environment:
-      ALWY_SERVER: example.org # the Matrix server the sign-in screen suggests
+      ALWY_DEFAULT_SERVER: example.org # the Matrix server the sign-in screen suggests
     ports:
       - "127.0.0.1:8080:80"

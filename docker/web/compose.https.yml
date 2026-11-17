@@ -9,7 +9,7 @@ services:
     image: ghcr.io/arlextech/alwychat-web:beta # :latest once the first stable release is out
     restart: unless-stopped
     environment:
-      ALWY_SERVER: example.org # ✏️ the Matrix server the sign-in screen suggests
+      ALWY_DEFAULT_SERVER: example.org # ✏️ the Matrix server the sign-in screen suggests
 
   https:
     image: caddy:2-alpine

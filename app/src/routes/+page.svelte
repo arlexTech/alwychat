@@ -45,7 +45,7 @@
   setTimeout(() => (slow = true), 1200);
   // Builds may preset another server (VITE_ALWY_DEFAULT_SERVER, e.g. in a gitignored .env.local).
   // The web version also asks the site that hosts it (`config.json`, the Docker image's
-  // ALWY_SERVER), remembered for the next visit so it's there at once.
+  // ALWY_DEFAULT_SERVER), remembered for the next visit so it's there at once.
   const SITE_SERVER = "alwychat.siteServer";
   const siteServer = () => {
     try {

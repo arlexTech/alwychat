@@ -6,10 +6,10 @@
 //!   ones over https); the rare one that doesn't gets them decompressed once and kept. The image
 //!   ships only the `.br` copy of each such file.
 //! - Any address without a file extension is the app (`index.html`): the app does its own pages.
-//! - `/config.json` = this site's settings from the environment (`ALWY_SERVER`).
+//! - `/config.json` = this site's settings from the environment (`ALWY_DEFAULT_SERVER`).
 //! - ETags (304 when the browser already has it), the same security and cache headers.
 //!
-//! Settings: `ALWY_SERVER` (the server the sign-in screen suggests), `ALWY_PORT` (default 80),
+//! Settings: `ALWY_DEFAULT_SERVER` (the server the sign-in screen suggests), `ALWY_PORT` (default 80),
 //! `ALWY_ROOT` (default /site). `alwy-serve check` asks the running server for its config: the
 //! image's health check (there is no shell or curl in it).
 use std::{
@@ -267,7 +267,7 @@ fn load(root: &Path) -> std::io::Result<Site> {
         let body = Bytes::from(std::fs::read(path)?);
         files.insert(address.clone(), file(body, brotli, mime(&address)));
     }
-    let server = std::env::var("ALWY_SERVER").unwrap_or_default();
+    let server = std::env::var("ALWY_DEFAULT_SERVER").unwrap_or_default();
     let config = format!("{{\"default_server\":{}}}", json_string(server.trim()));
     Ok(Site {
         files,
