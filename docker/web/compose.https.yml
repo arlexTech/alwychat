@@ -1,18 +1,21 @@
 # AlwyChat web version on a server with nothing else on ports 80/443: Caddy in front gets the
 # https certificate (Let's Encrypt) by itself.
 # 1. Point your address (e.g. chat.example.org) to this server in your DNS.
-# 2. Change the two values marked ✏️.
+# 2. Put that address in place of chat.example.org below (✏️).
 # 3. docker compose -f compose.https.yml up -d
 # Update later: docker compose -f compose.https.yml pull && docker compose -f compose.https.yml up -d
 services:
   alwychat:
     image: ghcr.io/arlextech/alwychat-web:beta # :latest once the first stable release is out
+    container_name: alwychat
     restart: unless-stopped
-    environment:
-      DEFAULT_MATRIX_SERVER: example.org # ✏️ the Matrix server the sign-in screen suggests
+    # Optional: the Matrix server the sign-in screen suggests (default: matrix.org).
+    # environment:
+    #   DEFAULT_MATRIX_SERVER: example.org
 
   https:
     image: caddy:2-alpine
+    container_name: alwychat-https
     restart: unless-stopped
     command: caddy reverse-proxy --from chat.example.org --to alwychat:80 # ✏️ your address
     ports:

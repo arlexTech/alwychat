@@ -123,11 +123,13 @@ The web version is the same app in a browser tab. There's no database and nothin
 services:
   alwychat:
     image: ghcr.io/arlextech/alwychat-web:beta
+    container_name: alwychat
     restart: unless-stopped
-    environment:
-      DEFAULT_MATRIX_SERVER: example.org   # your Matrix server, suggested on the sign-in screen
     ports:
       - "127.0.0.1:8080:80"
+    # Optional: the Matrix server the sign-in screen suggests (default: matrix.org).
+    # environment:
+    #   DEFAULT_MATRIX_SERVER: example.org
 ```
 
 Then start it with `docker compose up -d`, and point your reverse proxy's https address (for example `chat.example.org`) to `http://127.0.0.1:8080`. With Caddy that's one block:
@@ -138,9 +140,11 @@ chat.example.org {
 }
 ```
 
-**If nothing else runs on that server**, use [`docker/web/compose.https.yml`](docker/web/compose.https.yml) instead: it adds [Caddy](https://caddyserver.com) in front, which gets the https certificate by itself. Point `chat.example.org` to the server in your DNS, and change the two lines marked ✏️ in the file.
+**If nothing else runs on that server**, use [`docker/web/compose.https.yml`](docker/web/compose.https.yml) instead: it adds [Caddy](https://caddyserver.com) in front, which gets the https certificate by itself. Point `chat.example.org` to the server in your DNS, and put your address in the line marked ✏️.
 
 Open the address and sign in. It must be **https** (browsers only allow sign-in and encryption there), and allow popups for the site if your browser asks: the sign-in page opens in one.
+
+Optional settings (uncomment `environment:` in the file to use them):
 
 | Setting | What it does |
 |---|---|
