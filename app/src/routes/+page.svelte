@@ -43,9 +43,9 @@
   /** The local restore is quick: only say something if it isn't. */
   let slow = $state(false);
   setTimeout(() => (slow = true), 1200);
-  // Builds may preset another server (VITE_ALWY_DEFAULT_SERVER, e.g. in a gitignored .env.local).
+  // Builds may preset another server (VITE_DEFAULT_MATRIX_SERVER, e.g. in a gitignored .env.local).
   // The web version also asks the site that hosts it (`config.json`, the Docker image's
-  // ALWY_DEFAULT_SERVER), remembered for the next visit so it's there at once.
+  // DEFAULT_MATRIX_SERVER), remembered for the next visit so it's there at once.
   const SITE_SERVER = "alwychat.siteServer";
   const siteServer = () => {
     try {
@@ -54,7 +54,7 @@
       return null;
     }
   };
-  let server = $state((isWeb && siteServer()) || import.meta.env.VITE_ALWY_DEFAULT_SERVER || "matrix.org");
+  let server = $state((isWeb && siteServer()) || import.meta.env.VITE_DEFAULT_MATRIX_SERVER || "matrix.org");
   /** The person typed a server: the site's choice no longer replaces it. */
   let serverTyped = false;
   if (isWeb)

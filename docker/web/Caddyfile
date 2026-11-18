@@ -1,10 +1,10 @@
 # AlwyChat web version: static files only (the app runs in the browser).
 # Settings (environment variables):
-#   ALWY_DEFAULT_SERVER  the homeserver the sign-in screen suggests, e.g. example.org
-#                        (default: matrix.org)
-#   ALWY_ADDRESS         where to listen: ":80" (default, plain http behind your reverse
-#                        proxy), or a domain like "chat.example.org" for automatic https
-#   ALWY_TLS             e.g. "tls internal" for a local https test
+#   DEFAULT_MATRIX_SERVER  the homeserver the sign-in screen suggests, e.g. example.org
+#                          (default: matrix.org)
+#   ALWY_ADDRESS           where to listen: ":80" (default, plain http behind your reverse
+#                          proxy), or a domain like "chat.example.org" for automatic https
+#   ALWY_TLS               e.g. "tls internal" for a local https test
 {$ALWY_ADDRESS::80} {
 	{$ALWY_TLS}
 	root * /srv
@@ -31,7 +31,7 @@
 	handle /config.json {
 		header Content-Type application/json
 		header Cache-Control "no-cache"
-		respond `{"default_server":"{$ALWY_DEFAULT_SERVER}"}` 200
+		respond `{"default_server":"{$DEFAULT_MATRIX_SERVER}"}` 200
 	}
 
 	handle {

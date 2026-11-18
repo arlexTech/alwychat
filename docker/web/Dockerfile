@@ -3,7 +3,7 @@
 # port 80; put it behind your reverse proxy for https. Settings: see the Caddyfile.
 #
 #   docker build -f docker/web/Dockerfile -t alwychat-web .
-#   docker run -p 8080:80 -e ALWY_DEFAULT_SERVER=example.org alwychat-web
+#   docker run -p 8080:80 -e DEFAULT_MATRIX_SERVER=example.org alwychat-web
 
 FROM rust:1-bookworm AS build
 RUN rustup target add wasm32-unknown-unknown \
