@@ -318,7 +318,9 @@ jobs:
 
   web:
     name: Web
-    runs-on: ubuntu-22.04
+    # 24.04: its clang (18) takes the C23 `[[noreturn]]` in sqlite-wasm-rs's shim; 22.04's
+    # clang 14 refused it (the build had been failing unnoticed, see pipefail below).
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
