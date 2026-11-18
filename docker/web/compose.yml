@@ -8,6 +8,7 @@ services:
     container_name: alwychat
     restart: unless-stopped
     ports:
+      # 127.0.0.1: only your reverse proxy on this machine reaches it, not the whole network.
       - "127.0.0.1:8080:80"
     # Optional: the Matrix server the sign-in screen suggests (default: matrix.org).
     # environment:
