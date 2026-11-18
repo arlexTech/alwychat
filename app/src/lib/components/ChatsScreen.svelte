@@ -148,8 +148,15 @@
   let selectedId = $state<string | null>(null);
   /** Switching between Chats and Spaces closes the open chat ("Select a chat" placeholder): a
    * chat only opens when it's clicked (or a space is, which opens its first chat). */
+  /** Bumped when Spaces is tapped while already there: back to the list of spaces. */
+  let spacesHome = $state(0);
+  /** The Spaces tab's + (New space page, drawn by SpacesPane). */
+  let newSpaceOpen = $state(false);
   function openTab(next: "chats" | "spaces") {
-    if (tab === next) return;
+    if (tab === next) {
+      if (next === "spaces") spacesHome++;
+      return;
+    }
     tab = next;
     selectedId = null;
   }
@@ -379,7 +386,11 @@
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
       <h1>{tab === "chats" ? tr("Chats") : tr("Spaces")}</h1>
-      <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label={tr("New chat")} title={tr("New chat")}><SquarePen size={21} /></button>
+      {#if tab === "spaces"}
+        <button class="new-chat" onclick={() => (newSpaceOpen = true)} aria-label={tr("New space")} title={tr("New space")}><Plus size={22} /></button>
+      {:else}
+        <button class="new-chat" onclick={() => (newChatOpen = true)} aria-label={tr("New chat")} title={tr("New chat")}><SquarePen size={21} /></button>
+      {/if}
     </header>
 
     {#if connection.shown}
@@ -442,7 +453,7 @@
 
     {#if tab === "spaces"}
       <div class="rows">
-        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} onRowMenu={openRowMenu} onExit={() => (selectedId = null)} />
+        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} onRowMenu={openRowMenu} onExit={() => (selectedId = null)} home={spacesHome} bind:newSpace={newSpaceOpen} />
       </div>
     {:else}
     <input class="search" type="search" placeholder={tr("Search")} bind:value={query} />

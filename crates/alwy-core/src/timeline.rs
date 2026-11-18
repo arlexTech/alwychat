@@ -119,8 +119,11 @@ pub struct ThreadInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Reader {
+    pub user_id: String,
     pub name: String,
     pub avatar: Option<String>,
+    /// When their read receipt was sent (ms), if the server said.
+    pub ts: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1164,9 +1167,9 @@ impl Mapper {
                     identity_changed,
                     seen_by: event
                         .read_receipts()
-                        .keys()
-                        .filter(|u| **u != own_id)
-                        .map(|u| self.reader(u))
+                        .iter()
+                        .filter(|(u, _)| **u != own_id)
+                        .map(|(u, r)| self.reader(u, r.ts.map(|t| u64::from(t.0))))
                         .collect(),
                     mentions_me: event.is_highlighted() && !reply_only_mention(msg, &own_id),
                     thread: msg.thread_summary.as_ref().map(|t| {
@@ -1272,23 +1275,31 @@ impl Mapper {
         for user in missing {
             let reader = match room.get_member_no_sync(&user).await {
                 Ok(Some(m)) => Reader {
+                    user_id: user.to_string(),
                     name: m.display_name().unwrap_or(user.localpart()).to_owned(),
                     avatar: m.avatar_url().map(|u| u.to_string()),
+                    ts: None,
                 },
                 _ => Reader {
+                    user_id: user.to_string(),
                     name: user.localpart().to_owned(),
                     avatar: None,
+                    ts: None,
                 },
             };
             self.readers.insert(user, reader);
         }
     }
 
-    fn reader(&self, user: &OwnedUserId) -> Reader {
-        self.readers.get(user).cloned().unwrap_or_else(|| Reader {
+    fn reader(&self, user: &OwnedUserId, ts: Option<u64>) -> Reader {
+        let mut reader = self.readers.get(user).cloned().unwrap_or_else(|| Reader {
+            user_id: user.to_string(),
             name: user.localpart().to_owned(),
             avatar: None,
-        })
+            ts: None,
+        });
+        reader.ts = ts;
+        reader
     }
 
     /// Like `message_content`, but images, videos and files become displayable media.

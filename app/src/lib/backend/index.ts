@@ -319,6 +319,15 @@ export type MessageContent =
   | { kind: "unable_to_decrypt"; reason: "before_joined" | "withheld" | "unverified_sender" | "before_device" | "unknown" }
   | { kind: "unsupported" };
 
+/** Someone whose read receipt is on a message. */
+export interface Reader {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+  /** When they read it (ms), if known. */
+  ts: number | null;
+}
+
 export interface MessageEntry {
   /** Event ID ($…) or local transaction ID: pass it back for actions. */
   item_id: string;
@@ -339,7 +348,7 @@ export interface MessageEntry {
   /** Not sent: these people (verified before) reset their encryption since. */
   identity_changed: string[];
   /** Others whose latest read receipt is this message. */
-  seen_by: { name: string; avatar: string | null }[];
+  seen_by: Reader[];
   /** Mentions us (or @room). */
   mentions_me: boolean;
   /** Replies in the thread started on this message. */

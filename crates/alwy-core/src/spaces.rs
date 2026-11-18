@@ -149,6 +149,8 @@ impl crate::Core {
         let space_id = OwnedRoomId::try_from(space_id).map_err(|_| Error::UnknownRoom)?;
         let list = Arc::new(service.space_room_list(space_id.clone()).await);
         let (initial, mut updates) = list.subscribe_to_room_updates().await;
+        let sink = Arc::new(sink);
+        // The first answer is what the SDK knows before asking the server (usually nothing).
         sink(initial.into_iter().map(child).collect());
         // The hierarchy is fetched once: reload it when the space's children change (a chat
         // or channel added or removed, by us or anyone).
@@ -173,9 +175,11 @@ impl crate::Core {
         let guard = client.event_handler_drop_guard(handle);
         let feed = list.clone();
         let reloading = AtomicBool::new(false);
+        let done_sink = sink.clone();
         let task = crate::rt::spawn(async move {
             let _guard = guard;
             let paginate = async {
+                let mut first = true;
                 loop {
                     loop {
                         if let Err(e) = feed.paginate().await {
@@ -190,6 +194,12 @@ impl crate::Core {
                         ) {
                             break;
                         }
+                    }
+                    // The server answered: say so even when nothing changed (an empty space),
+                    // so the UI stops showing "Loading…".
+                    if first {
+                        first = false;
+                        done_sink(feed.rooms().await.into_iter().map(child).collect());
                     }
                     changed.notified().await;
                     // Let a burst of changes settle, then start over.

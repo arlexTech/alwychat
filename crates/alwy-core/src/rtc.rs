@@ -171,13 +171,18 @@ impl crate::Core {
             .await
             .map_err(|e| Error::Call(format!("unexpected call service answer: {e}")))?;
 
-        // Membership, as Element Call writes it (one state key per device).
-        let state_key = format!("_{user}_{device}");
+        // Membership, as current Element Call writes it: one state key per device, ending
+        // with the application (`_@user_DEVICE_m.call`), and a `membershipID`. Without the
+        // membership ID FluffyChat never sent us its media key: we saw no picture (tested
+        // 2026-11-18, with and without it).
+        let state_key = format!("_{user}_{device}_m.call");
         let membership = json!({
             "application": "m.call",
             "call_id": "",
             "scope": "m.room",
             "device_id": device,
+            "membershipID": format!("{user}:{device}"),
+            "created_ts": matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now(),
             "expires": 4 * 3600 * 1000,
             "focus_active": { "type": "livekit", "focus_selection": "oldest_membership" },
             "foci_preferred": [{
@@ -351,9 +356,9 @@ async fn call_senders_on_server(room: &Room) -> Option<Vec<OwnedUserId>> {
     Some(senders)
 }
 
-/// Ring the other side (new and older Element formats): everyone in the room, or only `target`
+/// Ring the other side (MSC4075 `rtc.notification`): everyone in the room, or only `target`
 /// (its mention also makes the homeserver push it to them). Best effort: the call still works.
-/// True if at least one format went out.
+/// True if the ring went out.
 async fn ring(
     room: &Room,
     member_event: &matrix_sdk::ruma::EventId,
@@ -374,27 +379,23 @@ async fn ring(
         "m.relates_to": { "rel_type": "m.reference", "event_id": member_event },
         "m.call.intent": intent,
     });
-    let legacy = json!({
-        "application": "m.call",
-        "call_id": "",
-        "notify_type": "ring",
-        "m.mentions": mentions,
-    });
-    let mut sent = false;
-    for (kind, content) in [(RTC_NOTIFICATION, notification), (CALL_NOTIFY, legacy)] {
-        match room.send_raw(kind, content).await {
-            // Known at once: an answer ("ringing", "declined") can come before our own copy.
-            Ok(r) => {
-                OUR_RINGS
-                    .lock()
-                    .unwrap()
-                    .insert(r.response.event_id.to_string());
-                sent = true;
-            }
-            Err(e) => warn!("couldn't ring ({kind}): {e}"),
+    // Only the current MSC4075 format: the first version's `call.notify` was sent too, but apps
+    // that know neither showed each as its own notification. Both are still read when others
+    // ring us.
+    match room.send_raw(RTC_NOTIFICATION, notification).await {
+        // Known at once: an answer ("ringing", "declined") can come before our own copy.
+        Ok(r) => {
+            OUR_RINGS
+                .lock()
+                .unwrap()
+                .insert(r.response.event_id.to_string());
+            true
+        }
+        Err(e) => {
+            warn!("couldn't ring: {e}");
+            false
         }
     }
-    sent
 }
 
 /// Tell the caller's devices that their ring is ringing here (`CallSignal::Ringing` there).

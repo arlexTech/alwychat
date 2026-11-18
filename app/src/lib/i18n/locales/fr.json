@@ -353,7 +353,6 @@
   "Google (Firebase)": "Google (Firebase)",
   "Google doesn't know this phone's token: restart AlwyChat and try again.": "Google ne connaît pas le jeton de ce téléphone : redémarre AlwyChat et réessaie.",
   "Group chats and voice channels together": "Groupes et salons vocaux réunis",
-  "Group chats and voice channels, like a server": "Groupes et salons vocaux, comme un serveur",
   "Group name": "Nom du groupe",
   "Groups": "Groupes",
   "Hang up": "Raccrocher",
@@ -1157,5 +1156,10 @@
   "{n} in the call": {
     "one": "{n} dans l'appel",
     "other": "{n} dans l'appel"
-  }
+  },
+  "Loading the space…": "Chargement de l'espace…",
+  "Loading the rest of the space…": "Chargement du reste de l'espace…",
+  "Seen by": "Vu par",
+  "Can't show {name}'s video": "Impossible d'afficher la vidéo de {name}",
+  "Their app hasn't sent the key to decrypt it.": "Son app n'a pas envoyé la clé pour la déchiffrer."
 }

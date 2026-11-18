@@ -61,6 +61,7 @@
     onForward,
     onSelect,
     onProfile,
+    onSeen,
     album = null,
     wide = false,
   }: {
@@ -74,6 +75,8 @@
     onReact: (key: string) => void;
     /** Their photo or name tapped (groups): open their profile. */
     onProfile?: (userId: string) => void;
+    /** The read avatars under it were tapped: who read this message. */
+    onSeen?: () => void;
     onReply: () => void;
     onJumpTo: (eventId: string) => void;
     onUnlock: () => void;
@@ -716,12 +719,18 @@
     {/if}
 
     {#if seenBy.length}
-      <div class="seen" title={tr("Seen by {value}", { value: seenBy.map((r) => r.name).join(', ') })}>
-        {#each seenBy.slice(0, 5) as r (r.name)}
+      <button
+        class="seen"
+        onclick={() => onSeen?.()}
+        disabled={!onSeen}
+        title={tr("Seen by {value}", { value: seenBy.map((r) => r.name).join(', ') })}
+        aria-label={tr("Seen by {value}", { value: seenBy.map((r) => r.name).join(', ') })}
+      >
+        {#each seenBy.slice(0, 5) as r, i (r.user_id ?? `${r.name}|${i}`)}
           <span in:scale={{ duration: 200, start: 0.4 }}><Avatar name={r.name} mxc={r.avatar} size={14} /></span>
         {/each}
         {#if seenBy.length > 5}<small>+{seenBy.length - 5}</small>{/if}
-      </div>
+      </button>
     {/if}
   </div>
 </div>
@@ -1366,6 +1375,20 @@
     align-items: center;
     gap: 2px;
     margin: 3px 6px 0;
+    padding: 2px;
+    border: none;
+    border-radius: 999px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .seen:disabled {
+    cursor: default;
+  }
+  .seen:not(:disabled):hover,
+  .seen:focus-visible {
+    background: var(--surface-2);
   }
   .seen small {
     font-size: 0.7rem;

@@ -130,7 +130,13 @@ struct KeysContent {
 pub(crate) fn install(client: &Client) {
     client.add_event_handler(
         |event: Raw<AnyToDeviceEvent>, encryption: Option<EncryptionInfo>| async move {
-            if event.get_field::<String>("type").ok().flatten().as_deref() != Some(KEYS_EVENT) {
+            let kind = event.get_field::<String>("type").ok().flatten().unwrap_or_default();
+            if kind != KEYS_EVENT {
+                // Another app's call messages (FluffyChat…): say what came, to see why its media
+                // key never arrives.
+                if kind.contains("call") || kind.contains("encryption_keys") {
+                    info!(%kind, encrypted = encryption.is_some(), "call-related device message not handled");
+                }
                 return;
             }
             // A key sent in clear could come from anyone (Element Call ignores those too).

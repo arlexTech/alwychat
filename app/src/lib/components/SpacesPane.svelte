@@ -32,6 +32,7 @@
   import Pencil from "@lucide/svelte/icons/pencil";
   import { call } from "$lib/stores/call.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { spaces } from "$lib/stores/spaces.svelte";
   import Avatar from "./Avatar.svelte";
   import { spaceBanner } from "$lib/backend";
@@ -50,11 +51,17 @@
     onSelect,
     onRowMenu,
     onExit,
+    home = 0,
+    newSpace = $bindable(false),
   }: {
     selectedId: string | null;
     onSelect: (roomId: string) => void;
     /** Back from a space to the list of spaces (its chat closes then). */
     onExit?: () => void;
+    /** Changes when the Spaces tab is tapped again: back to the list of spaces. */
+    home?: number;
+    /** The "New space" page is open (the + in the header opens it). */
+    newSpace?: boolean;
     /** Right-click / long-press on a chat: the chat list's menu (pin, mute…). */
     onRowMenu?: (event: MouseEvent, room: RoomSummary) => void;
   } = $props();
@@ -73,6 +80,13 @@
   type Ref = { id: string; name: string; avatar: string | null };
   /** Spaces opened, outermost first (sub-spaces push onto it). */
   let path = $state<Ref[]>([]);
+  // The Spaces tab tapped again while in a space: back to the list.
+  let lastHome = untrack(() => home);
+  $effect(() => {
+    if (home === lastHome) return;
+    lastHome = home;
+    path = [];
+  });
   // Back to the list of spaces (← , Android back, leaving the space): its chat closes.
   let wasInSpace = false;
   $effect(() => {
@@ -102,7 +116,7 @@
         .then((b) => (remember(`banner:${id}`, b, true), current?.id === id && (banner = b)))
         .catch(() => {});
   });
-  let newSpace = $state(false);
+
   /** A space to open once it shows up (just created or joined). */
   let pending = $state<string | null>(null);
   $effect(() => {
@@ -145,9 +159,10 @@
     loading = !known;
     let first = true;
     openSpace(id, (list) => {
-      // The first answer is empty until the hierarchy arrives: keep the known list meanwhile
-      // (a later empty answer is real: the space was emptied).
-      const placeholder = first && !list.length && !!known?.length;
+      // The first answer is empty until the server's hierarchy arrives (several seconds for a
+      // big or federated space): keep loading, or the known list, meanwhile. A later empty
+      // answer is real (the core sends one once the server answered, even for an empty space).
+      const placeholder = first && !list.length;
       first = false;
       if (placeholder) return;
       remember(`space:${id}`, list, true);
@@ -167,6 +182,13 @@
   });
 
   const roomsById = $derived(new Map(chatList.rooms.map((r) => [r.id, r])));
+  /** While the space's contents load: the chats in it we already joined (known from the
+   * Spaces list, no server needed), so they're there at once. */
+  const knownJoined = $derived(
+    loading && !children.length
+      ? (spaces.list.find((s) => s.id === currentId)?.rooms ?? []).flatMap((id) => roomsById.get(id) ?? [])
+      : [],
+  );
   const unreadIn = (ids: string[]) =>
     ids.filter((id) => {
       const r = roomsById.get(id);
@@ -288,7 +310,10 @@
         if (chat) return chat.id;
       }
     }
-    return loading ? undefined : null;
+    // Still loading: a chat of the space we already joined opens at once (its exact order
+    // comes with the server's answer).
+    if (loading) return knownJoined.find((r) => !r.is_voice)?.id;
+    return null;
   });
 
   $effect(() => {
@@ -367,10 +392,6 @@
 
 {#if !current}
   <div class="list">
-    <button class="space new" onclick={() => (newSpace = true)}>
-      <span class="plus"><Plus size={22} /></span>
-      <span class="text"><strong>{tr("New space")}</strong><small>{tr("Group chats and voice channels, like a server")}</small></span>
-    </button>
     {#if spaces.loaded && spaces.list.length === 0}
       <p class="state">{tr("You haven't joined any spaces yet.")}<br />{tr("Spaces group chats together, like Discord servers.")}</p>
     {/if}
@@ -492,7 +513,13 @@
       {/each}
     {/if}
     {#if loading && !children.length}
-      {#each Array(4) as _, i (i)}<div class="skeleton"></div>{/each}
+      {#each knownJoined as room (room.id)}
+        <ChatRow {room} selected={room.id === selectedId} onclick={() => onSelect(room.id)} oncontextmenu={onRowMenu && ((e) => onRowMenu(e, room))} />
+      {/each}
+      <p class="loading-line" role="status"><LoaderCircle size={15} />{knownJoined.length ? tr("Loading the rest of the space…") : tr("Loading the space…")}</p>
+      {#if !knownJoined.length}
+        {#each Array(4) as _, i (i)}<div class="skeleton"></div>{/each}
+      {/if}
     {:else if !joinedChats.length && !voiceChannels.length && !subSpaces.length && !joinable.length && !error}
       <p class="state">{tr("This space has no chats yet.")}</p>
     {/if}
@@ -595,16 +622,6 @@
     color: var(--text);
     text-align: left;
     cursor: pointer;
-  }
-  .new .plus {
-    display: grid;
-    width: 48px;
-    height: 48px;
-    place-items: center;
-    border: 2px dashed var(--border);
-    border-radius: 14px;
-    color: var(--muted);
-    box-sizing: border-box;
   }
   .space:hover {
     background: var(--surface-hover);
@@ -849,6 +866,28 @@
   }
   .state.error {
     color: var(--danger);
+  }
+  .loading-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 10px 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .loading-line :global(svg) {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .loading-line :global(svg) {
+      animation: none;
+    }
   }
   .skeleton {
     height: 64px;

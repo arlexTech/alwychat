@@ -86,6 +86,7 @@
     setTyping,
     toggleReaction,
     type MessageEntry,
+    type Reader,
     type Picked,
     type Revision,
     type RoomSummary,
@@ -120,6 +121,7 @@
   import { saveToGallery } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
+  import ReadersSheet from "./ReadersSheet.svelte";
   import ChatView from "./ChatView.svelte";
   import { ThreadTimeline } from "$lib/stores/thread.svelte";
 
@@ -1001,6 +1003,22 @@
 
   /** The file whose Open / Save sheet is shown. */
   let fileFor = $state<MessageEntry | null>(null);
+
+  // ── Who read a message: everyone whose read receipt is on it or further down (they read it
+  // too), most recent reader first. ──
+  let readersOf = $state<MessageEntry | null>(null);
+  const readers = $derived.by((): Reader[] => {
+    const from = readersOf;
+    if (!from) return [];
+    const at = tl.entries.findIndex((e) => e.type === "message" && e.item_id === from.item_id);
+    if (at < 0) return from.seen_by;
+    const seen = new Map<string, Reader>();
+    for (const e of tl.entries.slice(at)) {
+      if (e.type !== "message") continue;
+      for (const r of e.seen_by) seen.set(r.user_id ?? r.name, r);
+    }
+    return [...seen.values()].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));
+  });
   $effect(() => {
     if (fileFor) return closeOnBack(() => (fileFor = null));
   });
@@ -1513,6 +1531,9 @@
     <button class="pin-list" onclick={() => (pinsOpen = true)} aria-label={tr("All pinned messages")}><List size={18} /></button>
   </div>
 {/if}
+{#if readersOf}
+  <ReadersSheet {readers} onClose={() => (readersOf = null)} />
+{/if}
 {#if fileFor && fileFor.content.kind === "file"}
   {@const msg = fileFor}
   <FileSheet
@@ -1648,6 +1669,7 @@
             onCopy={messageText(row.msg) ? () => copyText(messageText(row.msg)!) : undefined}
             onCopyLink={copyText}
             onProfile={room.is_dm ? undefined : (user) => (call.profile = user)}
+            onSeen={() => (readersOf = row.album?.at(-1) ?? row.msg)}
           />
           {#if editing?.item_id === row.msg.item_id}<span class="edit-tag"><Pencil size={12} />{tr("Editing")}</span>{/if}
           {#snippet failed()}<p class="broken">{tr("Couldn't show this message")}</p>{/snippet}

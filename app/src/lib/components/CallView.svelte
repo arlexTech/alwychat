@@ -13,6 +13,7 @@
   import MessageSquare from "@lucide/svelte/icons/message-square";
   import VolumeX from "@lucide/svelte/icons/volume-x";
   import { fade, fly } from "svelte/transition";
+  import { untrack } from "svelte";
   import type { Track } from "livekit-client";
   import { isAndroid, pipShape } from "$lib/backend";
   import Ear from "@lucide/svelte/icons/ear";
@@ -99,6 +100,24 @@
   let stageH = $state(0);
   /** Width / height of each tile's video, once known. */
   let ratios = $state<Record<string, number>>({});
+
+  // ── Someone's camera is on but no picture came after a few seconds: usually their media
+  // can't be decrypted (their app never sent us its key). Say so, instead of a grey tile. ──
+  let cameraSince = $state<Record<string, number>>({});
+  let clockNow = $state(Date.now());
+  $effect(() => {
+    const before = untrack(() => cameraSince);
+    const next: Record<string, number> = {};
+    for (const t of call.tiles) if (!t.isMe && (t.camera || t.cameraFrames) && !ratios[t.id]) next[t.id] = before[t.id] ?? Date.now();
+    const same = Object.keys(next).length === Object.keys(before).length && Object.keys(next).every((k) => before[k] === next[k]);
+    if (!same) cameraSince = next;
+  });
+  $effect(() => {
+    if (!Object.keys(cameraSince).length) return;
+    const timer = setInterval(() => (clockNow = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
+  const noPicture = (t: Tile) => cameraSince[t.id] !== undefined && clockNow - cameraSince[t.id] > 3000;
   function noteRatio(id: string, w: number, h: number) {
     if (!w || !h) return;
     const r = w / h;
@@ -430,7 +449,16 @@
           onresize={(e) => noteRatio(t.id, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
           onloadedmetadata={(e) => noteRatio(t.id, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
         ></video>
-      {:else}
+      {/if}
+      {#if (t.camera || t.cameraFrames) && noPicture(t)}
+        <div class="no-picture">
+          <Avatar name={t.name} mxc={t.avatar} size={small ? 32 : 48} />
+          {#if !small}
+            <strong>{tr("Can't show {name}'s video", { name: t.name })}</strong>
+            <small>{tr("Their app hasn't sent the key to decrypt it.")}</small>
+          {/if}
+        </div>
+      {:else if !t.camera && !t.cameraFrames}
         <div class="face">
           <div class="ring"><Avatar name={t.name} mxc={t.avatar} size={small ? 44 : featured ? 56 : 88} /></div>
         </div>
@@ -969,6 +997,26 @@
     to {
       box-shadow: 0 0 0 26px transparent;
     }
+  }
+  .no-picture {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px;
+    background: var(--surface);
+    text-align: center;
+  }
+  .no-picture strong {
+    font-size: 0.9rem;
+  }
+  .no-picture small {
+    max-width: 260px;
+    color: var(--muted);
+    font-size: 0.78rem;
   }
   .tile.waiting {
     background: color-mix(in srgb, var(--surface) 70%, transparent);

@@ -4,10 +4,12 @@
 
 name: iOS
 
-# Only when started by hand (Actions → iOS → Run workflow): it needs a macOS runner, the
-# costly kind, so it no longer runs on every push (2026-11-05).
+# Started by hand (Actions → iOS → Run workflow), or by a push to `beta` whose commit message
+# contains "[ios]": it needs a macOS runner, the costly kind, so not on every push.
 on:
   workflow_dispatch:
+  push:
+    branches: [beta]
 
 concurrency:
   group: ios-${{ github.ref }}
@@ -16,7 +18,10 @@ concurrency:
 jobs:
   ios:
     name: iOS (unsigned)
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ios]')
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -83,6 +88,16 @@ jobs:
         with:
           name: alwychat-iOS
           path: out/*
+      # Also on a public pre-release "ios": artifacts need a GitHub sign-in to download.
+      - name: Publish on the "ios" pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ios >/dev/null 2>&1 || gh release create ios --prerelease --target "$GITHUB_SHA" \
+            --title "iPhone (unsigned, to sign with your Apple ID)" \
+            --notes "Unsigned iPhone build: sign and install it with SideStore, AltStore or Impactor and a free Apple ID (re-sign every 7 days; no push notifications without a paid Apple account)."
+          gh release upload ios out/AlwyChat-ios-unsigned.ipa --clobber
+          echo "::notice title=iPhone build::https://github.com/${GITHUB_REPOSITORY}/releases/download/ios/AlwyChat-ios-unsigned.ipa"
       - name: Keep the generated Xcode project
         if: always()
         uses: actions/upload-artifact@v4
