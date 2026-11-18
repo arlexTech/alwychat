@@ -17,14 +17,18 @@ self.addEventListener("install", (event) => {
     (async () => {
       if (!BUILD.files.length) return;
       const cache = await caches.open(CACHE);
-      // "force-cache": what the page just downloaded comes from the browser's cache instead of
-      // the network again (this worker is only registered once the page has loaded the engine).
+      // Files with a content hash ("_app/immutable/") never change: "force-cache" takes what the
+      // page just downloaded from the browser's cache instead of the network again (this worker
+      // is only registered once the page has loaded the engine). The others (index.html…) keep
+      // their name across builds: "no-cache" asks the server, or a new build would be stored
+      // with the previous build's index.html and the app would never update.
       // All or nothing: a half-stored build would start broken offline, so a failure keeps the
       // previous build and the browser tries again later.
       await Promise.all(
         BUILD.files.map(async (path) => {
           const url = new URL(path, scope);
-          const response = await fetch(url, { cache: "force-cache" });
+          const hashed = url.pathname.startsWith(new URL("_app/immutable/", scope).pathname);
+          const response = await fetch(url, { cache: hashed ? "force-cache" : "no-cache" });
           if (!response.ok) throw new Error(`${path}: ${response.status}`);
           await cache.put(url, response);
         }),

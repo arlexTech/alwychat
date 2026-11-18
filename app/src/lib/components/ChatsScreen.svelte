@@ -146,6 +146,13 @@
     selectedId = roomId;
   }
   let selectedId = $state<string | null>(null);
+  /** Switching between Chats and Spaces closes the open chat ("Select a chat" placeholder): a
+   * chat only opens when it's clicked (or a space is, which opens its first chat). */
+  function openTab(next: "chats" | "spaces") {
+    if (tab === next) return;
+    tab = next;
+    selectedId = null;
+  }
   let settingsOpen = $state(false);
   let newChatOpen = $state(false);
   $effect(() => {
@@ -435,7 +442,7 @@
 
     {#if tab === "spaces"}
       <div class="rows">
-        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} onRowMenu={openRowMenu} />
+        <SpacesPane {selectedId} onSelect={(id) => (selectedId = id)} onRowMenu={openRowMenu} onExit={() => (selectedId = null)} />
       </div>
     {:else}
     <input class="search" type="search" placeholder={tr("Search")} bind:value={query} />
@@ -502,11 +509,11 @@
 
     <CallDock />
     <nav class="tabbar">
-      <button class:active={tab === "chats"} onclick={() => (tab = "chats")}>
+      <button class:active={tab === "chats"} onclick={() => openTab("chats")}>
         <span class="tab-icon"><MessageCircle size={22} />{#if chatsUnread}<span class="dot">{chatsUnread}</span>{/if}</span>
         {tr("Chats")}
       </button>
-      <button class:active={tab === "spaces"} onclick={() => (tab = "spaces")}>
+      <button class:active={tab === "spaces"} onclick={() => openTab("spaces")}>
         <span class="tab-icon"><LayoutGrid size={22} />{#if spacesUnread}<span class="dot">{spacesUnread}</span>{/if}</span>
         {tr("Spaces")}
       </button>

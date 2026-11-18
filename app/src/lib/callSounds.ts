@@ -112,14 +112,19 @@ export function playCue(name: CallCue, volume = 1) {
   try {
     context ??= new AudioContext();
     const ctx = context;
-    void ctx.resume();
-    const out = chain(ctx);
-    const now = ctx.currentTime + 0.02;
-    level!.gain.setValueAtTime(loudness(volume), now);
     const cue = CUES[name];
-    cue.notes.forEach((freq, i) =>
-      note(ctx, out, freq, now + i * cue.step, i < cue.notes.length - 1 ? now + (i + 1) * cue.step : null, cue),
-    );
+    const play = () => {
+      const out = chain(ctx);
+      const now = ctx.currentTime + 0.03;
+      level!.gain.setValueAtTime(loudness(volume), now);
+      cue.notes.forEach((freq, i) =>
+        note(ctx, out, freq, now + i * cue.step, i < cue.notes.length - 1 ? now + (i + 1) * cue.step : null, cue),
+      );
+    };
+    // A suspended context (new, or paused by the system) keeps its clock still: notes scheduled
+    // before it runs again would lose their start.
+    if (ctx.state === "running") play();
+    else ctx.resume().then(play, () => {});
   } catch {
     // No audio output available: cues are a nicety.
   }

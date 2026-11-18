@@ -129,7 +129,10 @@ async function startMediaWorker(mod: WebCore) {
     const { data } = event;
     if (data?.type !== "alwychat-media") return;
     const port = event.ports[0];
-    mod.media(data.path, data.query).then(
+    // Right after a start the page may ask before the saved session is back: wait for it.
+    Promise.resolve(restoring)
+      .then(() => mod.media(data.path, data.query))
+      .then(
       (media) => port.postMessage(media, [media.bytes.buffer]),
       (e) => port.postMessage({ error: String(e) }),
     );

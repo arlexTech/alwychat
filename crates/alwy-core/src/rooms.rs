@@ -10,7 +10,10 @@ use matrix_sdk::{
     notification_settings::RoomNotificationMode,
     ruma::{
         OwnedUserId,
-        events::{AnyMessageLikeEventContent, AnySyncTimelineEvent, room::message::MessageType},
+        events::{
+            AnyMessageLikeEventContent, AnySyncStateEvent, AnySyncTimelineEvent, SyncStateEvent,
+            room::message::{MessageType, Relation},
+        },
         room::RoomType,
     },
 };
@@ -331,7 +334,8 @@ async fn latest_message(room: &Room, is_dm: bool) -> Option<LatestMessage> {
                     Some(content) => preview(&content)?,
                     None => "Message deleted".to_owned(),
                 },
-                _ => return None,
+                Ok(AnySyncTimelineEvent::State(ev)) => state_preview(&ev)?,
+                Err(_) => return None,
             };
             (event.sender(), text, false)
         }
@@ -365,23 +369,59 @@ async fn member_name(room: &Room, user: &matrix_sdk::ruma::UserId) -> String {
     }
 }
 
+/// The state events matrix-sdk may pick as a chat's latest event (see its
+/// `filter_any_sync_state_event`): live location starting or ending, our own join, a knock.
+fn state_preview(event: &AnySyncStateEvent) -> Option<String> {
+    Some(match event {
+        AnySyncStateEvent::BeaconInfo(SyncStateEvent::Original(info)) => {
+            if info.content.is_live() {
+                "📍 Live location".to_owned()
+            } else {
+                "📍 Live location ended".to_owned()
+            }
+        }
+        AnySyncStateEvent::RoomMember(SyncStateEvent::Original(member)) => {
+            match member.content.membership {
+                matrix_sdk::ruma::events::room::member::MembershipState::Knock => {
+                    "Asks to join".to_owned()
+                }
+                matrix_sdk::ruma::events::room::member::MembershipState::Join => {
+                    "Joined the chat".to_owned()
+                }
+                _ => return None,
+            }
+        }
+        _ => return None,
+    })
+}
+
 /// One-line, human preview of a message, or `None` if it shouldn't appear in the list.
 pub(crate) fn preview(content: &AnyMessageLikeEventContent) -> Option<String> {
     Some(match content {
-        AnyMessageLikeEventContent::RoomMessage(msg) => match &msg.msgtype {
-            MessageType::Image(_) => "📷 Photo".to_owned(),
-            MessageType::Video(_) => "🎬 Video".to_owned(),
-            MessageType::Audio(a) if a.voice.is_some() => "🎤 Voice message".to_owned(),
-            MessageType::Audio(_) => "🎵 Audio".to_owned(),
-            MessageType::File(f) => format!("📎 {}", f.filename()),
-            MessageType::Location(_) => "📍 Location".to_owned(),
-            MessageType::Emote(e) => format!("* {}", e.body),
-            other => other.body().to_owned(),
+        AnyMessageLikeEventContent::RoomMessage(msg) => match &msg.relates_to {
+            // An edit: its new text, not the "* text" fallback for older apps.
+            Some(Relation::Replacement(edit)) => message_preview(&edit.new_content.msgtype),
+            _ => message_preview(&msg.msgtype),
         },
         AnyMessageLikeEventContent::Sticker(_) => "Sticker".to_owned(),
         AnyMessageLikeEventContent::UnstablePollStart(_) => "📊 Poll".to_owned(),
+        AnyMessageLikeEventContent::RtcNotification(_)
+        | AnyMessageLikeEventContent::CallInvite(_) => "📞 Call".to_owned(),
         _ => return None,
     })
+}
+
+fn message_preview(msgtype: &MessageType) -> String {
+    match msgtype {
+        MessageType::Image(_) => "📷 Photo".to_owned(),
+        MessageType::Video(_) => "🎬 Video".to_owned(),
+        MessageType::Audio(a) if a.voice.is_some() => "🎤 Voice message".to_owned(),
+        MessageType::Audio(_) => "🎵 Audio".to_owned(),
+        MessageType::File(f) => format!("📎 {}", f.filename()),
+        MessageType::Location(_) => "📍 Location".to_owned(),
+        MessageType::Emote(e) => format!("* {}", e.body),
+        other => other.body().to_owned(),
+    }
 }
 
 fn truncate(text: &str) -> String {
@@ -487,5 +527,64 @@ mod tests {
         assert!(is_voice_type(Some(&RoomType::from("io.element.video"))));
         assert!(!is_voice_type(Some(&RoomType::Space)));
         assert!(!is_voice_type(None));
+    }
+
+    fn event(json: serde_json::Value) -> AnySyncTimelineEvent {
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn message_preview_of(content: serde_json::Value, kind: &str) -> Option<String> {
+        let ev = event(serde_json::json!({
+            "type": kind, "event_id": "$e", "sender": "@a:x", "origin_server_ts": 1, "content": content,
+        }));
+        let AnySyncTimelineEvent::MessageLike(ev) = ev else {
+            panic!()
+        };
+        preview(&ev.original_content()?)
+    }
+
+    #[test]
+    fn previews() {
+        // An edit shows its new text, not "* text".
+        let edit = serde_json::json!({
+            "msgtype": "m.text", "body": "* fixed",
+            "m.new_content": {"msgtype": "m.text", "body": "fixed"},
+            "m.relates_to": {"rel_type": "m.replace", "event_id": "$old"},
+        });
+        assert_eq!(
+            message_preview_of(edit, "m.room.message").as_deref(),
+            Some("fixed")
+        );
+        let ring = serde_json::json!({
+            "notification_type": "ring", "sender_ts": 1, "lifetime": 30000,
+            "m.mentions": {"room": true},
+        });
+        assert_eq!(
+            message_preview_of(ring, "m.rtc.notification").as_deref(),
+            Some("📞 Call")
+        );
+
+        // A share counts as live until its timeout, from when it started.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let beacon = |live: bool| {
+            event(serde_json::json!({
+                "type": "org.matrix.msc3672.beacon_info", "state_key": "@a:x", "event_id": "$b",
+                "sender": "@a:x", "origin_server_ts": 1,
+                "content": {"live": live, "timeout": 60000, "org.matrix.msc3488.ts": now,
+                    "org.matrix.msc3488.asset": {"type": "m.self"}},
+            }))
+        };
+        for (live, text) in [
+            (true, "📍 Live location"),
+            (false, "📍 Live location ended"),
+        ] {
+            let AnySyncTimelineEvent::State(ev) = beacon(live) else {
+                panic!()
+            };
+            assert_eq!(state_preview(&ev).as_deref(), Some(text));
+        }
     }
 }

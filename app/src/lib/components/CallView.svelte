@@ -28,7 +28,7 @@
   import SoundboardPanel from "./SoundboardPanel.svelte";
   import RingPanel from "./RingPanel.svelte";
   import PhoneCall from "@lucide/svelte/icons/phone-call";
-  import { chatList } from "$lib/stores/chatList.svelte";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
   import { keyName } from "$lib/keys";
@@ -64,7 +64,8 @@
           : null,
   );
   /** Ringing people in: group calls and voice channels (a 1:1 call already rings). */
-  const canRing = $derived(!!call.roomId && chatList.rooms.find((r) => r.id === call.roomId)?.is_dm === false);
+  // Voice channels and group calls (a voice channel isn't always in the chat list).
+  const canRing = $derived(!!call.roomId && !call.isDm);
   type Tile = (typeof call.tiles)[number];
   type Spot = "screen" | "camera" | "person";
   const hasScreen = (t: Tile) => !!(t.screen || t.screenFrames);
@@ -90,7 +91,9 @@
   const me = $derived(call.tiles.find((t) => t.isMe) ?? null);
   const others = $derived(call.tiles.filter((t) => !t.isMe));
   // (With someone in the big spot, everyone, us too, is in the strip below it.)
-  const floatMe = $derived(!!me && others.length > 0 && !featured);
+  /** People being rung who haven't joined: tiles of their own ("Calling…" / "Ringing…"). */
+  const waiting = $derived(call.waiting);
+  const floatMe = $derived(!!me && (others.length > 0 || waiting.length > 0) && !featured);
   const gridTiles = $derived(floatMe ? others : call.tiles);
   let stageW = $state(0);
   let stageH = $state(0);
@@ -112,7 +115,7 @@
   );
   /** Columns × rows that show the most of everyone (video area, avatars as squares). */
   const layout = $derived.by(() => {
-    const n = gridTiles.length;
+    const n = gridTiles.length + (featured ? 0 : waiting.length);
     const fallback = { cols: Math.ceil(Math.sqrt(n || 1)), w: 0, h: 0 };
     if (!n || !stageW || !stageH) return fallback;
     let best = { ...fallback, score: -1 };
@@ -132,6 +135,7 @@
           score += side * side * 0.5;
         }
       }
+      if (!featured) score += waiting.length * Math.min(w, h) ** 2 * 0.5;
       if (score > best.score) best = { cols, w, h, score };
     }
     return best;
@@ -196,9 +200,12 @@
     }
     return cams.find((t) => t.isMe) ?? null;
   });
-  // Android: a screen gets a wide picture-in-picture window.
+  // Android: a screen or a landscape camera gets a wide picture-in-picture window (a portrait
+  // window cropped the sides off them).
   $effect(() => {
-    if (isAndroid && call.active) void pipShape(pipMain?.what === "screen").catch(() => {});
+    const main = pipMain;
+    const wide = main?.what === "screen" || (main?.what === "camera" && (ratios[main.tile.id] ?? 0) > 1.1);
+    if (isAndroid && call.active) void pipShape(wide).catch(() => {});
   });
   function toggleFocus(key: string) {
     if (longPressed) return void (longPressed = false);
@@ -248,6 +255,14 @@
     isMe: t.isMe,
     live: true,
   });
+  /** A tap outside the soundboard, ring or options panel closes it (its own header button
+   * toggles it, sheets and dialogs it opens count as inside). */
+  function closePanels(e: PointerEvent) {
+    if (!soundsOpen && !optionsOpen && !call.ringPanel) return;
+    const target = e.target as Element | null;
+    if (target?.closest(".panel, .options-panel, .icon.sounds, .icon.ring, .icon.options, [role=dialog]")) return;
+    soundsOpen = optionsOpen = call.ringPanel = false;
+  }
   let optionsOpen = $state(false);
   let soundsOpen = $state(false);
   // This view outlives calls: the next one starts with panels closed and nothing focused.
@@ -266,7 +281,7 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => onKey(e, true)} onkeyup={(e) => onKey(e, false)} onblur={() => call.talk(false)} />
+<svelte:window onkeydown={(e) => onKey(e, true)} onkeyup={(e) => onKey(e, false)} onblur={() => call.talk(false)} onpointerdown={closePanels} />
 
 {#if call.notice && !call.active}
   <div class="notice" transition:fly={{ y: -16, duration: 180 }}>{call.notice}</div>
@@ -429,6 +444,7 @@
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div
             class="tile"
+            class:lost={t.lost}
             class:speaking={t.speaking && item.what !== "screen"}
             class:focused={focus === item.key}
             style:width={!featured && layout.w ? `${layout.w}px` : null}
@@ -451,11 +467,28 @@
               <span class="name"><MonitorUp size={13} />{t.isMe ? tr("Your screen") : tr("{name}'s screen", { name: t.name })}</span>
             {:else}
             {@render picture(t, false)}
+            {#if t.lost}
+              <span class="state lost-state"><LoaderCircle size={14} />{tr("Reconnecting…")}</span>
+            {/if}
             <span class="name">
               {#if t.isMe && call.deafened}<HeadphoneOff size={13} />{:else if !t.micOn}<MicOff size={13} />{/if}{t.isMe ? tr("You") : t.name}
               {#if !t.isMe && call.isMutedForMe(t.userId)}<small><VolumeX size={13} /></small>{:else if !t.isMe && call.volumeOf(t.userId) !== 1}<small>{Math.round(call.volumeOf(t.userId) * 100)}%</small>{/if}
             </span>
             {/if}
+          </div>
+        {/each}
+        {#each waiting as w (w.userId)}
+          <div
+            class="tile waiting"
+            style:width={!featured && layout.w ? `${layout.w}px` : null}
+            style:height={!featured && layout.h ? `${layout.h}px` : null}
+            transition:fade={{ duration: 150 }}
+          >
+            <div class="face">
+              <div class="ring pulse"><Avatar name={w.name} mxc={w.avatar} size={featured ? 56 : 88} /></div>
+            </div>
+            <span class="state">{w.status === "ringing" ? tr("Ringing…") : tr("Calling…")}</span>
+            <span class="name">{w.name}</span>
           </div>
         {/each}
       </div>
@@ -924,6 +957,56 @@
     padding: 4px;
     border-radius: 50%;
     transition: box-shadow 0.15s var(--ease);
+  }
+  /* Being rung: a slow pulse around their photo. */
+  .ring.pulse {
+    animation: ring-pulse 1.6s ease-out infinite;
+  }
+  @keyframes ring-pulse {
+    from {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-a) 55%, transparent);
+    }
+    to {
+      box-shadow: 0 0 0 26px transparent;
+    }
+  }
+  .tile.waiting {
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    cursor: default;
+  }
+  /* Connection lost: dimmed until they're back (or leave after LiveKit's timeout). */
+  .tile.lost > :not(.state):not(.name) {
+    opacity: 0.4;
+    filter: grayscale(0.6);
+  }
+  .state {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 11px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: rgb(0 0 0 / 0.55);
+    color: #fff;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  .lost-state :global(svg) {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ring.pulse,
+    .lost-state :global(svg) {
+      animation: none;
+    }
   }
   .speaking .ring {
     box-shadow: 0 0 0 3px #31d158, 0 0 24px #31d15866;

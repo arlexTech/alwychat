@@ -86,6 +86,17 @@ export interface Tile {
   /** Native calls: frame keys of the camera / screen (drawn by NativeVideo.svelte). */
   cameraFrames: string | null;
   screenFrames: string | null;
+  /** Their connection is lost: they come back, or leave after LiveKit's timeout. */
+  lost: boolean;
+}
+
+/** Someone rung into the call who hasn't joined yet. */
+export interface Waiting {
+  userId: string;
+  name: string;
+  avatar: string | null;
+  /** "ringing": one of their devices said it rings (AlwyChat only; other apps never say). */
+  status: "calling" | "ringing";
 }
 
 type Status = "connecting" | "connected" | "reconnecting";
@@ -157,6 +168,8 @@ const userOf = (identity: string) => {
 class CallStore {
   roomId = $state<string | null>(null);
   roomName = $state("");
+  /** The call is in a 1:1 chat (nobody else to ring into it). */
+  isDm = $state(false);
   status = $state<Status | null>(null);
   error = $state<string | null>(null);
   micOn = $state(true);
@@ -223,6 +236,26 @@ class CallStore {
   ringingDevices = $state<string[]>([]);
   /** People rung into this call, by user ID (until they join). */
   invites = $state<Record<string, Invite>>({});
+
+  /** Who we're ringing and who hasn't joined yet: the other person of a 1:1 call we started,
+   * and people rung in with "Ring someone". Shown as tiles in the call. */
+  get waiting(): Waiting[] {
+    const out: Waiting[] = [];
+    const person = (userId: string) => this.people.find((m) => m.user_id === userId);
+    if (this.calling) {
+      for (const m of this.people) {
+        if (m.is_me || m.user_id === chatList.userId) continue;
+        out.push({ userId: m.user_id, name: m.name, avatar: m.avatar, status: this.ringingDevices.length ? "ringing" : "calling" });
+      }
+    }
+    for (const [userId, invite] of Object.entries(this.invites)) {
+      if (invite.status !== "calling" && invite.status !== "ringing") continue;
+      if (out.some((w) => w.userId === userId)) continue;
+      const m = person(userId);
+      out.push({ userId, name: m?.name ?? userId.slice(1).split(":")[0], avatar: m?.avatar ?? null, status: invite.status });
+    }
+    return out;
+  }
   #inviteTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** The "Ring someone" panel is open in the call view. */
   ringPanel = $state(false);
@@ -259,7 +292,7 @@ class CallStore {
       void launchCall().then((link) => link && this.#link(link)).catch(() => {});
       // The ringtone waits while the app is in the background (the notification rings then).
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible" && this.incoming) startRinging();
+        if (document.visibilityState === "visible" && this.incoming && !this.ringSilenced) startRinging();
       });
       void onCallAction((action) => {
         if (action === "hang_up") void this.leave();
@@ -318,6 +351,7 @@ class CallStore {
   #ring(ring: Ring, alert = true) {
     if (this.active || this.incoming) return;
     this.incoming = ring;
+    this.ringSilenced = false;
     if (!isAndroid || document.visibilityState === "visible") startRinging();
     clearTimeout(this.#ringEnd);
     this.#ringEnd = setTimeout(() => this.stopRing(), Math.max(0, ring.expires_at - Date.now()));
@@ -406,6 +440,13 @@ class CallStore {
     this.invites = next;
   }
 
+  /** The incoming call keeps showing, without sound or vibration ("Silence"). */
+  ringSilenced = $state(false);
+  silenceRing() {
+    this.ringSilenced = true;
+    stopRinging();
+  }
+
   /** The ring ended without an answer here (timeout, caller hung up, answered elsewhere). */
   stopRing() {
     clearTimeout(this.#ringEnd);
@@ -455,6 +496,8 @@ class CallStore {
     if (this.roomId === room.id) return void (this.minimized = false);
     if (this.incoming?.room_id === room.id) this.stopRing();
     await this.leave();
+    // A first guess for "Calling…" (the core says for sure once it joined: the chat list's
+    // copy of who's in the call lags right after a call).
     this.calling = ringing && room.is_dm && room.in_call.length === 0;
     if (this.calling) {
       this.#noAnswer = setTimeout(() => {
@@ -465,6 +508,7 @@ class CallStore {
     if (!this.native) void loadEngine().catch(() => {});
     this.roomId = room.id;
     this.roomName = room.name;
+    this.isDm = room.is_dm;
     this.status = "connecting";
     this.error = null;
     this.minimized = inPlace && this.docked;
@@ -488,7 +532,15 @@ class CallStore {
       .catch(() => {});
 
     try {
-      const { url, jwt, encrypted } = await joinCall(room.id, video);
+      const { url, jwt, encrypted, rang } = await joinCall(room.id, video);
+      if (ringing && rang !== this.calling) {
+        this.calling = rang;
+        clearTimeout(this.#noAnswer);
+        if (rang)
+          this.#noAnswer = setTimeout(() => {
+            if (this.calling && this.roomId === room.id) void this.leave().then(() => this.#tell(tr("No answer")));
+          }, NO_ANSWER_MS);
+      }
       if (this.native) {
         // Before awaiting: the first member snapshot comes while joining.
         this.#nativeIn = true;
@@ -551,6 +603,7 @@ class CallStore {
         .on(RoomEvent.LocalTrackPublished, () => this.#sync())
         .on(RoomEvent.LocalTrackUnpublished, () => this.#sync())
         .on(RoomEvent.ActiveSpeakersChanged, () => this.#sync())
+        .on(RoomEvent.ConnectionQualityChanged, () => this.#sync())
         .on(RoomEvent.ConnectionStateChanged, (state) => {
           if (state === ConnectionState.Connected) this.#connectedNow();
           else if (state === ConnectionState.Reconnecting) this.status = "reconnecting";
@@ -671,7 +724,10 @@ class CallStore {
     const wasIn = this.roomId !== null;
     if (wasIn && isAndroid) {
       callNotification(false).catch(() => {});
-      callAudio(null).catch(() => {});
+      // Leaving the call audio mode re-routes the sound: let the leave sound finish first.
+      setTimeout(() => {
+        if (this.roomId === null) callAudio(null).catch(() => {});
+      }, 1200);
     }
     this.roomId = null;
     this.chatOpen = false;
@@ -1018,6 +1074,7 @@ class CallStore {
       screen: screen?.track && !screen.isMuted ? screen.track : null,
       cameraFrames: null,
       screenFrames: null,
+      lost: !isMe && (p.connectionQuality as string) === "lost",
     };
   }
 
@@ -1036,6 +1093,7 @@ class CallStore {
       screen: null,
       cameraFrames: m.camera,
       screenFrames: m.screen,
+      lost: !m.is_local && m.lost,
     };
   }
 
@@ -1077,15 +1135,18 @@ class CallStore {
     this.#sharing = sharing;
     if (joined) this.#cue("peerJoin");
     else if (left) this.#cue("peerLeave");
-    // A 1:1 call ends when the other person hangs up (like phone apps); a short grace period
-    // so a reconnecting phone doesn't end it.
-    if (left && now.size === 0 && chatList.rooms.find((r) => r.id === this.roomId)?.is_dm) {
+    if (shared) this.#cue("screen");
+    // A 1:1 call ends when the other person hangs up, at once (like phone apps): LiveKit only
+    // says someone left when they did (a lost connection waits for a timeout first). While we
+    // are reconnecting ourselves, a short grace period instead.
+    if (left && now.size === 0 && this.isDm) {
       const roomId = this.roomId;
-      setTimeout(() => {
+      const end = () => {
         if (this.roomId === roomId && this.#present?.size === 0) void this.leave().then(() => this.#tell(tr("Call ended")));
-      }, 4000);
+      };
+      if (this.status === "connected") end();
+      else setTimeout(end, 4000);
     }
-    else if (shared) this.#cue("screen");
   }
 }
 

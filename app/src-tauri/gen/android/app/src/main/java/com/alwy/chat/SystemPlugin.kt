@@ -57,6 +57,11 @@ class PipShapeArgs {
 }
 
 @InvokeArg
+class RingArgs {
+  var on: Boolean = false
+}
+
+@InvokeArg
 class AudioArgs {
   /** null: the call ended (back to normal audio). */
   var speaker: Boolean? = null
@@ -205,6 +210,14 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     } else {
       LocationService.stop(activity)
     }
+    invoke.resolve()
+  }
+
+  /** The app on screen rings for an incoming call (see IncomingCall.ringInApp). */
+  @Command
+  fun ringInApp(invoke: Invoke) {
+    val args = invoke.parseArgs(RingArgs::class.java)
+    IncomingCall.ringInApp(activity, args.on)
     invoke.resolve()
   }
 

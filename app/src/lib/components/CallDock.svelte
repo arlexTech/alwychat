@@ -12,7 +12,6 @@
   import { slide } from "svelte/transition";
   import PhoneCall from "@lucide/svelte/icons/phone-call";
   import { call } from "$lib/stores/call.svelte";
-  import { chatList } from "$lib/stores/chatList.svelte";
 
   /** The call's controls while the call screen is closed (Discord's voice panel): under the
    * chat list, and on narrow screens (one row) also above the composer of an open chat, where
@@ -30,7 +29,8 @@
             : tr("Calling…")
           : tr("Connected"),
   );
-  const canRing = $derived(!!call.roomId && chatList.rooms.find((r) => r.id === call.roomId)?.is_dm === false);
+  // Voice channels and group calls (a voice channel isn't always in the chat list).
+  const canRing = $derived(!!call.roomId && !call.isDm);
 </script>
 
 {#if call.active && call.minimized && (!inChat || compact)}

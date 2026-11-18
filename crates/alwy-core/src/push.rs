@@ -118,9 +118,9 @@ pub struct PushCall {
     pub expires_at: u64,
 }
 
-/// Rooms whose call was already shown by push (callers send two ring formats at once).
-static PUSHED_RINGS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
-    std::sync::LazyLock::new(Default::default);
+/// Rings already shown by push (callers send two ring formats at once).
+static PUSHED_RINGS: std::sync::Mutex<crate::rtc::RecentRings> =
+    std::sync::Mutex::new(crate::rtc::RecentRings::new());
 
 impl crate::Core {
     /// The push gateway our homeserver advertises (asked each time: it's one small request at
@@ -329,7 +329,12 @@ impl crate::Core {
             && let Some(own) = own.as_deref()
             && let Some((video, expires_at)) = crate::rtc::fresh_ring(raw, own)
         {
-            if !first_ring(room_id, expires_at) {
+            let sent = raw
+                .get_field::<u64>("origin_server_ts")
+                .ok()
+                .flatten()
+                .unwrap_or(expires_at);
+            if !first_ring(room_id, sent) {
                 return Ok(None);
             }
             crate::rtc::say_ringing_soon(&client, room_id, event.sender(), event_id.as_str());
@@ -483,15 +488,15 @@ impl crate::Core {
             return None;
         }
         let (video, expires_at) = crate::rtc::fresh_ring(raw, client.user_id()?)?;
-        if !first_ring(room_id, expires_at) {
-            return None;
-        }
-        crate::rtc::say_ringing_soon(client, room_id, &sender, event_id.as_str());
         let sent = raw
             .get_field::<u64>("origin_server_ts")
             .ok()
             .flatten()
             .unwrap_or(expires_at);
+        if !first_ring(room_id, sent) {
+            return None;
+        }
+        crate::rtc::say_ringing_soon(client, room_id, &sender, event_id.as_str());
         let name = room
             .get_member_no_sync(&sender)
             .await
@@ -518,14 +523,12 @@ impl crate::Core {
     }
 }
 
-/// False if this room's call was already shown (callers send two ring formats at once).
-fn first_ring(room_id: &RoomId, expires_at: u64) -> bool {
-    let mut pushed = PUSHED_RINGS.lock().unwrap();
-    let now: u64 = matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now()
-        .get()
-        .into();
-    pushed.retain(|_, until| *until > now);
-    pushed.insert(room_id.to_string(), expires_at).is_none()
+/// False if this is the second format of a ring already shown (`sent`: its server time).
+fn first_ring(room_id: &RoomId, sent: u64) -> bool {
+    PUSHED_RINGS
+        .lock()
+        .unwrap()
+        .insert(room_id.to_string(), sent)
 }
 
 /// The gateway couldn't be reached at all (an address only the homeserver can reach).

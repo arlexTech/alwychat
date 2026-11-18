@@ -1,4 +1,9 @@
 // A soft two-note ringtone made with WebAudio (no audio file to ship), plus vibration on phones.
+// Android plays the phone's own ringtone instead: the webview's sound and vibration only work
+// after a tap on the page, and the ringtone follows the ring / vibrate / silent mode.
+import { isAndroid, isTauri, ringInApp } from "$lib/backend";
+
+const nativeRing = isAndroid && isTauri;
 
 let context: AudioContext | null = null;
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -22,6 +27,10 @@ function chime(ctx: AudioContext) {
 
 /** Start ringing until `stopRinging()`. */
 export function startRinging() {
+  if (nativeRing) {
+    ringInApp(true).catch((e) => console.warn("ring", e));
+    return;
+  }
   stopRinging();
   try {
     context ??= new AudioContext();
@@ -38,6 +47,7 @@ export function startRinging() {
 }
 
 export function stopRinging() {
+  if (nativeRing) ringInApp(false).catch(() => {});
   clearInterval(timer);
   timer = undefined;
   navigator.vibrate?.(0);

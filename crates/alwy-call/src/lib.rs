@@ -44,6 +44,8 @@ pub struct CallMember {
     pub camera: Option<String>,
     /// Key of their shared screen's frames, if any.
     pub screen: Option<String>,
+    /// Their connection to the call is lost (they reconnect, or leave after a timeout).
+    pub lost: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -702,6 +704,7 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
         ),
         camera: shared.camera.as_ref().map(|_| LOCAL_CAMERA.to_owned()),
         screen: shared.screen.as_ref().map(|_| LOCAL_SCREEN.to_owned()),
+        lost: false,
     }];
     let mut others: Vec<_> = room
         .remote_participants()
@@ -715,6 +718,7 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
                 mic_on: has_live_mic(publications.values().map(|p| (p.source(), p.is_muted()))),
                 camera: video_key(&publications, TrackSource::Camera, &shared.watching),
                 screen: video_key(&publications, TrackSource::Screenshare, &shared.watching),
+                lost: p.connection_quality() == livekit::prelude::ConnectionQuality::Lost,
             }
         })
         .collect();
@@ -807,7 +811,8 @@ async fn follow(
             | RoomEvent::TrackMuted { .. }
             | RoomEvent::TrackUnmuted { .. }
             | RoomEvent::LocalTrackPublished { .. }
-            | RoomEvent::ActiveSpeakersChanged { .. } => sink(snapshot(&room)),
+            | RoomEvent::ActiveSpeakersChanged { .. }
+            | RoomEvent::ConnectionQualityChanged { .. } => sink(snapshot(&room)),
             _ => {}
         }
     }

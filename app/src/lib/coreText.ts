@@ -16,6 +16,11 @@ export function coreTexts(): Record<string, string> {
     "📍 Location": tr("📍 Location"),
     Sticker: tr("Sticker"),
     "📊 Poll": tr("📊 Poll"),
+    "📞 Call": tr("📞 Call"),
+    "📍 Live location": tr("📍 Live location"),
+    "📍 Live location ended": tr("📍 Live location ended"),
+    "Asks to join": tr("Asks to join"),
+    "Joined the chat": tr("Joined the chat"),
   };
 }
 

@@ -164,6 +164,8 @@ pub fn set_event_handler(handler: js_sys::Function) {
     let core = core();
     core.on_session_ended(|| emit("session-ended", ()));
     core.on_call_signal(|signal| emit("call-signal", signal));
+    // Call media keys that arrive during a call (the page's LiveKit decrypts with them).
+    core.on_call_key(|key| emit("call-key", key));
     core.on_draft(|change| emit("draft", change));
     core.on_notification(|n| emit("notification", n));
 }

@@ -40,6 +40,10 @@ object IncomingCall {
     if (!manager.areNotificationsEnabled()) return
     val left = call.getLong("expires_at") - System.currentTimeMillis()
     if (left <= 0) return
+    // The same ring can arrive twice (push, and the running app's own sync): posting it again
+    // would make Android stop the ringtone without starting it again (vibration only).
+    val event = call.getString("notification_id")
+    if (ringing == roomId && shownEvent == event) return
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val channel = NotificationChannel(CHANNEL, "Incoming calls", NotificationManager.IMPORTANCE_HIGH)
       channel.setSound(
@@ -94,13 +98,15 @@ object IncomingCall {
     // Rings until answered (FLAG_INSISTENT repeats the sound).
     notification.flags = notification.flags or android.app.Notification.FLAG_INSISTENT
     shownRoom = roomId
+    shownEvent = event
     // Through a short foreground service, so the app stays awake while it rings (see RingService).
     if (!RingService.start(context, notification) && !fallback(context, notification)) return
     ring(context.applicationContext, roomId, left)
   }
 
-  /** The room of the ring on screen. */
+  /** The room of the ring on screen, and its call notification event. */
   private var shownRoom: String? = null
+  private var shownEvent: String? = null
 
   /** The ring as a plain notification (no foreground service allowed). */
   fun fallback(context: Context, notification: android.app.Notification): Boolean {
@@ -130,23 +136,7 @@ object IncomingCall {
   private fun ring(context: Context, roomId: String, left: Long) {
     stopRinging(context)
     ringing = roomId
-    // Silent mode is left to Android (it mutes ringtone vibrations then): some phones report
-    // their vibrate mode as "silent" to apps (OnePlus), which would never vibrate otherwise.
-    val quiet = context.getSystemService(NotificationManager::class.java).currentInterruptionFilter !=
-      NotificationManager.INTERRUPTION_FILTER_ALL
-    if (!quiet) {
-      try {
-        val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-          vibrator(context).vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_RINGTONE))
-        else @Suppress("DEPRECATION") vibrator(context).vibrate(
-          effect,
-          AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build(),
-        )
-      } catch (e: Exception) {
-        Log.w("AlwyChat", "ring vibration: $e")
-      }
-    }
+    vibrateLikeRinging(context)
     main.postDelayed({ if (ringing == roomId) cancel(context, roomId) }, left)
     fun check() {
       main.postDelayed({
@@ -168,6 +158,63 @@ object IncomingCall {
     check()
   }
 
+  private fun vibrateLikeRinging(context: Context) {
+    // Silent mode is left to Android (it mutes ringtone vibrations then): some phones report
+    // their vibrate mode as "silent" to apps (OnePlus), which would never vibrate otherwise.
+    val quiet = context.getSystemService(NotificationManager::class.java).currentInterruptionFilter !=
+      NotificationManager.INTERRUPTION_FILTER_ALL
+    if (quiet) return
+    try {
+      val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        vibrator(context).vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_RINGTONE))
+      else @Suppress("DEPRECATION") vibrator(context).vibrate(
+        effect,
+        AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build(),
+      )
+    } catch (e: Exception) {
+      Log.w("AlwyChat", "ring vibration: $e")
+    }
+  }
+
+  // ── The app on screen shows the call itself (no notification, so Android doesn't ring): it
+  // plays the phone's ringtone and ringtone vibration here, which follow the ring / vibrate /
+  // silent mode like a phone call (the webview's own sound and vibration need a tap first). ──
+  private var tone: android.media.Ringtone? = null
+  private var toneStarted = 0L
+
+  fun ringInApp(context: Context, on: Boolean) {
+    val app = context.applicationContext
+    tone?.stop()
+    tone = null
+    toneStarted = 0L
+    if (!on) {
+      if (ringing == null) {
+        try {
+          vibrator(app).cancel()
+        } catch (_: Exception) {}
+      }
+      return
+    }
+    vibrateLikeRinging(app)
+    // Rings last 2 minutes at most: stop by then even if the page never says so (paused).
+    val started = System.nanoTime()
+    toneStarted = started
+    main.postDelayed({ if (toneStarted == started) ringInApp(app, false) }, 120_000)
+    try {
+      tone = RingtoneManager.getRingtone(app, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))?.apply {
+        audioAttributes = AudioAttributes.Builder()
+          .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+          .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+          .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) isLooping = true
+        play()
+      }
+    } catch (e: Exception) {
+      Log.w("AlwyChat", "ringtone: $e")
+    }
+  }
+
   private fun stopRinging(context: Context) {
     ringing = null
     main.removeCallbacksAndMessages(null)
@@ -180,6 +227,7 @@ object IncomingCall {
     if (ringing == roomId) stopRinging(context.applicationContext)
     if (shownRoom == roomId) {
       shownRoom = null
+      shownEvent = null
       RingService.stop(context)
     }
     NotificationManagerCompat.from(context).cancel(TAG + roomId, ID)
@@ -189,6 +237,7 @@ object IncomingCall {
   fun cancelAll(context: Context) {
     if (ringing != null) stopRinging(context.applicationContext)
     shownRoom = null
+    shownEvent = null
     RingService.stop(context)
     val manager = context.getSystemService(NotificationManager::class.java)
     for (n in manager.activeNotifications) if (n.tag?.startsWith(TAG) == true) manager.cancel(n.tag, n.id)

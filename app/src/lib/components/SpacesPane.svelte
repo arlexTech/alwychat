@@ -49,9 +49,12 @@
     selectedId,
     onSelect,
     onRowMenu,
+    onExit,
   }: {
     selectedId: string | null;
     onSelect: (roomId: string) => void;
+    /** Back from a space to the list of spaces (its chat closes then). */
+    onExit?: () => void;
     /** Right-click / long-press on a chat: the chat list's menu (pin, mute…). */
     onRowMenu?: (event: MouseEvent, room: RoomSummary) => void;
   } = $props();
@@ -70,6 +73,13 @@
   type Ref = { id: string; name: string; avatar: string | null };
   /** Spaces opened, outermost first (sub-spaces push onto it). */
   let path = $state<Ref[]>([]);
+  // Back to the list of spaces (← , Android back, leaving the space): its chat closes.
+  let wasInSpace = false;
+  $effect(() => {
+    const inSpace = path.length > 0;
+    if (wasInSpace && !inSpace) untrack(() => onExit?.());
+    wasInSpace = inSpace;
+  });
   const opened = $derived(path.at(-1) ?? null);
   // Name and photo follow the live list (a just-created space syncs its name a bit later).
   const current = $derived.by(() => {

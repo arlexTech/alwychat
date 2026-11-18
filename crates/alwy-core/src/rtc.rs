@@ -84,6 +84,8 @@ pub struct CallConnection {
     pub jwt: String,
     /// Encrypt our media (encrypted room); others' is decrypted whenever they send a key.
     pub encrypted: bool,
+    /// We rang the other person (a 1:1 call nobody else was in, by the server): "Calling…".
+    pub rang: bool,
 }
 
 /// The call we're in (one at a time).
@@ -197,11 +199,17 @@ impl crate::Core {
         info!(room = %room.room_id(), "joined call");
 
         // Starting a call in a 1:1 chat rings the other person.
-        let others_in_call = room
-            .active_room_call_participants()
-            .iter()
-            .any(|u| *u != user);
-        if !others_in_call && room.is_direct().await.unwrap_or(false) {
+        // Asked of the server: right after the other person left, the local copy may still
+        // have them in the call (calling back at once then didn't ring).
+        let others_in_call = match call_senders_on_server(&room).await {
+            Some(senders) => senders.iter().any(|u| *u != user),
+            None => room
+                .active_room_call_participants()
+                .iter()
+                .any(|u| *u != user),
+        };
+        let rang = !others_in_call && room.is_direct().await.unwrap_or(false);
+        if rang {
             ring(&room, &member_event, video, None).await;
         }
         let heartbeat = crate::rt::spawn(heartbeat(
@@ -230,6 +238,7 @@ impl crate::Core {
             url: sfu.url,
             jwt: sfu.jwt,
             encrypted,
+            rang,
         })
     }
 
@@ -296,32 +305,13 @@ impl crate::Core {
     /// up) or one of our own devices joined it (answered elsewhere); None if the server can't be
     /// asked (keep ringing).
     pub async fn ring_still_on(&self, room_id: &str) -> Option<bool> {
-        use matrix_sdk::ruma::api::client::state::get_state_events::v3 as state;
         let room = self.room(room_id).ok()?;
-        let client = room.client();
-        let own = client.user_id()?.to_owned();
-        let response = client
-            .send(state::Request::new(room.room_id().to_owned()))
-            .await
-            .ok()?;
-        let mut others = false;
-        for event in &response.room_state {
-            if event.get_field::<String>("type").ok().flatten().as_deref() != Some(CALL_MEMBER) {
-                continue;
-            }
-            let Ok(Some(content)) = event.get_field::<serde_json::Value>("content") else {
-                continue;
-            };
-            if !in_call(&content) {
-                continue;
-            }
-            match event.get_field::<OwnedUserId>("sender").ok().flatten() {
-                Some(sender) if sender == own => return Some(false),
-                Some(_) => others = true,
-                None => {}
-            }
+        let own = room.client().user_id()?.to_owned();
+        let senders = call_senders_on_server(&room).await?;
+        if senders.contains(&own) {
+            return Some(false);
         }
-        Some(others)
+        Some(!senders.is_empty())
     }
 
     /// The room of the call we're in.
@@ -332,6 +322,33 @@ impl crate::Core {
             .as_ref()
             .map(|c| c.room.room_id().to_owned())
     }
+}
+
+/// Who is in the room's call according to the server now (the local store can lag a few
+/// seconds behind someone leaving). None: the server couldn't be asked.
+async fn call_senders_on_server(room: &Room) -> Option<Vec<OwnedUserId>> {
+    use matrix_sdk::ruma::api::client::state::get_state_events::v3 as state;
+    let response = room
+        .client()
+        .send(state::Request::new(room.room_id().to_owned()))
+        .await
+        .ok()?;
+    let mut senders = Vec::new();
+    for event in &response.room_state {
+        if event.get_field::<String>("type").ok().flatten().as_deref() != Some(CALL_MEMBER) {
+            continue;
+        }
+        let Ok(Some(content)) = event.get_field::<serde_json::Value>("content") else {
+            continue;
+        };
+        if !in_call(&content) {
+            continue;
+        }
+        if let Some(sender) = event.get_field::<OwnedUserId>("sender").ok().flatten() {
+            senders.push(sender);
+        }
+    }
+    Some(senders)
 }
 
 /// Ring the other side (new and older Element formats): everyone in the room, or only `target`
@@ -553,11 +570,16 @@ async fn call_signal(
                 return None;
             }
             let (video, expires_at) = fresh_ring(event, room.own_user_id())?;
+            let sent = event
+                .get_field::<u64>("origin_server_ts")
+                .ok()
+                .flatten()
+                .unwrap_or(expires_at);
             // Ringing with both formats: the legacy one is ignored if the other came first.
             if !RECENT_RINGS
                 .lock()
                 .unwrap()
-                .insert(room.room_id().to_string(), expires_at)
+                .insert(room.room_id().to_string(), sent)
             {
                 return None;
             }
@@ -647,25 +669,36 @@ pub(crate) fn fresh_ring(
     (expires_at > now).then_some((content.intent.as_deref() == Some("video"), expires_at))
 }
 
-/// Room → expiry of the ring we last showed, so one call rings once.
-struct RecentRings(std::collections::HashMap<String, u64>);
+/// Room → when the ring we last showed there was sent. A caller sends two ring formats back to
+/// back (one call, two events): only the first rings. A new call rings again, even right after
+/// the previous one (keyed on the ring's expiry before, a call back within 30 s didn't ring).
+pub(crate) struct RecentRings(std::collections::BTreeMap<String, u64>);
+
+/// Rings of one call are sent together; a ring this long after the last one is a new call.
+const SAME_CALL_MS: u64 = 5_000;
 
 impl RecentRings {
-    /// False if a ring for this room is still showing.
-    fn insert(&mut self, room: String, expires_at: u64) -> bool {
-        let now: u64 = matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now()
-            .get()
-            .into();
-        if self.0.get(&room).is_some_and(|&until| until > now) {
+    pub(crate) const fn new() -> Self {
+        Self(std::collections::BTreeMap::new())
+    }
+
+    /// False if this is the other format of a ring already shown (`sent`: its server time, ms).
+    pub(crate) fn insert(&mut self, room: String, sent: u64) -> bool {
+        self.0
+            .retain(|_, at| sent.saturating_sub(*at) < 10 * 60_000 || *at > sent);
+        if self
+            .0
+            .get(&room)
+            .is_some_and(|&at| sent.abs_diff(at) < SAME_CALL_MS)
+        {
             return false;
         }
-        self.0.insert(room, expires_at);
+        self.0.insert(room, sent);
         true
     }
 }
 
-static RECENT_RINGS: std::sync::LazyLock<std::sync::Mutex<RecentRings>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(RecentRings(Default::default())));
+static RECENT_RINGS: std::sync::Mutex<RecentRings> = std::sync::Mutex::new(RecentRings::new());
 
 /// Schedule the empty membership the server sends if our heartbeats stop.
 async fn schedule_leave(room: &Room, state_key: &str) -> Option<String> {
@@ -733,6 +766,19 @@ async fn heartbeat(room: Room, state_key: String, membership: serde_json::Value,
 #[cfg(test)]
 mod tests {
     use matrix_sdk::ruma::{UserId, serde::Raw};
+
+    #[test]
+    fn rings_once_per_call() {
+        let mut rings = super::RecentRings::new();
+        let t = 1_800_000_000_000;
+        assert!(rings.insert("!r".into(), t));
+        // The same call's other format, sent right after: no second ring.
+        assert!(!rings.insert("!r".into(), t + 40));
+        // Another chat rings.
+        assert!(rings.insert("!other".into(), t + 100));
+        // Hung up and called back 26 s later, while the first ring would still be "live": rings.
+        assert!(rings.insert("!r".into(), t + 26_000));
+    }
 
     fn fresh_ring(
         event: &Raw<matrix_sdk::ruma::events::AnySyncTimelineEvent>,

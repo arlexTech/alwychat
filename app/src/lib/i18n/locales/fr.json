@@ -1143,5 +1143,19 @@
   "Last notification from your server: {when}": "Dernière notification de ton serveur : {when}",
   "No notification from your server yet": "Aucune notification de ton serveur pour l'instant",
   "Your server, its push service and Google all reach this phone.": "Ton serveur, son service de notifications et Google atteignent bien ce téléphone.",
-  "To check the whole way, ask someone to send you a message while AlwyChat is closed.": "Pour tout vérifier, demande à quelqu'un de t'envoyer un message pendant qu'AlwyChat est fermé."
+  "To check the whole way, ask someone to send you a message while AlwyChat is closed.": "Pour tout vérifier, demande à quelqu'un de t'envoyer un message pendant qu'AlwyChat est fermé.",
+  "📞 Call": "📞 Appel",
+  "📍 Live location": "📍 Position en direct",
+  "📍 Live location ended": "📍 Position en direct terminée",
+  "Asks to join": "Demande à rejoindre",
+  "Joined the chat": "A rejoint la discussion",
+  "Show the call": "Afficher l'appel",
+  "Silence": "Couper la sonnerie",
+  "Hide": "Masquer",
+  "In the call": "Dans l'appel",
+  "+{n} more": "+{n} autres",
+  "{n} in the call": {
+    "one": "{n} dans l'appel",
+    "other": "{n} dans l'appel"
+  }
 }

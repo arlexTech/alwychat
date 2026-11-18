@@ -20,10 +20,27 @@
   } = $props();
 
   let failed = $state(false);
+  /** Web: the kept chat list is drawn before the engine has loaded, so its first photo
+   * requests can fail; try again a few times instead of keeping the initials for good. */
+  let attempt = $state(0);
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   /** The photo is on screen: no coloured backdrop behind it any more (it showed as a ring
    * around round photos with transparent corners). */
   let loaded = $state(false);
-  const src = $derived(failed ? null : mediaUrl(mxc, size));
+  const src = $derived.by(() => {
+    if (failed) return null;
+    const url = mediaUrl(mxc, size);
+    return url && attempt ? `${url}&try=${attempt}` : url;
+  });
+
+  function onError() {
+    failed = true;
+    if (attempt >= 4) return;
+    retryTimer = setTimeout(() => {
+      attempt++;
+      failed = false;
+    }, [1500, 4000, 10000, 30000][attempt]);
+  }
 
   // Stable per-name hue so fallbacks are colourful but consistent.
   const hue = $derived([...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7));
@@ -32,6 +49,8 @@
     mxc; // retry when the avatar changes
     failed = false;
     loaded = false;
+    attempt = 0;
+    return () => clearTimeout(retryTimer);
   });
 </script>
 
@@ -48,7 +67,7 @@
   {#if saved && !src}
     <Bookmark size={size * 0.46} fill="currentColor" />
   {:else if src}
-    <img {src} alt="" loading="lazy" decoding="async" onload={() => (loaded = true)} onerror={() => (failed = true)} />
+    <img {src} alt="" loading="lazy" decoding="async" onload={() => (loaded = true)} onerror={onError} />
   {:else}
     {initials(name)}
   {/if}

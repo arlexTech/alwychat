@@ -750,6 +750,13 @@ async fn ring_user(core: State<'_, AppCore>, user_id: String) -> alwy_core::Resu
     core.ring_user(&user_id).await
 }
 
+/// Is a ring in `room_id` still worth ringing, by the server's call members: false once the
+/// caller left or one of our devices joined; None if the server couldn't be asked.
+#[tauri::command]
+async fn ring_active(core: State<'_, AppCore>, room_id: String) -> alwy_core::Result<Option<bool>> {
+    Ok(core.ring_still_on(&room_id).await)
+}
+
 #[tauri::command]
 async fn create_poll(
     core: State<'_, AppCore>,
@@ -1104,6 +1111,21 @@ async fn call_audio(app: tauri::AppHandle, speaker: Option<bool>) -> Result<(), 
         .map_err(|e| e.to_string())?;
     #[cfg(not(target_os = "android"))]
     let _ = (app, speaker);
+    Ok(())
+}
+
+/// Android, the app on screen: the phone's own ringtone and ringtone vibration for an
+/// incoming call (`on: false` stops them). Elsewhere: nothing.
+#[tauri::command]
+async fn ring_in_app(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>("ringInApp", serde_json::json!({ "on": on }))
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, on);
     Ok(())
 }
 
@@ -2936,6 +2958,7 @@ pub fn run() {
             save_blob,
             launch_call,
             call_audio,
+            ring_in_app,
             updates::update_check,
             updates::update_install,
             link_preview,
@@ -2945,6 +2968,7 @@ pub fn run() {
             file_action,
             decline_call,
             ring_user,
+            ring_active,
             call_alert,
             location_notification,
             drafts,

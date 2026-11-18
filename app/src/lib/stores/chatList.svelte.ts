@@ -16,7 +16,11 @@ class ChatList {
   #arriving: RoomSummary[] | null = null;
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** Our own user ID (signed in). */
+  userId = $state<string | null>(null);
+
   async start(userId: string) {
+    this.userId = userId;
     this.error = null;
     this.#key = KEPT_PREFIX + userId;
     try {

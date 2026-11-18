@@ -89,6 +89,22 @@
     justify-content: space-between;
     margin-bottom: 8px;
   }
+  /* Close: a plain round icon, like the soundboard's (it had the browser's grey box). */
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .icon:hover,
+  .icon:focus-visible {
+    background: var(--surface-2);
+  }
   .filter {
     width: 100%;
     box-sizing: border-box;

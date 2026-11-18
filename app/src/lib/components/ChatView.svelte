@@ -462,6 +462,9 @@
           break;
         }
         case "date_divider":
+          // A day whose events all draw nothing (call membership, expired or unsupported
+          // messages…) left "Yesterday" right above "Today": the empty day goes.
+          if (out.at(-1)?.kind === "day") out.pop();
           out.push({ kind: "day", key: e.key, label: dayLabel(e.timestamp) });
           break;
         case "notice": {
@@ -479,8 +482,9 @@
           break;
       }
     }
-    // A read marker right at the bottom says nothing.
+    // A read marker right at the bottom says nothing, nor does a day with nothing under it.
     if (out.at(-1)?.kind === "unread") out.pop();
+    if (out.at(-1)?.kind === "day") out.pop();
     // Rows that didn't change keep their object, so only what changed is drawn again (a new
     // message used to update every bubble of the chat).
     const kept = new Map<string, Row>();

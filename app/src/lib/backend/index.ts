@@ -112,6 +112,8 @@ export const autostartSet = (on: boolean) => invoke<void>("autostart_set", { on 
 /** Android: the call's picture-in-picture window wide (screen share) or tall. */
 export const pipShape = (wide: boolean) => invoke<void>("pip_shape", { wide });
 export const callAudio = (speaker: boolean | null) => invoke<void>("call_audio", { speaker });
+/** Android, app on screen: the phone's ringtone + vibration for an incoming call. */
+export const ringInApp = (on: boolean) => invoke<void>("ring_in_app", { on });
 /** A button of the call notification was tapped. */
 /** An incoming call notification (or its Answer button) was tapped. */
 export type CallLink = {
@@ -360,7 +362,7 @@ export type TimelineEntry = { key: string } & (
 /** Join (or start) the room's call: returns where to connect with livekit-client. */
 /** `encrypted`: encrypt our media end to end (encrypted room). */
 export const joinCall = (roomId: string, video: boolean) =>
-  invoke<{ url: string; jwt: string; encrypted: boolean }>("join_call", { roomId, video });
+  invoke<{ url: string; jwt: string; encrypted: boolean; rang: boolean }>("join_call", { roomId, video });
 
 /** A space's banner (mxc), AlwyChat's own (other apps don't show it). */
 export const spaceBanner = (roomId: string) => invoke<string | null>("space_banner", { roomId });
@@ -406,6 +408,8 @@ export interface CallKey {
 export const callKeys = (roomId: string) => invoke<CallKey[]>("call_keys", { roomId });
 export const onCallKey = (handler: (key: CallKey) => void) => listen<CallKey>("call-key", (e) => handler(e.payload));
 export const leaveCall = () => invoke<void>("leave_call");
+/** False once the caller left (or we joined on another device), by the server; null: unknown. */
+export const ringActive = (roomId: string) => invoke<boolean | null>("ring_active", { roomId });
 
 // ── Native calls (Linux desktop: WebKitGTK has no WebRTC, LiveKit runs in Rust) ──────────────
 export interface NativeCallMember {
@@ -416,6 +420,8 @@ export interface NativeCallMember {
   /** Frame keys (see `nativeCallJoin`'s `onFrame`) of their camera / shared screen. */
   camera: string | null;
   screen: string | null;
+  /** Their connection is lost (back soon, or gone after a timeout). */
+  lost: boolean;
 }
 export type NativeCallEvent =
   | { kind: "members"; members: NativeCallMember[] }
