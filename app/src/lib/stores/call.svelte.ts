@@ -2,7 +2,7 @@
 // or in Rust where the webview has no WebRTC (Linux desktop: `native`; pictures arrive as frames,
 // see nativeVideo.svelte.ts).
 import { loudness, playCue, type CallCue } from "$lib/callSounds";
-import type { Participant, RemoteAudioTrack, RemoteParticipant, RemoteTrack, Room, Track as LkTrack } from "livekit-client";
+import type { LocalAudioTrack, LocalVideoTrack, Participant, RemoteAudioTrack, RemoteParticipant, RemoteTrack, Room, Track as LkTrack } from "livekit-client";
 import type { MatrixKeyProvider as KeyProvider } from "$lib/callKeys";
 import {
   isAndroid,
@@ -10,6 +10,10 @@ import {
   onCallLink,
   type CallLink,
   callAudio,
+  audioRoutes,
+  callStartedAt,
+  type AudioRoute,
+  type AudioRoutes,
   callNotification,
   onCallAction,
   declineCall,
@@ -35,6 +39,8 @@ import {
   type NativeCallMember,
   roomMembers,
   ringUser,
+  raiseHand,
+  callReact,
   callAlert,
   isWeb,
   type CallSignal,
@@ -58,6 +64,9 @@ function loadEngine() {
   engine.catch(() => (engine = null));
   return engine.then((loaded) => ((Track = loaded[0].Track), loaded));
 }
+
+/** Phones choose cameras by facing mode (front/back) rather than by device. */
+const PHONE = isAndroid || /iPhone|iPad/.test(navigator.userAgent);
 
 type Ring = Extract<CallSignal, { kind: "ring" }>;
 /** A 1:1 call nobody answers ends after this. */
@@ -124,6 +133,13 @@ export interface CallPrefs {
   soundboardVolume: number;
   /** The "Call sounds" slider, 0–1 (0 = off; callSounds.ts turns it into loudness). */
   callSoundLevel: number;
+  /** How loud in-call reactions' sounds (Element Call's) are for us, 0–1 (0 = none). */
+  reactionVolume: number;
+  /** Android, Bluetooth headset: let go of its mic while ours is muted, so it plays in full
+   * quality (its call mode is mono and muffled, for every app). */
+  btListenMode: boolean;
+  /** Android: show Bluetooth headsets' names (needs "Nearby devices"). */
+  btNames: boolean;
 }
 
 /** Someone in a call or a voice channel, as the person menu shows them. */
@@ -135,6 +151,8 @@ export interface CallPerson {
   /** We're in that call with them: volume and mute apply. */
   live: boolean;
 }
+/** Where call audio goes when one of these is connected (best first). */
+const HEADSETS: AudioRoute["kind"][] = ["bluetooth", "wired", "usb"];
 const PREFS_KEY = "alwychat.callPrefs";
 function loadPrefs(): CallPrefs {
   const defaults: CallPrefs = {
@@ -151,6 +169,9 @@ function loadPrefs(): CallPrefs {
     muted: [],
     soundboardVolume: 1,
     callSoundLevel: 0.5,
+    reactionVolume: 1,
+    btListenMode: false,
+    btNames: false,
   };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
@@ -174,14 +195,41 @@ class CallStore {
   error = $state<string | null>(null);
   micOn = $state(true);
   camOn = $state(false);
+  /** Which camera we film with on a phone (front = mirrored in our own view). */
+  facing = $state<"user" | "environment">("user");
+  /** Cameras this device has (known once ours was turned on), for the flip button. */
+  cameraCount = $state(0);
+  /** A phone (front/back cameras by facing mode) or a computer with several cameras. Not the
+   * Linux engine (its camera is picked in the voice settings). */
+  get canFlip() {
+    return this.camOn && !this.#nativeIn && (PHONE || this.cameraCount > 1);
+  }
   screenOn = $state(false);
   /** Nobody heard (and our mic off), Discord style. */
   deafened = $state(false);
   /** Android picture-in-picture: the app is the small call window (UI = call tiles only). */
   pip = $state(false);
   #minimizedBeforePip = false;
-  /** Phone: call audio on the loudspeaker (else earpiece, or headphones when connected). */
-  speaker = $state(false);
+  /** Phone: where call audio can go (Android 12+: earpiece, speaker, headsets) and where it
+   * goes now. */
+  audioRoutes = $state<AudioRoute[]>([]);
+  audioCurrent = $state<number | null>(null);
+  /** Android 11 and older (no route list): the loudspeaker on or off. */
+  #speakerOn = $state(false);
+  #knownRoutes = new Set<number>();
+  get audioNow(): AudioRoute | null {
+    // Listening mode: the headset still is where the call goes, from the user's side.
+    const id = this.#released ?? this.#wanted ?? this.audioCurrent;
+    return this.audioRoutes.find((r) => r.id === id) ?? null;
+  }
+  /** Call audio on the loudspeaker. */
+  get speaker() {
+    return this.audioNow ? this.audioNow.kind === "speaker" : this.#speakerOn;
+  }
+  /** A headset (Bluetooth, wired, USB) is connected: the speaker button offers a choice. */
+  get hasHeadset() {
+    return this.audioRoutes.some((r) => HEADSETS.includes(r.kind));
+  }
   /** Mic state to restore when undeafening. */
   #micBeforeDeafen = true;
   /** Who else is in the call (LiveKit identities) and who shares a screen, as last heard: null
@@ -232,6 +280,39 @@ class CallStore {
   incoming = $state<Ring | null>(null);
   /** We're calling someone in a 1:1 chat and they haven't joined yet. */
   calling = $state(false);
+  /** When the call really started for us (connected, and in a 1:1 call answered), for the
+   * duration shown in the call screen, dock and pill. */
+  startedAt = $state<number | null>(null);
+  #clock = $state(Date.now());
+  #clockTimer: ReturnType<typeof setInterval> | undefined;
+  /** "4:07" / "1:02:33" since the call started, or null before. */
+  get duration(): string | null {
+    if (this.startedAt === null) return null;
+    const total = Math.max(0, Math.floor((this.#clock - this.startedAt) / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = String(total % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+  }
+  #startClock() {
+    if (this.startedAt !== null) return;
+    this.startedAt = this.#clock = Date.now();
+    clearInterval(this.#clockTimer);
+    this.#clockTimer = setInterval(() => (this.#clock = Date.now()), 1000);
+    // A group call or voice channel counts from when it began (the oldest join among the
+    // people in it), not from when we joined; a 1:1 call from the answer, like a phone call.
+    const roomId = this.roomId;
+    if (!roomId || this.isDm) return;
+    const earlier = (at: number | null) => {
+      // Only ever earlier: someone leaving never makes the time jump.
+      if (at && this.roomId === roomId && this.startedAt !== null && at < this.startedAt) {
+        this.startedAt = Math.max(at, Date.now() - 7 * 24 * 3600_000);
+      }
+    };
+    void callStartedAt(roomId).then(earlier, () => {});
+    // The others' memberships may only just have arrived.
+    setTimeout(() => void callStartedAt(roomId).then(earlier, () => {}), 4000);
+  }
   /** Their devices that said our ring rings there (AlwyChat only: other apps don't tell). */
   ringingDevices = $state<string[]>([]);
   /** People rung into this call, by user ID (until they join). */
@@ -298,6 +379,10 @@ class CallStore {
         if (action === "hang_up") void this.leave();
         else if (action === "toggle_mic") {
           if (this.roomId) void this.toggleMic();
+        } else if (action === "audio_routes") {
+          void this.#routesChanged();
+        } else if (action === "stop_location") {
+          // Handled by the live location store.
         } else if (action === "pip_on") {
           // Android's picture-in-picture: only the call, full window.
           this.#minimizedBeforePip = this.minimized;
@@ -335,6 +420,13 @@ class CallStore {
     void onCallSignal((signal) => {
       if (signal.kind === "ring") return this.#ring(signal);
       if (signal.room_id !== this.roomId) return;
+      if (signal.kind === "hand") {
+        const { [signal.user_id]: _, ...rest } = this.hands;
+        this.hands = signal.raised ? { ...rest, [signal.user_id]: Date.now() } : rest;
+        if (signal.raised) this.#cue("unmute");
+        return;
+      }
+      if (signal.kind === "reaction") return this.#showReaction(signal.user_id, signal.emoji);
       const invite = this.invites[signal.user_id];
       if (signal.kind === "ringing") {
         if (this.calling && !this.ringingDevices.includes(signal.device_id)) this.ringingDevices = [...this.ringingDevices, signal.device_id];
@@ -440,6 +532,52 @@ class CallStore {
     this.invites = next;
   }
 
+  // ── Raised hands and reactions (Element Call's events, so its users see them both ways) ──
+  /** Raised hands in our call: user ID → when it went up (for the order). */
+  hands = $state<Record<string, number>>({});
+  /** Our own hand. */
+  handUp = $state(false);
+  /** Reactions showing now (3 s): user ID → emoji. */
+  reactions = $state<Record<string, { emoji: string; at: number }>>({});
+
+  async toggleHand() {
+    const up = !this.handUp;
+    const me = chatList.userId;
+    const set = (on: boolean) => {
+      this.handUp = on;
+      if (!me) return;
+      const { [me]: _, ...rest } = this.hands;
+      this.hands = on ? { ...rest, [me]: Date.now() } : rest;
+    };
+    set(up);
+    try {
+      await raiseHand(up);
+    } catch (e) {
+      set(!up);
+      console.warn("raise hand", e);
+    }
+  }
+
+  react(emoji: string, name: string) {
+    if (chatList.userId) this.#showReaction(chatList.userId, emoji);
+    callReact(emoji, name).catch((e) => console.warn("call reaction", e));
+  }
+
+  #showReaction(userId: string, emoji: string) {
+    const at = Date.now();
+    if (this.prefs.reactionVolume >= 0.01 && !this.deafened) {
+      void import("$lib/soundboard/reactions")
+        .then(({ playReactionSound }) => playReactionSound(emoji, loudness(this.prefs.reactionVolume)))
+        .catch((e) => console.warn("reaction sound", e));
+    }
+    this.reactions = { ...this.reactions, [userId]: { emoji, at } };
+    setTimeout(() => {
+      if (this.reactions[userId]?.at !== at) return;
+      const { [userId]: _, ...rest } = this.reactions;
+      this.reactions = rest;
+    }, 3000);
+  }
+
   /** The incoming call keeps showing, without sound or vibration ("Silence"). */
   ringSilenced = $state(false);
   silenceRing() {
@@ -517,12 +655,11 @@ class CallStore {
     this.talking = false;
     this.camOn = video;
     this.screenOn = false;
-    // Like phone apps: a call starts on the earpiece (voice channels and groups too), a video
-    // call on the loudspeaker.
-    this.speaker = video;
+    // Like phone apps: a call starts in the headset when one is connected, else on the
+    // earpiece (voice channels and groups too), a video call on the loudspeaker.
     this.ringingDevices = [];
     this.people = [];
-    if (isAndroid) callAudio(this.speaker).catch((e) => console.warn("call audio", e));
+    if (isAndroid) void this.#autoRoute(video);
     roomMembers(room.id)
       .then((list) => {
         this.#members = new Map(list.map((m) => [m.user_id, m]));
@@ -623,7 +760,11 @@ class CallStore {
       if (!this.prefs.pushToTalk) {
         await lk.localParticipant.setMicrophoneEnabled(true).catch((e) => this.#fail("microphone", e));
       }
-      if (video) await lk.localParticipant.setCameraEnabled(true).catch((e) => this.#fail("camera", e));
+      if (video) {
+        this.facing = "user";
+        await lk.localParticipant.setCameraEnabled(true).catch((e) => this.#fail("camera", e));
+        void this.#countCameras();
+      }
       await lk.startAudio().catch(() => {});
       this.#startMeter(lk);
       this.#sync();
@@ -708,7 +849,12 @@ class CallStore {
     void this.#sbContext?.close().catch(() => {});
     this.#sbContext = null;
     this.calling = false;
+    clearInterval(this.#clockTimer);
+    this.startedAt = null;
     this.ringingDevices = [];
+    this.hands = {};
+    this.handUp = false;
+    this.reactions = {};
     for (const timer of this.#inviteTimers.values()) clearTimeout(timer);
     this.#inviteTimers.clear();
     this.invites = {};
@@ -729,6 +875,9 @@ class CallStore {
         if (this.roomId === null) callAudio(null).catch(() => {});
       }, 1200);
     }
+    this.audioRoutes = [];
+    this.audioCurrent = null;
+    this.#released = null;
     this.roomId = null;
     this.chatOpen = false;
     this.status = null;
@@ -754,8 +903,75 @@ class CallStore {
   }
 
   toggleSpeaker() {
-    this.speaker = !this.speaker;
-    callAudio(this.speaker).catch((e) => console.warn("call audio", e));
+    void this.#route(this.speaker ? (this.hasHeadset ? "headset" : "earpiece") : "speaker");
+  }
+
+  /** Send call audio to one of `audioRoutes`. */
+  chooseAudio(route: AudioRoute) {
+    void this.#route("device", route.id);
+  }
+
+  /** The route just asked for, shown at once: Android reports the switch ~0.4 s later (the
+   *  speaker button lagged). Cleared when Android confirms it, or after 2 s. */
+  #wanted = $state<number | null>(null);
+  #wantedTimer: ReturnType<typeof setTimeout> | undefined;
+  #want(id: number | null) {
+    clearTimeout(this.#wantedTimer);
+    this.#wanted = id;
+    if (id !== null) this.#wantedTimer = setTimeout(() => (this.#wanted = null), 2000);
+  }
+
+  #applyRoutes(routes: AudioRoutes) {
+    this.audioRoutes = routes.devices;
+    this.audioCurrent = routes.current ?? null;
+    if (this.#wanted !== null && this.audioCurrent === this.#wanted) this.#want(null);
+    this.#knownRoutes = new Set(routes.devices.map((r) => r.id));
+  }
+
+  async #route(route: "speaker" | "earpiece" | "headset" | "device", device?: number) {
+    if (!isAndroid) return;
+    this.#released = null;
+    if (route !== "device") this.#speakerOn = route === "speaker";
+    const kinds = route === "headset" ? HEADSETS : [route === "device" ? "" : route];
+    const match = route === "device" ? this.audioRoutes.find((r) => r.id === device) : kinds.map((k) => this.audioRoutes.find((r) => r.kind === k)).find(Boolean);
+    this.#want(match?.id ?? null);
+    try {
+      this.#applyRoutes(await callAudio(route, device));
+    } catch (e) {
+      this.#want(null);
+      console.warn("call audio", e);
+    }
+  }
+
+  /** The default place: a connected headset, else the loudspeaker for video, the earpiece for
+   * voice. */
+  async #autoRoute(video: boolean) {
+    const routes = await audioRoutes().catch(() => ({ devices: [] as AudioRoute[] }));
+    const headset = routes.devices.some((r) => HEADSETS.includes(r.kind));
+    await this.#route(headset ? "headset" : video ? "speaker" : "earpiece");
+  }
+
+  /** Android says headsets came or went, or it moved the audio itself. */
+  async #routesChanged() {
+    if (!isAndroid || !this.roomId) return;
+    const before = this.#knownRoutes;
+    const routes = await audioRoutes().catch(() => null);
+    if (!routes || !this.roomId) return;
+    if (this.#released !== null) {
+      // Listening mode: nothing is the call device on purpose. If the headset went away,
+      // forget it: unmuting then picks the default place.
+      if (!routes.devices.some((r) => r.id === this.#released)) this.#released = null;
+      this.audioRoutes = routes.devices;
+      this.#knownRoutes = new Set(routes.devices.map((r) => r.id));
+      return;
+    }
+    const added = routes.devices.find((r) => HEADSETS.includes(r.kind) && !before.has(r.id));
+    const current = routes.devices.find((r) => r.id === routes.current);
+    this.#applyRoutes(routes);
+    // Earbuds just connected: the call goes into them (like phone calls).
+    if (added) return void this.#route("device", added.id);
+    // The headset in use went away: back to the default place.
+    if (!current) void this.#autoRoute(this.camOn);
   }
 
   async toggleDeafen() {
@@ -782,9 +998,40 @@ class CallStore {
   async #setMic(on: boolean) {
     if (!this.#connected) return;
     this.micOn = on;
+    // Listening mode: the Bluetooth headset gets its call mode back before the mic opens.
+    if (on && this.#released !== null) {
+      const id = this.#released;
+      this.#released = null;
+      await this.#route("device", id);
+    }
+    const listen = !on && isAndroid && this.prefs.btListenMode && this.audioNow?.kind === "bluetooth";
     if (this.#nativeIn) await nativeCallSetMic(on).catch((e) => this.#fail("microphone", e));
-    else await this.#lk?.localParticipant.setMicrophoneEnabled(on).catch((e) => this.#fail("microphone", e));
+    else {
+      // Stopping the mic (not just muting it) is what lets the headset leave its call mode.
+      const mic = this.#lk?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track as LocalAudioTrack | undefined;
+      if (mic) mic.stopOnMute = listen;
+      await this.#lk?.localParticipant.setMicrophoneEnabled(on).catch((e) => this.#fail("microphone", e));
+    }
+    if (listen && !this.micOn && this.audioNow) {
+      this.#released = this.audioNow.id;
+      try {
+        this.#applyRoutes(await callAudio("release"));
+      } catch (e) {
+        console.warn("call audio", e);
+      }
+    }
     this.#sync();
+  }
+  /** Listening mode: the Bluetooth headset we let go of while muted (its route id). */
+  #released: number | null = null;
+
+  setBtListenMode(on: boolean) {
+    this.prefs = { ...this.prefs, btListenMode: on };
+    this.#savePrefs();
+  }
+  setBtNames(on: boolean) {
+    this.prefs = { ...this.prefs, btNames: on };
+    this.#savePrefs();
   }
 
   /** Push-to-talk: hold to speak. */
@@ -892,6 +1139,30 @@ class CallStore {
     }
   }
 
+  /** How loud reaction sounds are for us (0 = none). */
+  setReactionVolume(volume: number) {
+    this.prefs = { ...this.prefs, reactionVolume: volume };
+    this.#savePrefs();
+  }
+  #reactionBefore = 1;
+  /** The speaker icon of the reactions panel: mute, or back to the volume it had. */
+  toggleReactionMute() {
+    if (this.prefs.reactionVolume >= 0.01) {
+      this.#reactionBefore = this.prefs.reactionVolume;
+      this.setReactionVolume(0);
+    } else this.setReactionVolume(this.#reactionBefore >= 0.01 ? this.#reactionBefore : 1);
+  }
+
+  /** The soundboard volume before the speaker icon muted it (a second tap brings it back). */
+  #soundboardBefore = 1;
+  /** The speaker icon of the soundboard: mute, or back to the volume it had. */
+  toggleSoundboardMute() {
+    if (this.prefs.soundboardVolume >= 0.01) {
+      this.#soundboardBefore = this.prefs.soundboardVolume;
+      this.setSoundboardVolume(0);
+    } else this.setSoundboardVolume(this.#soundboardBefore >= 0.01 ? this.#soundboardBefore : 1);
+  }
+
   /** How loud soundboard sounds are for us (ours and others'), 0–1. Natively, others' can only
    * be on or off. */
   setSoundboardVolume(volume: number) {
@@ -922,7 +1193,38 @@ class CallStore {
     }
     if (!this.#lk) return;
     this.camOn = !this.camOn;
+    // A camera turned back on starts with the front one, like the first time.
+    if (this.camOn) this.facing = "user";
     await this.#lk.localParticipant.setCameraEnabled(this.camOn).catch((e) => this.#fail("camera", e));
+    this.#sync();
+    if (this.camOn) void this.#countCameras();
+  }
+
+  async #countCameras() {
+    const devices = await navigator.mediaDevices?.enumerateDevices().catch(() => []);
+    this.cameraCount = (devices ?? []).filter((d) => d.kind === "videoinput").length;
+  }
+
+  /** Front ↔ back camera on a phone; the next camera on a computer that has several. */
+  async flipCamera() {
+    const lk = this.#lk;
+    if (!lk || !this.canFlip) return;
+    const track = lk.localParticipant.getTrackPublication(Track.Source.Camera)?.videoTrack as LocalVideoTrack | undefined;
+    if (!track) return;
+    try {
+      if (PHONE) {
+        const next = this.facing === "user" ? "environment" : "user";
+        await track.restartTrack({ facingMode: next, resolution: { width: 1280, height: 720, frameRate: 30 } });
+        this.facing = next;
+      } else {
+        const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+        const now = track.mediaStreamTrack.getSettings().deviceId;
+        const next = cams[(cams.findIndex((c) => c.deviceId === now) + 1) % cams.length];
+        if (next) await lk.switchActiveDevice("videoinput", next.deviceId);
+      }
+    } catch (e) {
+      this.#fail("camera", e);
+    }
     this.#sync();
   }
 
@@ -1098,6 +1400,11 @@ class CallStore {
   }
 
   #sync() {
+    this.#syncMembers();
+    if (this.status === "connected" && !this.calling) this.#startClock();
+  }
+
+  #syncMembers() {
     if (this.#nativeIn) {
       if (this.calling && this.#nativeMembers.length > 1) {
         this.calling = false;
@@ -1135,6 +1442,12 @@ class CallStore {
     this.#sharing = sharing;
     if (joined) this.#cue("peerJoin");
     else if (left) this.#cue("peerLeave");
+    // Someone who left takes their raised hand with them.
+    if (left) {
+      const present = new Set(this.tiles.map((t) => t.userId));
+      const kept = Object.fromEntries(Object.entries(this.hands).filter(([user]) => present.has(user)));
+      if (Object.keys(kept).length !== Object.keys(this.hands).length) this.hands = kept;
+    }
     if (shared) this.#cue("screen");
     // A 1:1 call ends when the other person hangs up, at once (like phone apps): LiveKit only
     // says someone left when they did (a lost connection waits for a timeout first). While we

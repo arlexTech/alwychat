@@ -6,7 +6,7 @@
   import Mic from "@lucide/svelte/icons/mic";
   import Video from "@lucide/svelte/icons/video";
   import { onDestroy } from "svelte";
-  import { isAndroid, nativeCameraPreview, nativeDevices, type NativeDevice } from "$lib/backend";
+  import { bluetoothNames, isAndroid, nativeCameraPreview, nativeDevices, type NativeDevice } from "$lib/backend";
   import { nativeVideo } from "$lib/stores/nativeVideo.svelte";
   import NativeVideo from "./NativeVideo.svelte";
   import { keyName } from "$lib/keys";
@@ -164,6 +164,17 @@
     endTest();
     endPreview();
   });
+
+  let btNamesNote = $state<string | null>(null);
+  /** Turning names on asks Android's "Nearby devices" permission first. */
+  async function toggleBtNames(box: HTMLInputElement) {
+    btNamesNote = null;
+    if (!box.checked) return call.setBtNames(false);
+    const granted = await bluetoothNames().catch(() => false);
+    box.checked = granted;
+    call.setBtNames(granted);
+    if (!granted) btNamesNote = tr("Not allowed. You can allow “Nearby devices” in Android's settings → Apps → AlwyChat → Permissions.");
+  }
 </script>
 
 <svelte:window onkeydown={captureKey} />
@@ -247,6 +258,26 @@
       {listening ? tr("Press a key… (Esc to cancel)") : keyName(call.prefs.pttKey, call.prefs.pttKeyLabel)}
     </button>
   </div>
+{/if}
+
+{#if isAndroid}
+  <h3 class="m-section">{tr("Bluetooth headsets")}</h3>
+  <label class="m-row toggle">
+    <span class="m-text">
+      <strong>{tr("Better sound while muted")}</strong>
+      <small>{tr("While your mic is off, your earbuds leave their call mode and play everything in full quality (the call, videos, music).")}</small>
+      <small class="warn">{tr("Downside: unmuting takes about a second, so your first words can be cut, and the call may play from the phone for a moment. Not great with push to talk.")}</small>
+    </span>
+    <input type="checkbox" role="switch" checked={call.prefs.btListenMode} onchange={(e) => call.setBtListenMode(e.currentTarget.checked)} />
+  </label>
+  <label class="m-row toggle">
+    <span class="m-text">
+      <strong>{tr("Show headset names")}</strong>
+      <small>{tr("“Galaxy Buds” instead of “Bluetooth” in a call's audio menu.")}</small>
+      <small class="warn">{btNamesNote ?? tr("Downside: Android asks for the “Nearby devices” permission, which would also let the app find Bluetooth devices around you. AlwyChat only reads your headset's name.")}</small>
+    </span>
+    <input type="checkbox" role="switch" checked={call.prefs.btNames} onchange={(e) => toggleBtNames(e.currentTarget)} />
+  </label>
 {/if}
 
 <h3 class="m-section">{tr("Video")}</h3>
@@ -380,5 +411,8 @@
   .chip:active {
     border-color: var(--accent-a);
     background: color-mix(in srgb, var(--accent-a) 18%, transparent);
+  }
+  .warn {
+    color: var(--warning, #d9a400);
   }
 </style>

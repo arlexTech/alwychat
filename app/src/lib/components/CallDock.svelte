@@ -27,7 +27,9 @@
           ? call.ringingDevices.length
             ? tr("Ringing…")
             : tr("Calling…")
-          : tr("Connected"),
+          : call.duration
+            ? `${tr("Connected")} · ${call.duration}`
+            : tr("Connected"),
   );
   // Voice channels and group calls (a voice channel isn't always in the chat list).
   const canRing = $derived(!!call.roomId && !call.isDm);
@@ -37,7 +39,7 @@
   <section class="dock" class:compact aria-label={call.roomName} transition:slide={{ duration: 160 }}>
     <div class="top">
       <button class="info" onclick={() => (call.minimized = false)} title={tr("Open the call")}>
-        <strong class:waiting={call.status !== "connected"}>{statusText}</strong>
+        <strong class="status" class:waiting={call.status !== "connected"}>{statusText}</strong>
         <span>{call.roomName}</span>
       </button>
       {#if compact}
@@ -182,5 +184,8 @@
   .row button.on {
     background: #31d158;
     color: #fff;
+  }
+  .status {
+    font-variant-numeric: tabular-nums;
   }
 </style>

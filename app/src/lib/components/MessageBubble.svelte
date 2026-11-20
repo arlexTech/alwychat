@@ -347,6 +347,11 @@
 
   // A double-tap reacts: single-tap actions wait a moment to be sure it isn't one.
   let tapTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A double tap inside a poll, a player or a link isn't a "like": two quick votes on a poll
+   * used to send the quick reaction. (Photos, files and maps wait for a possible second tap
+   * with `afterTap`, so double-tapping them still likes the message.) */
+  const onControl = (e: Event) =>
+    e.target instanceof Element && !!e.target.closest(".poll, .voice, a, input, select, textarea, audio, video");
   function afterTap(action: () => void) {
     clearTimeout(tapTimer);
     tapTimer = setTimeout(action, 260);
@@ -480,7 +485,7 @@
         class:failed={msg.send_state === "failed"}
         title={clockTime(msg.timestamp)}
         onclick={toggleTime}
-        ondblclick={() => (clearTimeout(tapTimer), canReact && heart())}
+        ondblclick={(e) => (clearTimeout(tapTimer), canReact && !onControl(e) && heart())}
         class:swiping={swiping || peeking}
         style:transform={swipeX || peekX ? `translateX(${swipeX - peekX}px)` : undefined}
         oncontextmenu={openMenu}
@@ -502,7 +507,7 @@
               <button class="cell" onclick={() => afterTap(() => onOpenMedia(i))} aria-label={tr("Open photo {value} of {length}", { value: i + 1, length: albumMedia.length })}>
                 <MediaImage src={eventMediaUrl(media, true)} blurhash={albumBlur.get(media)} lazy />
                 {#if i === ALBUM_CELLS - 1 && albumMedia.length > ALBUM_CELLS}
-                  <span class="more">+{albumMedia.length - ALBUM_CELLS}</span>
+                  <span class="album-more">+{albumMedia.length - ALBUM_CELLS}</span>
                 {/if}
               </button>
             {/each}
@@ -1429,7 +1434,7 @@
   .cell:hover :global(img) {
     transform: scale(1.04);
   }
-  .more {
+  .album-more {
     position: absolute;
     inset: 0;
     display: grid;

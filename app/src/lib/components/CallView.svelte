@@ -15,9 +15,9 @@
   import { fade, fly } from "svelte/transition";
   import { untrack } from "svelte";
   import type { Track } from "livekit-client";
-  import { isAndroid, pipShape } from "$lib/backend";
-  import Ear from "@lucide/svelte/icons/ear";
+  import { isAndroid, pipShape, type AudioRoute } from "$lib/backend";
   import Volume2 from "@lucide/svelte/icons/volume-2";
+  import SwitchCamera from "@lucide/svelte/icons/switch-camera";
   import { call } from "$lib/stores/call.svelte";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
@@ -25,11 +25,16 @@
   import Lock from "@lucide/svelte/icons/lock";
   import Eye from "@lucide/svelte/icons/eye";
   import EyeOff from "@lucide/svelte/icons/eye-off";
-  import Drum from "@lucide/svelte/icons/drum";
+  import ReactionsPanel from "./ReactionsPanel.svelte";
   import SoundboardPanel from "./SoundboardPanel.svelte";
+  import Drum from "@lucide/svelte/icons/drum";
+  import Bluetooth from "@lucide/svelte/icons/bluetooth";
+  import Check from "@lucide/svelte/icons/check";
+  import Smartphone from "@lucide/svelte/icons/smartphone";
   import RingPanel from "./RingPanel.svelte";
   import PhoneCall from "@lucide/svelte/icons/phone-call";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import SmilePlus from "@lucide/svelte/icons/smile-plus";
   import { onBack } from "$lib/back.svelte";
   import Avatar from "./Avatar.svelte";
   import { keyName } from "$lib/keys";
@@ -189,7 +194,8 @@
     if (!drag) return;
     const moved = drag.moved;
     drag = null;
-    if (!moved) return;
+    // A tap (no drag): our picture goes to the big spot, like a tap on anyone's tile.
+    if (!moved) return void (me && toggleFocus(me.id));
     // Snap to the corner nearest to where it was let go.
     const stage = (e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect();
     const left = e.clientX < stage.left + stage.width / 2;
@@ -226,6 +232,8 @@
     const wide = main?.what === "screen" || (main?.what === "camera" && (ratios[main.tile.id] ?? 0) > 1.1);
     if (isAndroid && call.active) void pipShape(wide).catch(() => {});
   });
+  /** Our front camera shows as in a mirror; the back one (and everyone else's) as filmed. */
+  const mirrored = (t: { isMe: boolean }) => t.isMe && call.facing === "user";
   function toggleFocus(key: string) {
     if (longPressed) return void (longPressed = false);
     focus = focus === key ? null : key;
@@ -277,17 +285,30 @@
   /** A tap outside the soundboard, ring or options panel closes it (its own header button
    * toggles it, sheets and dialogs it opens count as inside). */
   function closePanels(e: PointerEvent) {
-    if (!soundsOpen && !optionsOpen && !call.ringPanel) return;
     const target = e.target as Element | null;
-    if (target?.closest(".panel, .options-panel, .icon.sounds, .icon.ring, .icon.options, [role=dialog]")) return;
-    soundsOpen = optionsOpen = call.ringPanel = false;
+    if (audioMenu && !target?.closest(".audio-out")) audioMenu = false;
+    if (!soundsOpen && !optionsOpen && !reactOpen && !call.ringPanel) return;
+    if (target?.closest(".panel, .options-panel, .icon.sounds, .icon.ring, .icon.options, .icon.react, [role=dialog]")) return;
+    soundsOpen = optionsOpen = reactOpen = call.ringPanel = false;
   }
   let optionsOpen = $state(false);
   let soundsOpen = $state(false);
+  /** The audio output menu (phone with a headset connected). */
+  let audioMenu = $state(false);
+  function routeName(r: AudioRoute) {
+    if (r.kind === "earpiece") return tr("Phone");
+    if (r.kind === "speaker") return tr("Speaker");
+    if (r.kind === "bluetooth") return (call.prefs.btNames && r.name) || tr("Bluetooth");
+    return r.name || tr("Headphones");
+  }
+  /** The reactions panel (raise hand, emoji reactions, sounds). */
+  let reactOpen = $state(false);
+  /** Raised hands in order (first raised first), for the "✋ 2" on tiles. */
+  const handOrder = $derived(Object.entries(call.hands).sort((a, b) => a[1] - b[1]).map(([user]) => user));
   // This view outlives calls: the next one starts with panels closed and nothing focused.
   $effect(() => {
     if (call.active) return;
-    soundsOpen = optionsOpen = call.ringPanel = immersive = false;
+    soundsOpen = optionsOpen = reactOpen = call.ringPanel = immersive = audioMenu = false;
     focus = null;
   });
 
@@ -319,9 +340,9 @@
         <NativeVideo frames={main.tile.screenFrames} contain />
       {:else if main.what === "camera" && main.tile.camera}
         <!-- svelte-ignore a11y_media_has_caption -->
-        <video use:video={main.tile.camera} autoplay playsinline muted class:mirror={main.tile.isMe}></video>
+        <video use:video={main.tile.camera} autoplay playsinline muted class:mirror={mirrored(main.tile)}></video>
       {:else if main.what === "camera" && main.tile.cameraFrames}
-        <NativeVideo frames={main.tile.cameraFrames} mirror={main.tile.isMe} />
+        <NativeVideo frames={main.tile.cameraFrames} mirror={mirrored(main.tile)} />
       {:else}
         <div class="pip-face" class:speaking={main.tile.speaking}>
           <Avatar name={main.tile.name} mxc={main.tile.avatar} size={64} />
@@ -333,44 +354,51 @@
       <div class="pip-inset">
         {#if pipInset.camera}
           <!-- svelte-ignore a11y_media_has_caption -->
-          <video use:video={pipInset.camera} autoplay playsinline muted class:mirror={pipInset.isMe}></video>
+          <video use:video={pipInset.camera} autoplay playsinline muted class:mirror={mirrored(pipInset)}></video>
         {:else if pipInset.cameraFrames}
-          <NativeVideo frames={pipInset.cameraFrames} mirror={pipInset.isMe} />
+          <NativeVideo frames={pipInset.cameraFrames} mirror={mirrored(pipInset)} />
         {/if}
       </div>
     {/if}
   </div>
 {:else if call.active}
   <div class="call" class:side={call.sideChat} transition:fade={{ duration: 160 }}>
+    <div class="head">
     <header data-tauri-drag-region="deep">
       <button class="icon" onclick={() => (call.minimized = true)} aria-label={tr("Back to chats")}><ChevronDown size={24} /></button>
       <div class="title">
         <strong>{call.roomName}</strong>
         <small>
           {#if call.encrypted}<span class="lock" title={tr("End-to-end encrypted")}><Lock size={12} /></span>{/if}
-          {statusText ?? tr("{length} in call", { length: call.tiles.length })}
+          {statusText ?? tr("{length} in call", { length: call.tiles.length })}{#if !statusText && call.duration}<span class="duration">{" · "}{call.duration}</span>{/if}
         </small>
       </div>
       <button class="icon chat" class:open={call.sideChat} onclick={() => call.toggleChat()} aria-label={tr("Chat")} title={tr("Chat")} aria-pressed={call.sideChat}>
         <MessageSquare size={20} />
       </button>
       {#if canRing}
-        <button class="icon ring" class:open={call.ringPanel} onclick={() => ((call.ringPanel = !call.ringPanel), (soundsOpen = optionsOpen = false))} aria-label={tr("Ring someone")} title={tr("Ring someone")} aria-expanded={call.ringPanel}>
+        <button class="icon ring" class:open={call.ringPanel} onclick={() => ((call.ringPanel = !call.ringPanel), (soundsOpen = optionsOpen = reactOpen = false))} aria-label={tr("Ring someone")} title={tr("Ring someone")} aria-expanded={call.ringPanel}>
           <PhoneCall size={20} />
         </button>
       {/if}
-      <button class="icon sounds" class:open={soundsOpen} onclick={() => ((soundsOpen = !soundsOpen), (optionsOpen = call.ringPanel = false))} aria-label={tr("Soundboard")} title={tr("Soundboard")} aria-expanded={soundsOpen}>
+      <button class="icon react" class:open={reactOpen} class:raised={call.handUp} onclick={() => ((reactOpen = !reactOpen), (soundsOpen = optionsOpen = call.ringPanel = false))} aria-label={tr("Reactions")} title={tr("Reactions")} aria-expanded={reactOpen}>
+        {#if call.handUp}<span class="hand-icon">✋</span>{:else}<SmilePlus size={20} />{/if}
+      </button>
+      <button class="icon sounds" class:open={soundsOpen} onclick={() => ((soundsOpen = !soundsOpen), (optionsOpen = reactOpen = call.ringPanel = false))} aria-label={tr("Soundboard")} title={tr("Soundboard")} aria-expanded={soundsOpen}>
         <Drum size={20} />
       </button>
-      <button class="icon options" class:open={optionsOpen} onclick={() => (optionsOpen = !optionsOpen)} aria-label={tr("Call options")} aria-expanded={optionsOpen}>
+      <button class="icon options" class:open={optionsOpen} onclick={() => ((optionsOpen = !optionsOpen), (soundsOpen = reactOpen = call.ringPanel = false))} aria-label={tr("Call options")} aria-expanded={optionsOpen}>
         <SlidersHorizontal size={20} />
       </button>
     </header>
-    {#if soundsOpen && call.roomId}
-      <SoundboardPanel roomId={call.roomId} onClose={() => (soundsOpen = false)} />
-    {/if}
     {#if call.ringPanel}
       <RingPanel onClose={() => (call.ringPanel = false)} />
+    {/if}
+    {#if reactOpen}
+      <ReactionsPanel onClose={() => (reactOpen = false)} />
+    {/if}
+    {#if soundsOpen && call.roomId}
+      <SoundboardPanel roomId={call.roomId} onClose={() => (soundsOpen = false)} />
     {/if}
     {#if optionsOpen}
       <div class="options-panel" transition:fly={{ y: -8, duration: 150 }}>
@@ -384,6 +412,7 @@
         </label>
       </div>
     {/if}
+    </div>
 
     <div class="body" class:side-strip={sideStrip} bind:clientWidth={bodyW} bind:clientHeight={bodyH}>
     {#if featured}
@@ -406,11 +435,11 @@
           {/if}
         {:else if featured.what === "camera"}
           {#if f.camera}
-            <video class="backdrop" aria-hidden="true" use:video={f.camera} autoplay playsinline muted class:mirror={f.isMe}></video>
-            <video class="contain" use:video={f.camera} autoplay playsinline muted class:mirror={f.isMe}></video>
+            <video class="backdrop" aria-hidden="true" use:video={f.camera} autoplay playsinline muted class:mirror={mirrored(f)}></video>
+            <video class="contain" use:video={f.camera} autoplay playsinline muted class:mirror={mirrored(f)}></video>
           {:else if f.cameraFrames}
-            <div class="backdrop" aria-hidden="true"><NativeVideo frames={f.cameraFrames} mirror={f.isMe} /></div>
-            <NativeVideo frames={f.cameraFrames} mirror={f.isMe} contain />
+            <div class="backdrop" aria-hidden="true"><NativeVideo frames={f.cameraFrames} mirror={mirrored(f)} /></div>
+            <NativeVideo frames={f.cameraFrames} mirror={mirrored(f)} contain />
           {/if}
         {:else}
           <div class="face big" class:speaking={f.speaking}>
@@ -421,6 +450,9 @@
           {featured.what === "screen" ? (f.isMe ? tr("Your screen") : tr("{name}'s screen", { name: f.name })) : f.isMe ? tr("You") : f.name}
         </span>
         <div class="spot-actions">
+          {#if f.isMe && featured.what === "camera" && call.canFlip}
+            <button onclick={() => call.flipCamera()} aria-label={tr("Switch camera")} title={tr("Switch camera")}><SwitchCamera size={18} /></button>
+          {/if}
           <button onclick={toggleFullscreen} aria-label={tr("Full screen")} title={tr("Full screen")}>
             {#if immersive}<Minimize2 size={18} />{:else}<Maximize2 size={18} />{/if}
           </button>
@@ -433,11 +465,11 @@
 
     {#snippet picture(t: Tile, small: boolean)}
       {#if t.cameraFrames}
-        <div class="backdrop" aria-hidden="true"><NativeVideo frames={t.cameraFrames} mirror={t.isMe} /></div>
-        <NativeVideo frames={t.cameraFrames} mirror={t.isMe} contain onsize={(w, h) => noteRatio(t.id, w, h)} />
+        <div class="backdrop" aria-hidden="true"><NativeVideo frames={t.cameraFrames} mirror={mirrored(t)} /></div>
+        <NativeVideo frames={t.cameraFrames} mirror={mirrored(t)} contain onsize={(w, h) => noteRatio(t.id, w, h)} />
       {:else if t.camera}
         <!-- svelte-ignore a11y_media_has_caption -->
-        <video class="backdrop" aria-hidden="true" use:video={t.camera} autoplay playsinline muted class:mirror={t.isMe}></video>
+        <video class="backdrop" aria-hidden="true" use:video={t.camera} autoplay playsinline muted class:mirror={mirrored(t)}></video>
         <!-- svelte-ignore a11y_media_has_caption -->
         <video
           class="contain"
@@ -445,7 +477,7 @@
           autoplay
           playsinline
           muted
-          class:mirror={t.isMe}
+          class:mirror={mirrored(t)}
           onresize={(e) => noteRatio(t.id, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
           onloadedmetadata={(e) => noteRatio(t.id, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
         ></video>
@@ -462,6 +494,14 @@
         <div class="face">
           <div class="ring"><Avatar name={t.name} mxc={t.avatar} size={small ? 44 : featured ? 56 : 88} /></div>
         </div>
+      {/if}
+      {#if call.hands[t.userId]}
+        {@const place = handOrder.indexOf(t.userId) + 1}
+        <span class="hand-badge" class:small title={tr("Hand raised")}>✋{#if handOrder.length > 1}<b>{place}</b>{/if}</span>
+      {/if}
+      {#if call.reactions[t.userId]}
+        {@const r = call.reactions[t.userId]}
+        {#key r.at}<span class="reaction-pop" class:small aria-hidden="true">{r.emoji}</span>{/key}
       {/if}
     {/snippet}
 
@@ -543,6 +583,9 @@
           >
             {@render picture(me, true)}
             <span class="name">{#if call.deafened}<HeadphoneOff size={12} />{:else if !me.micOn}<MicOff size={12} />{/if}{tr("You")}</span>
+            {#if call.canFlip}
+              <button class="self-flip" onclick={() => call.flipCamera()} aria-label={tr("Switch camera")} title={tr("Switch camera")}><SwitchCamera size={14} /></button>
+            {/if}
             <button class="self-hide" onclick={() => (selfHidden = true)} aria-label={tr("Hide my video")} title={tr("Hide my video")}><EyeOff size={14} /></button>
           </div>
         {/if}
@@ -574,9 +617,30 @@
         {#if call.deafened}<HeadphoneOff size={24} />{:else}<Headphones size={24} />{/if}
       </button>
       {#if isAndroid}
-        <button class="ctl" class:on={call.speaker} onclick={() => call.toggleSpeaker()} aria-pressed={call.speaker} aria-label={call.speaker ? tr("Speaker on") : tr("Speaker off")} title={call.speaker ? tr("Speaker on") : tr("Speaker off")}>
-          {#if call.speaker}<Volume2 size={24} />{:else}<Ear size={24} />{/if}
-        </button>
+        {@const now = call.audioNow}
+        <div class="audio-out">
+          <button
+            class="ctl"
+            class:on={call.speaker || (!!now && now.kind !== "earpiece")}
+            onclick={() => (call.hasHeadset ? (audioMenu = !audioMenu) : call.toggleSpeaker())}
+            aria-label={call.hasHeadset ? tr("Audio output") : call.speaker ? tr("Speaker on") : tr("Speaker off")}
+            title={now ? routeName(now) : call.speaker ? tr("Speaker on") : tr("Speaker off")}
+            aria-expanded={call.hasHeadset ? audioMenu : undefined}
+          >
+            {#if now?.kind === "bluetooth"}<Bluetooth size={24} />{:else if now && now.kind !== "speaker" && now.kind !== "earpiece"}<Headphones size={24} />{:else if call.speaker}<Volume2 size={24} />{:else}<Smartphone size={24} />{/if}
+          </button>
+          {#if audioMenu && call.hasHeadset}
+            <div class="audio-menu" role="menu" transition:fly={{ y: 8, duration: 140 }}>
+              {#each call.audioRoutes as r (r.id)}
+                <button role="menuitemradio" aria-checked={r.id === call.audioCurrent} class:current={r.id === call.audioCurrent} onclick={() => ((audioMenu = false), call.chooseAudio(r))}>
+                  {#if r.kind === "bluetooth"}<Bluetooth size={20} />{:else if r.kind === "speaker"}<Volume2 size={20} />{:else if r.kind === "earpiece"}<Smartphone size={20} />{:else}<Headphones size={20} />{/if}
+                  <span>{routeName(r)}</span>
+                  {#if r.id === call.audioCurrent}<Check size={18} />{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/if}
       <button class="ctl" class:on={call.camOn} onclick={() => call.toggleCamera()} aria-label={call.camOn ? tr("Turn camera off") : tr("Turn camera on")}>
         {#if call.camOn}<Video size={24} />{:else}<VideoOff size={24} />{/if}
@@ -680,6 +744,22 @@
     align-items: center;
     gap: 10px;
     padding-right: var(--window-controls);
+  }
+  /* The header's panels (reactions, soundboard, ring, options) all drop down from it the
+   * same way everywhere: under its buttons on the right, as wide as a phone screen at most. */
+  .head {
+    position: relative;
+    z-index: 6;
+  }
+  .options-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(420px, 100%);
+    box-sizing: border-box;
+    max-height: min(70vh, 560px);
+    overflow-y: auto;
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.45);
   }
   .title {
     display: flex;
@@ -929,7 +1009,8 @@
     padding: 2px 7px;
     font-size: 0.72rem;
   }
-  .self-hide {
+  .self-hide,
+  .self-flip {
     position: absolute;
     top: 6px;
     right: 6px;
@@ -942,6 +1023,10 @@
     background: rgb(0 0 0 / 0.55);
     color: #fff;
     cursor: pointer;
+  }
+  .self-flip {
+    right: auto;
+    left: 6px;
   }
   .self-pill {
     position: absolute;
@@ -1098,6 +1183,47 @@
     cursor: pointer;
     transition: transform 0.12s var(--ease), background 0.15s var(--ease);
   }
+  .audio-out {
+    position: relative;
+  }
+  .audio-menu {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 8;
+    min-width: 220px;
+    max-width: calc(100vw - 32px);
+    padding: 6px;
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.45);
+    display: grid;
+    gap: 2px;
+  }
+  .audio-menu button {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 12px;
+    border: none;
+    border-radius: 11px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .audio-menu button span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .audio-menu button.current {
+    background: var(--surface-hover);
+    color: var(--accent);
+  }
   .ctl:active {
     transform: scale(0.92);
   }
@@ -1123,6 +1249,80 @@
   .options.open {
     background: var(--accent);
     color: #fff;
+  }
+  .duration {
+    font-variant-numeric: tabular-nums;
+  }
+  .icon.react.raised {
+    background: #f5b301;
+  }
+  /* A raised hand on someone's picture (with its place when several are up). */
+  .hand-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #f5b301;
+    color: #1b1300;
+    font-size: 1rem;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+    animation: hand-in 0.3s var(--ease);
+  }
+  .hand-badge.small {
+    top: 4px;
+    left: 4px;
+    padding: 1px 5px;
+    font-size: 0.8rem;
+  }
+  .hand-badge b {
+    font-size: 0.8rem;
+  }
+  @keyframes hand-in {
+    from {
+      transform: scale(0.4) rotate(-20deg);
+      opacity: 0;
+    }
+  }
+  /* A reaction rises from the bottom of the picture and fades (3 s, like Element Call). */
+  .reaction-pop {
+    position: absolute;
+    bottom: 18%;
+    left: 50%;
+    z-index: 2;
+    font-size: 3rem;
+    pointer-events: none;
+    animation: rise 3s ease-out forwards;
+  }
+  .reaction-pop.small {
+    font-size: 1.8rem;
+  }
+  @keyframes rise {
+    0% {
+      transform: translate(-50%, 20px) scale(0.5);
+      opacity: 0;
+    }
+    12% {
+      transform: translate(-50%, 0) scale(1.15);
+      opacity: 1;
+    }
+    75% {
+      opacity: 1;
+    }
+    100% {
+      transform: translate(-50%, -70px) scale(1);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reaction-pop,
+    .hand-badge {
+      animation: none;
+    }
   }
   .options-panel {
     display: flex;

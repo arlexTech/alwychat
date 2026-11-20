@@ -19,7 +19,8 @@
   import type { MessageEntry } from "$lib/backend";
 
   export interface Actions {
-    react: (key: string) => void;
+    /** Absent on deleted messages: nothing to react to (and the SDK can't take one back). */
+    react?: (key: string) => void;
     reply?: () => void;
     thread?: () => void;
     copy?: () => void;
@@ -61,14 +62,18 @@
   <div class="grip"></div>
   <!-- Who and when: the only place to see it for a message that's just a link, on a phone. -->
   <p class="when">{msg.is_own ? tr("You") : msg.sender_name} · {messageStamp(msg.timestamp)}</p>
-  <div class="reactions">
-    {#each reactions as key (key)}
-      <button class:mine={mine.has(key)} onclick={() => run(() => actions.react(key))}>{key}</button>
-    {/each}
-    <button class="more" class:on={anyEmoji} onclick={() => (anyEmoji = !anyEmoji)} aria-label={tr("Other reaction")}><Plus size={22} /></button>
-  </div>
-  {#if anyEmoji}
-    <div class="any"><EmojiPicker onPick={(e) => run(() => actions.react(e))} /></div>
+  {#if actions.react}
+    {@const react = actions.react}
+    <div class="reactions">
+      {#each reactions as key (key)}
+        <button class:mine={mine.has(key)} onclick={() => run(() => react(key))}>{key}</button>
+      {/each}
+      <button class="more" class:on={anyEmoji} onclick={() => (anyEmoji = !anyEmoji)} aria-label={tr("Other reaction")}><Plus size={22} /></button>
+    </div>
+  {/if}
+  {#if anyEmoji && actions.react}
+    {@const react = actions.react}
+    <div class="any"><EmojiPicker onPick={(e) => run(() => react(e))} /></div>
   {:else}
   <div class="list">
     {#if actions.copyLink}<button onclick={() => run(actions.copyLink!)}><LinkIcon size={20} />{tr("Copy link")}</button>{/if}

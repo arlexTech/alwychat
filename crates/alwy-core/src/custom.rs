@@ -116,6 +116,7 @@ impl crate::Core {
                         || k == NICKNAMES
                         || k == crate::names::DISAPPEARING
                         || k == crate::names::COUNTDOWNS
+                        || k == crate::names::SOUNDS
                 }) || kind.as_deref() == Some("m.room.power_levels")
                 {
                     on_style(chat_style(&room).await);

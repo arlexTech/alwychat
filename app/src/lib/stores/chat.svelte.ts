@@ -10,6 +10,8 @@ import {
   type TimelineEntry,
 } from "$lib/backend";
 import { applyDiffs } from "./list";
+import { chatList } from "./chatList.svelte";
+import { soundboard } from "./soundboard.svelte";
 import { peek, remember } from "$lib/cache";
 import { eventMediaUrl } from "$lib/media";
 
@@ -122,6 +124,20 @@ class Chat {
     for (const id of top.slice(0, READY_TOP)) if (!this.#warmed.has(id)) this.warm(id);
   }
 
+  /** Load these chats now, all at once, until each has its message from `at` (chat ID →
+   *  time): the new message waits on the chat list for this. */
+  prepare(chats: Map<string, number>) {
+    return Promise.all(
+      [...chats].map(async ([id, at]) => {
+        // The list can hear of a message a moment before the chat's timeline has it.
+        for (let i = 0; i < 10; i++) {
+          if ((await this.#peek(id)) >= at) return;
+          await new Promise((r) => setTimeout(r, 80));
+        }
+      }),
+    );
+  }
+
   /** Get `roomId` ready to open. `now`: it's about to be opened (pointed at, pressed). */
   warm(roomId: string, now = false) {
     if (this.roomId === roomId && this.#live) return;
@@ -140,21 +156,23 @@ class Chat {
     const next = async () => {
       const id = this.#queue.shift();
       if (id === undefined) return void (this.#warming = false);
-      await this.#peek(id);
+      // Loaded a moment ago (a new message held on the list for it): nothing newer yet.
+      if (Date.now() - (this.#warmed.get(id) ?? 0) > 2000) await this.#peek(id);
       setTimeout(next, 60);
     };
     setTimeout(next, 150);
   }
 
-  async #peek(roomId: string) {
-    if (this.roomId === roomId && this.#live) return;
+  /** Resolves to the time of the newest message it got (Infinity: nothing to wait for). */
+  async #peek(roomId: string): Promise<number> {
+    if (this.roomId === roomId && this.#live) return Infinity;
     this.#warmed.set(roomId, Date.now());
     try {
       const entries = (await peekChat(roomId)).filter((e) => !(e.type === "message" && !e.item_id.startsWith("$")));
-      if (!entries.length) return;
+      if (!entries.length) return 0;
       const snaps = (this.#snapshots ??= loadSnapshots());
       // The open chat is newer than any peek once its live timeline answered.
-      if (this.roomId === roomId && this.#live) return;
+      if (this.roomId === roomId && this.#live) return Infinity;
       snaps.delete(roomId);
       snaps.set(roomId, entries);
       this.#saveSnapshots();
@@ -174,9 +192,11 @@ class Chat {
         this.entries = entries.map((e) => ({ ...e, key: snapKey(e) }));
         this.loaded = true;
       }
+      return Math.max(0, ...entries.map((e) => (e.type === "message" ? e.timestamp : 0)));
     } catch {
       // Not ready (offline, a chat we left): opening it loads it the usual way.
       this.#warmed.delete(roomId);
+      return Infinity;
     }
   }
 
@@ -227,9 +247,10 @@ class Chat {
   }
 
   /** Show `eventId` in its chat: right away if it's open, else when the chat opens. */
-  jump(roomId: string, eventId: string) {
-    if (this.roomId === roomId) void this.#show(roomId, eventId);
-    else this.#pendingFocus = { roomId, eventId };
+  jump(roomId: string, eventId: string): Promise<void> {
+    if (this.roomId === roomId) return this.#show(roomId, eventId);
+    this.#pendingFocus = { roomId, eventId };
+    return Promise.resolve();
   }
 
   /** Recent messages stay in the live timeline; older ones open a timeline around them. */
@@ -307,6 +328,8 @@ class Chat {
           this.#styles.set(roomId, style);
           remember(`style:${roomId}`, style, true);
           if (current()) this.style = style;
+          // Also sent when the chat's sounds change: an open soundboard follows.
+          if (soundboard.roomId === roomId) void soundboard.load(roomId);
         },
         (pins) => {
           if (current()) this.pins = pins;
@@ -391,6 +414,7 @@ class Chat {
 }
 
 export const chat = new Chat();
+chatList.prepare = (chats) => chat.prepare(chats);
 if (typeof document !== "undefined")
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && chat.persist());
 

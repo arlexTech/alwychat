@@ -5,6 +5,11 @@
   import Plus from "@lucide/svelte/icons/plus";
   import Star from "@lucide/svelte/icons/star";
   import Volume2 from "@lucide/svelte/icons/volume-2";
+  import Bell from "@lucide/svelte/icons/bell";
+  import BellOff from "@lucide/svelte/icons/bell-off";
+  import MuteChooser from "./MuteChooser.svelte";
+  import { mutes } from "$lib/stores/mutes.svelte";
+  import { laterTime } from "$lib/format";
   import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
   import SpaceOrderPage from "./SpaceOrderPage.svelte";
   import { peek, remember } from "$lib/cache";
@@ -44,6 +49,8 @@
 
   // svelte-ignore state_referenced_locally
   let details = $state<RoomDetails | null>(peek<RoomDetails>(`details:${spaceId}`) ?? null);
+  /** "Mute space…" chooser open. */
+  let muting = $state(false);
   let ordering = $state(false);
   let error = $state<string | null>(null);
   let adding = $state(false);
@@ -103,6 +110,19 @@
       />
     </label>
 
+    {@const muted = mutes.space(spaceId)}
+    {#if muted}
+      <button class="m-row" onclick={() => void mutes.unmuteSpace(spaceId).catch((e) => (error = String(e)))}>
+        <span class="m-icon"><Bell size={20} /></span>
+        <span class="m-text"><strong>{tr("Unmute space")}</strong>{#if muted.until}<small>{tr("Muted until {time}", { time: laterTime(muted.until) })}</small>{/if}</span>
+      </button>
+    {:else}
+      <button class="m-row" onclick={() => (muting = true)}>
+        <span class="m-icon"><BellOff size={20} /></span>
+        <span class="m-text"><strong>{tr("Mute space…")}</strong><small>{tr("No notifications from its chats")}</small></span>
+      </button>
+    {/if}
+
     <h3 class="m-section">{tr("Rooms · {length}", { length: rooms.length })}</h3>
     {#if manage}
       <button class="m-row" onclick={() => (creating = true)}>
@@ -149,6 +169,13 @@
   {#if error}<p class="m-error">{error}</p>{/if}
 </Page>
 
+{#if muting}
+  <MuteChooser
+    title={tr("Mute the space {name}", { name: details?.name ?? tr("Space") })}
+    onPick={(until) => void mutes.muteSpace(spaceId, until).catch((e) => (error = String(e)))}
+    onClose={() => (muting = false)}
+  />
+{/if}
 {#if ordering}
   <SpaceOrderPage {spaceId} {children} onClose={() => (ordering = false)} />
 {/if}

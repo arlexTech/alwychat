@@ -17,7 +17,11 @@
 #                                                under it too, so the gateway must know it)
 #   PUSH_GATEWAY=https://host/_matrix/push/v1/notify  (optional: used when the homeserver
 #                                                doesn't advertise a gateway)
-# Passwords are asked for (or taken from ANDROID_KEYSTORE_PASSWORD / TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
+# Signing: with `sudo scripts/signing/setup.sh alwychat` done, builds come out unsigned and the
+# "buildsign" account signs them (sudo -u buildsign /usr/local/bin/build-sign alwychat …; another
+# key set with SIGN_PROJECT=name in .release.env): the keys and passwords are never readable
+# here, nothing is asked, and it can run unattended. Without it, passwords are asked
+# for (or taken from ANDROID_KEYSTORE_PASSWORD / TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
 #
 # Windows is built here too: cargo-xwin (accepts Microsoft's SDK license) + makensis (official
 # NSIS with a matching Linux makensis, see scripts/nsis/makensis);
@@ -91,9 +95,41 @@ cd app
 
 # Everything that asks or can fail fast comes first (passwords, tools), so the builds can then
 # run unattended, side by side.
+# The signing account (scripts/signing/setup.sh), if set up with this project's keys.
+signer=/usr/local/bin/build-sign
+sign_project=${SIGN_PROJECT:-alwychat}
+use_signer=false
+if [ -x "$signer" ] && sudo -n -u buildsign -l "$signer" >/dev/null 2>&1; then
+  use_signer=true
+  echo "Signing with the buildsign account, keys \"$sign_project\" (log: /var/lib/build-sign/sign.log)"
+fi
+sdk_tools=$(ls -d "${ANDROID_HOME:-$HOME/Android/Sdk}"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+verifier="$root/scripts/signing/tauri-update-sign/target/release/tauri-update-sign"
+pubkey=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plugins']['updater']['pubkey'])" "$root/app/src-tauri/tauri.conf.json")
+
+# Signed copy of an unsigned APK (aligned first if Gradle didn't).
+sign_apk() { # in out
+  local in=$1
+  if ! "$sdk_tools/zipalign" -c -P 16 4 "$in" >/dev/null 2>&1; then
+    "$sdk_tools/zipalign" -f -P 16 4 "$in" "$in.aligned" && in=$in.aligned
+  fi
+  sudo -n -u buildsign "$signer" "$sign_project" apk < "$in" > "$2.part"
+  mv "$2.part" "$2"
+}
+# The updater's .sig for a file, checked against the app's public key.
+sign_update() { # file sig
+  sudo -n -u buildsign "$signer" "$sign_project" tauri-update "$(basename "$1")" < "$1" > "$2.part"
+  "$verifier" verify "$pubkey" "$2.part" "$1" || { echo "the new signature doesn't match the app's updater key"; return 1; }
+  mv "$2.part" "$2"
+}
+
 made_props=false
 props=src-tauri/gen/android/keystore.properties
-if $android; then
+if $android && $use_signer; then
+  [ -x "$sdk_tools/zipalign" ] || { echo "no Android build-tools found (zipalign)"; exit 1; }
+  # Left over from a signing run without the signer: Gradle would sign with it.
+  [ ! -f "$props" ] || { echo "$props exists: remove it (the buildsign account signs now)"; exit 1; }
+elif $android; then
   if [ ! -f "$props" ]; then
     [ -n "${ANDROID_KEYSTORE:-}" ] || { echo "no keystore.properties and no ANDROID_KEYSTORE"; exit 1; }
     pass=${ANDROID_KEYSTORE_PASSWORD:-}
@@ -118,7 +154,9 @@ if $android; then
     echo "warning: no google-services.json, this build gets notifications only while it runs"
 fi
 
-if $linux || $windows; then
+if ($linux || $windows) && $use_signer; then
+  [ -x "$verifier" ] || { echo "build the signature checker: cargo build --release --manifest-path scripts/signing/tauri-update-sign/Cargo.toml"; exit 1; }
+elif $linux || $windows; then
   key=$(expand "${UPDATER_KEY:-}")
   [ -f "$key" ] || { echo "UPDATER_KEY missing"; exit 1; }
   export TAURI_SIGNING_PRIVATE_KEY
@@ -144,7 +182,9 @@ if $windows; then
   printf 'Name: ayatana-appindicator3-0.1\nDescription: stand-in\nVersion: 0.5.0\nLibs: -L/usr/lib\n' > "$pc/ayatana-appindicator3-0.1.pc"
 fi
 
-# The interface once for all platforms (the same files); the builds then skip it.
+# The interface once for all platforms (the same files); the builds then skip it. Google's
+# emoji font only ships in the Windows app (others can't draw it): left out without Windows.
+$windows || export VITE_GOOGLE_EMOJI=0
 pnpm build
 skip_ui='"build":{"beforeBuildCommand":""}'
 
@@ -160,15 +200,19 @@ build_android() {
   rm -rf src-tauri/gen/android/app/build/outputs/apk
   CARGO_TARGET_DIR="$split/android" ALWY_UPDATE_FEED="$android_feed" \
     pnpm tauri android build --apk --target aarch64 --config "{\"version\":\"$version\",$skip_ui}"
-  cp "$(find src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)" "$out/alwychat-$version-$commit.apk"
+  local apk
+  apk=$(find src-tauri/gen/android/app/build/outputs/apk/universal -name '*.apk' | head -1)
+  if $use_signer; then sign_apk "$apk" "$out/alwychat-$version-$commit.apk"
+  else cp "$apk" "$out/alwychat-$version-$commit.apk"; fi
 }
 
 build_linux() {
   ALWY_UPDATE_FEED="$RELEASE_URL/latest-linux.json" pnpm tauri build --bundles appimage \
-    --config "{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":true},$skip_ui}"
+    --config "{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":$tauri_signs},$skip_ui}"
   local b=../target/release/bundle/appimage
   cp "$(ls $b/*.AppImage | head -1)" "$out/alwychat-$version-$commit.AppImage"
-  cp "$(ls $b/*.AppImage.sig | head -1)" "$out/alwychat-$version-$commit.AppImage.sig"
+  if $use_signer; then sign_update "$out/alwychat-$version-$commit.AppImage" "$out/alwychat-$version-$commit.AppImage.sig"
+  else cp "$(ls $b/*.AppImage.sig | head -1)" "$out/alwychat-$version-$commit.AppImage.sig"; fi
 }
 
 build_windows() {
@@ -176,11 +220,16 @@ build_windows() {
   CARGO_TARGET_DIR="$split/windows" PATH="$root/scripts/nsis:$PATH" PKG_CONFIG_PATH="$pc" XWIN_ACCEPT_LICENSE=1 \
     ALWY_UPDATE_FEED="$RELEASE_URL/latest-windows.json" \
     pnpm tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis \
-    --config "{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":true},$skip_ui}"
+    --config "{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":$tauri_signs},$skip_ui}"
   local b=$split/windows/x86_64-pc-windows-msvc/release/bundle/nsis
   cp "$(ls $b/*-setup.exe | head -1)" "$out/AlwyChat-$version-$commit-setup.exe"
-  cp "$(ls $b/*-setup.exe.sig | head -1)" "$out/AlwyChat-$version-$commit-setup.exe.sig"
+  if $use_signer; then sign_update "$out/AlwyChat-$version-$commit-setup.exe" "$out/AlwyChat-$version-$commit-setup.exe.sig"
+  else cp "$(ls $b/*-setup.exe.sig | head -1)" "$out/AlwyChat-$version-$commit-setup.exe.sig"; fi
 }
+
+# Tauri signs update files itself only when it has the key (no signing account).
+tauri_signs=true
+$use_signer && tauri_signs=false
 
 platforms=()
 $android && platforms+=(android)

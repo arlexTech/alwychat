@@ -2,6 +2,8 @@
 // Sounds are decoded once into 48 kHz mono buffers, the format the call plays them in.
 import {
   canEditSounds,
+  hiddenBuiltinSounds,
+  setHiddenBuiltinSounds,
   discardPicked,
   pickFiles,
   roomSounds,
@@ -75,6 +77,8 @@ class Soundboard {
   roomId = $state<string | null>(null);
   sounds = $state<Sound[]>([]);
   canEdit = $state(false);
+  /** Built-in sounds this chat took off its soundboard (ids). */
+  hidden = $state<string[]>([]);
   /** The sound playing from us (its key), for the button's glow. */
   playing = $state<string | null>(null);
   #buffers = new Map<string, Promise<AudioBuffer>>();
@@ -82,10 +86,15 @@ class Soundboard {
 
   async load(roomId: string) {
     this.roomId = roomId;
-    const [sounds, canEdit] = await Promise.all([roomSounds(roomId).catch(() => []), canEditSounds(roomId).catch(() => false)]);
+    const [sounds, canEdit, hidden] = await Promise.all([
+      roomSounds(roomId).catch(() => []),
+      canEditSounds(roomId).catch(() => false),
+      hiddenBuiltinSounds(roomId).catch(() => [] as string[]),
+    ]);
     if (this.roomId !== roomId) return;
     this.sounds = sounds;
     this.canEdit = canEdit;
+    this.hidden = hidden;
   }
 
   key(s: AnySound) {
@@ -151,6 +160,12 @@ class Soundboard {
     };
     await setRoomSounds(roomId, [...current, sound]);
     if (this.roomId === roomId) this.sounds = [...current, sound];
+  }
+
+  /** Choose which built-in sounds this chat's soundboard leaves out. */
+  async setHidden(roomId: string, hidden: string[]) {
+    await setHiddenBuiltinSounds(roomId, hidden);
+    if (this.roomId === roomId) this.hidden = hidden;
   }
 
   async remove(roomId: string, id: string) {

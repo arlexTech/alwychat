@@ -398,10 +398,9 @@ impl crate::Core {
         self.with_active(keep_recent)
     }
 
-    /// The latest messages of a chat that isn't open, for the UI to keep ready: opening it
-    /// then shows them at once. Its live timeline is kept (a few chats), so the opening itself
-    /// has nothing left to build either.
-    pub async fn peek_chat(&self, room_id: &str) -> Result<Vec<TimelineEntry>> {
+    /// The chat's live timeline: the open one, a kept one, or a new one kept ready to open
+    /// (`None` for a space).
+    async fn ready_timeline(&self, room_id: &str) -> Result<Option<Arc<Timeline>>> {
         let client = self.client()?;
         let room_id = OwnedRoomId::try_from(room_id).map_err(|_| Error::UnknownRoom)?;
         let known = self.with_active(|a| {
@@ -421,7 +420,7 @@ impl crate::Core {
             None => {
                 let room = client.get_room(&room_id).ok_or(Error::UnknownRoom)?;
                 if room.is_space() {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 }
                 let timeline = Arc::new(
                     room.timeline_builder()
@@ -446,6 +445,39 @@ impl crate::Core {
                 })?;
                 timeline
             }
+        };
+        Ok(Some(timeline))
+    }
+
+    /// Get a chat ready to open with `event_id` in it (a push about it is about to be shown,
+    /// so a tap opens it with nothing left to load). Gives up after `max`.
+    pub async fn ready_for(&self, room_id: &str, event_id: &str, max: std::time::Duration) {
+        let Ok(event_id) = matrix_sdk::ruma::OwnedEventId::try_from(event_id) else {
+            return;
+        };
+        const STEP: std::time::Duration = std::time::Duration::from_millis(50);
+        let mut waited = std::time::Duration::ZERO;
+        let Ok(Some(timeline)) = self.ready_timeline(room_id).await else {
+            return;
+        };
+        // The sync that brought the push delivers the event to the timeline a moment later.
+        while timeline.item_by_event_id(&event_id).await.is_none() {
+            waited += STEP;
+            if waited > max {
+                tracing::info!("push: chat not ready after {max:?}, shown anyway");
+                return;
+            }
+            crate::rt::sleep(STEP).await;
+        }
+        tracing::info!("push: chat ready, waited ~{waited:?}");
+    }
+
+    /// The latest messages of a chat that isn't open, for the UI to keep ready: opening it
+    /// then shows them at once. Its live timeline is kept (a few chats), so the opening itself
+    /// has nothing left to build either.
+    pub async fn peek_chat(&self, room_id: &str) -> Result<Vec<TimelineEntry>> {
+        let Some(timeline) = self.ready_timeline(room_id).await? else {
+            return Ok(Vec::new());
         };
         let items = timeline.items().await;
         let skip = items.len().saturating_sub(PEEK_ITEMS);
@@ -1094,9 +1126,13 @@ impl Mapper {
                     MsgLikeKind::Other(_) => MessageContent::Unsupported,
                 };
                 let own_id = self.timeline.room().own_user_id().to_owned();
+                // A deleted message keeps no reactions: those sent after the deletion can't be
+                // taken back (the SDK doesn't track them on a redacted item).
+                let redacted = matches!(msg.kind, MsgLikeKind::Redacted);
                 let reactions = msg
                     .reactions
                     .iter()
+                    .filter(|_| !redacted)
                     .map(|(key, senders)| {
                         let mut by_time: Vec<_> = senders.iter().collect();
                         by_time.sort_by_key(|(_, info)| info.timestamp);

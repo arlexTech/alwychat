@@ -19,6 +19,7 @@ use tauri::{
 };
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_notification::NotificationExt;
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_opener::OpenerExt;
 
 mod native_call;
@@ -48,11 +49,46 @@ async fn login(
         LoginRedirect::Loopback
     };
     core.login(&server, redirect, invite.as_deref(), |url| {
-        app.opener()
-            .open_url(url.as_str(), None::<&str>)
-            .map_err(|e| e.to_string())
+        // The sign-in screen gets the address too: "Open it again" / "Copy the link" when the
+        // browser didn't come up (seen on a Samsung phone) or was closed by mistake.
+        let _ = app.emit("login-page", url.as_str());
+        open_browser(&app, url.as_str());
+        Ok(())
     })
     .await
+}
+
+/// The sign-in page in the browser. Android: from our activity (SystemPlugin.openBrowser).
+fn open_browser(app: &tauri::AppHandle, url: &str) {
+    #[cfg(target_os = "android")]
+    {
+        let app = app.clone();
+        let url = url.to_owned();
+        tauri::async_runtime::spawn(async move {
+            let opened = app
+                .state::<android::System>()
+                .0
+                .run_mobile_plugin_async::<serde_json::Value>(
+                    "openBrowser",
+                    serde_json::json!({ "url": url }),
+                )
+                .await;
+            match opened {
+                Ok(_) => tracing::info!("sign-in page sent to the browser"),
+                Err(e) => tracing::warn!("couldn't open the browser for sign-in: {e}"),
+            }
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    if let Err(e) = app.opener().open_url(url, None::<&str>) {
+        tracing::warn!("couldn't open the browser for sign-in: {e}");
+    }
+}
+
+/// "Open the sign-in page again" on the waiting screen.
+#[tauri::command]
+fn open_login_page(app: tauri::AppHandle, url: String) {
+    open_browser(&app, &url);
 }
 
 #[tauri::command]
@@ -120,15 +156,17 @@ async fn search_messages(
         .await
 }
 
-/// A chat's photos and videos, files or links, newest first.
+/// A chat's photos and videos, files or links, newest first (`filter`: text in the link or
+/// the file name).
 #[tauri::command]
 async fn shared_media(
     core: State<'_, AppCore>,
     room_id: String,
     kind: alwy_core::search::KindFilter,
     before: Option<i64>,
+    filter: Option<String>,
 ) -> alwy_core::Result<Vec<alwy_core::search::SharedItem>> {
-    core.shared_media(&room_id, kind, before).await
+    core.shared_media(&room_id, kind, before, filter).await
 }
 
 #[tauri::command]
@@ -750,6 +788,22 @@ async fn ring_user(core: State<'_, AppCore>, user_id: String) -> alwy_core::Resu
     core.ring_user(&user_id).await
 }
 
+/// Raise or lower our hand in the call we're in.
+#[tauri::command]
+async fn raise_hand(core: State<'_, AppCore>, raised: bool) -> alwy_core::Result<()> {
+    core.raise_hand(raised).await
+}
+
+/// A reaction (emoji) in the call we're in.
+#[tauri::command]
+async fn call_react(
+    core: State<'_, AppCore>,
+    emoji: String,
+    name: String,
+) -> alwy_core::Result<()> {
+    core.call_react(&emoji, &name).await
+}
+
 /// Is a ring in `room_id` still worth ringing, by the server's call members: false once the
 /// caller left or one of our devices joined; None if the server couldn't be asked.
 #[tauri::command]
@@ -1099,19 +1153,61 @@ fn autostart_set(app: tauri::AppHandle, on: bool) -> Result<(), String> {
 /// Android: call audio on the loudspeaker (`Some(true)`), the earpiece / headphones
 /// (`Some(false)`), or back to normal after a call (`None`). Elsewhere: nothing.
 #[tauri::command]
-async fn call_audio(app: tauri::AppHandle, speaker: Option<bool>) -> Result<(), String> {
+async fn call_audio(
+    app: tauri::AppHandle,
+    route: Option<String>,
+    device: Option<i32>,
+) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "android")]
-    app.state::<android::System>()
+    return app
+        .state::<android::System>()
         .0
         .run_mobile_plugin_async::<serde_json::Value>(
             "callAudio",
-            serde_json::json!({ "speaker": speaker }),
+            serde_json::json!({ "route": route, "device": device }),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string());
     #[cfg(not(target_os = "android"))]
-    let _ = (app, speaker);
-    Ok(())
+    {
+        let _ = (app, route, device);
+        Ok(serde_json::json!({ "devices": [] }))
+    }
+}
+
+/// Android: ask "Nearby devices" (to show Bluetooth headsets' names); whether it's granted.
+#[tauri::command]
+async fn bluetooth_names(app: tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    return app
+        .state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>("bluetoothNames", serde_json::json!({}))
+        .await
+        .map(|v| v.get("granted").and_then(|g| g.as_bool()).unwrap_or(false))
+        .map_err(|e| e.to_string());
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(false)
+    }
+}
+
+/// Android: where call audio can go now (earpiece, speaker, headsets) and the current one.
+#[tauri::command]
+async fn audio_routes(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "android")]
+    return app
+        .state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>("audioRoutes", serde_json::json!({}))
+        .await
+        .map_err(|e| e.to_string());
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({ "devices": [] }))
+    }
 }
 
 /// Android, the app on screen: the phone's own ringtone and ringtone vibration for an
@@ -1299,6 +1395,32 @@ async fn set_room_sounds(
     items: Vec<alwy_core::sounds::Sound>,
 ) -> alwy_core::Result<()> {
     core.set_room_sounds(&room_id, items).await
+}
+
+/// When the call in a chat began (oldest join among the people in it now), ms since epoch.
+#[tauri::command]
+async fn call_started_at(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Option<u64>> {
+    Ok(core.call_started_at(&room_id).await)
+}
+
+#[tauri::command]
+async fn hidden_builtin_sounds(
+    core: State<'_, AppCore>,
+    room_id: String,
+) -> alwy_core::Result<Vec<String>> {
+    core.hidden_builtin_sounds(&room_id).await
+}
+
+#[tauri::command]
+async fn set_hidden_builtin_sounds(
+    core: State<'_, AppCore>,
+    room_id: String,
+    hidden: Vec<String>,
+) -> alwy_core::Result<()> {
+    core.set_hidden_builtin_sounds(&room_id, hidden).await
 }
 
 #[tauri::command]
@@ -2904,6 +3026,7 @@ pub fn run() {
             restore_session,
             login,
             cancel_login,
+            open_login_page,
             subscribe_chat_list,
             open_chat,
             open_thread,
@@ -2936,6 +3059,9 @@ pub fn run() {
             native_call::native_call_play_sound,
             room_sounds,
             set_room_sounds,
+            hidden_builtin_sounds,
+            call_started_at,
+            set_hidden_builtin_sounds,
             can_edit_sounds,
             upload_sound,
             presence,
@@ -2958,6 +3084,8 @@ pub fn run() {
             save_blob,
             launch_call,
             call_audio,
+            audio_routes,
+            bluetooth_names,
             ring_in_app,
             updates::update_check,
             updates::update_install,
@@ -2969,6 +3097,8 @@ pub fn run() {
             decline_call,
             ring_user,
             ring_active,
+            raise_hand,
+            call_react,
             call_alert,
             location_notification,
             drafts,

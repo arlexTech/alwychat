@@ -576,18 +576,29 @@ impl SearchIndex {
         kind: KindFilter,
         before: Option<i64>,
         limit: usize,
+        filter: Option<&str>,
     ) -> Result<Vec<Row>> {
+        // A filter matches the text (links) or the file name, anywhere, ignoring case.
+        let pattern = filter.map(str::trim).filter(|f| !f.is_empty()).map(|f| {
+            let escaped = f
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            format!("%{escaped}%")
+        });
         let db = self.db.lock().unwrap();
         let mut stmt = db
             .prepare(&format!(
                 "SELECT m.event_id, m.room_id, m.sender, m.ts, m.kind, m.body, m.media FROM msg m
                  WHERE m.room_id = ?1 AND {} AND (?2 IS NULL OR m.ts < ?2)
+                   AND (?4 IS NULL OR m.body LIKE ?4 ESCAPE '\\'
+                        OR json_extract(m.media, '$.filename') LIKE ?4 ESCAPE '\\')
                  ORDER BY m.ts DESC LIMIT ?3",
                 kind.sql()
             ))
             .map_err(sql)?;
         let rows = stmt
-            .query_map(params![room_id, before, limit as i64], |r| {
+            .query_map(params![room_id, before, limit as i64, pattern], |r| {
                 Ok(Row {
                     event_id: r.get(0)?,
                     room_id: r.get(1)?,
@@ -919,15 +930,18 @@ impl crate::Core {
         room_id: &str,
         kind: KindFilter,
         before: Option<i64>,
+        filter: Option<String>,
     ) -> Result<Vec<SharedItem>> {
         let index = self.search_index()?;
         *index.priority.lock().unwrap() = OwnedRoomId::try_from(room_id).ok();
         let room = self.room(room_id)?;
         let rows = {
             let (index, room_id) = (index.clone(), room_id.to_owned());
-            crate::rt::blocking(move || index.listing(&room_id, kind, before, 60))
-                .await
-                .map_err(|e| Error::Search(e.to_string()))??
+            crate::rt::blocking(move || {
+                index.listing(&room_id, kind, before, 60, filter.as_deref())
+            })
+            .await
+            .map_err(|e| Error::Search(e.to_string()))??
         };
         let mut names = Names(HashMap::new());
         let mut items = Vec::with_capacity(rows.len());
@@ -1384,11 +1398,61 @@ mod tests {
                 &[&photo, &msg("$l", "regarde https://example.org stp")],
             )
             .unwrap();
-        let media = index.listing("!r:x", KindFilter::Media, None, 10).unwrap();
+        let media = index
+            .listing("!r:x", KindFilter::Media, None, 10, None)
+            .unwrap();
         assert_eq!(media.len(), 1);
         assert_eq!(media[0].event_id, "$p");
-        let links = index.listing("!r:x", KindFilter::Links, None, 10).unwrap();
+        let links = index
+            .listing("!r:x", KindFilter::Links, None, 10, None)
+            .unwrap();
         assert_eq!(links[0].event_id, "$l");
         assert_eq!(found(&index, "vacances"), vec!["$p"]);
+    }
+
+    #[test]
+    fn shared_media_filter() {
+        let index = index();
+        let file = |id: &str, name: &str| {
+            raw(serde_json::json!({
+                "type": "m.room.message", "event_id": id, "sender": "@a:x", "origin_server_ts": 1,
+                "content": { "msgtype": "m.file", "body": name, "filename": name, "url": "mxc://x/f" }
+            }))
+        };
+        index
+            .apply(
+                "!r:x",
+                &[
+                    &file("$f1", "Facture_Mars.pdf"),
+                    &file("$f2", "plan maison.png"),
+                    &file("$f3", "100% done.txt"),
+                    &msg("$l1", "voilà https://www.bol.com/be/fr/p/pompe"),
+                    &msg("$l2", "https://github.com/arlexTech/alwychat"),
+                ],
+            )
+            .unwrap();
+        let ids = |kind, q: Option<&str>| -> Vec<String> {
+            let mut v: Vec<_> = index
+                .listing("!r:x", kind, None, 10, q)
+                .unwrap()
+                .into_iter()
+                .map(|r| r.event_id)
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(KindFilter::Files, Some("facture")), vec!["$f1"]);
+        assert_eq!(ids(KindFilter::Files, Some("MAISON")), vec!["$f2"]);
+        // % and _ are plain characters, not wildcards.
+        assert_eq!(ids(KindFilter::Files, Some("100%")), vec!["$f3"]);
+        assert_eq!(ids(KindFilter::Files, Some("e_M")), vec!["$f1"]);
+        assert_eq!(ids(KindFilter::Links, Some("bol.com")), vec!["$l1"]);
+        assert_eq!(ids(KindFilter::Links, Some("github")), vec!["$l2"]);
+        assert_eq!(
+            ids(KindFilter::Links, Some("  ")).len(),
+            2,
+            "blank = everything"
+        );
+        assert!(ids(KindFilter::Links, Some("pizza")).is_empty());
     }
 }

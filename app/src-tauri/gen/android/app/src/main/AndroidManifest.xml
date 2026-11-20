@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Voice messages (and calls later): the WebView asks for the microphone. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Only to show a Bluetooth headset's real name in calls, asked when the user turns on
+         Settings → Voice & video → "Show headset names". -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Video calls. -->
     <uses-permission android:name="android.permission.CAMERA" />

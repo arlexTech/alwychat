@@ -1,19 +1,23 @@
 <script lang="ts">
   // Soundboard (Discord style), from the call view: tap a sound, everyone in the call hears it.
-  // Built-in sounds, then the chat's own; people allowed to change the chat can add a short
-  // audio file (trimmed to 6 s, sent as WAV) or remove one (right-click / long-press).
-  import { tr } from "$lib/i18n/index.svelte";
+  // Built-in sounds (minus those a reaction already plays, and those this chat took off), then
+  // the chat's own. People allowed to change the chat add a short audio file (trimmed to 6 s,
+  // sent as WAV), remove one of its sounds or take a built-in one off (long-press /
+  // right-click), and bring taken-off ones back.
+  import { tr, trn } from "$lib/i18n/index.svelte";
   import { onBack } from "$lib/back.svelte";
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
   import X from "@lucide/svelte/icons/x";
   import Plus from "@lucide/svelte/icons/plus";
   import Play from "@lucide/svelte/icons/play";
-  import Volume2 from "@lucide/svelte/icons/volume-2";
-  import VolumeX from "@lucide/svelte/icons/volume-x";
+  import SoundVolume from "./SoundVolume.svelte";
+  import SoundTile from "./SoundTile.svelte";
   import { isAndroid, type Sound } from "$lib/backend";
   import { call } from "$lib/stores/call.svelte";
   import { builtinSounds, MAX_SECONDS, soundboard, type AnySound } from "$lib/stores/soundboard.svelte";
+  import { REACTION_SOUND_IDS } from "$lib/soundboard/reactions";
+  import type { BuiltinSound } from "$lib/soundboard/builtin";
 
   let { roomId, onClose }: { roomId: string; onClose: () => void } = $props();
 
@@ -24,8 +28,14 @@
   let trimmed = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
-  let removing = $state<Sound | null>(null);
+  /** Asking before removing a chat sound or taking a built-in one off. */
+  let removing = $state<{ kind: "room"; sound: Sound } | { kind: "builtin"; sound: BuiltinSound } | null>(null);
   let fileInput = $state<HTMLInputElement>();
+
+  // Built-ins a reaction plays (🎉 ta-da, 👏 applause…) are in the reactions panel only.
+  const offered = builtinSounds.filter((s) => !REACTION_SOUND_IDS.has(s.id));
+  const shown = $derived(offered.filter((s) => !soundboard.hidden.includes(s.id)));
+  const takenOff = $derived(offered.filter((s) => soundboard.hidden.includes(s.id)).length);
 
   $effect(() => onBack(() => (removing ? (removing = null) : adding ? (adding = false) : onClose())));
   onMount(() => void soundboard.load(roomId));
@@ -86,46 +96,34 @@
     }
   }
 
-  async function remove(sound: Sound) {
+  async function confirmRemove() {
+    const what = removing;
     removing = null;
+    if (!what) return;
     try {
-      await soundboard.remove(roomId, sound.id);
+      if (what.kind === "room") await soundboard.remove(roomId, what.sound.id);
+      else await soundboard.setHidden(roomId, [...soundboard.hidden, what.sound.id]);
     } catch (e) {
       error = String(e);
     }
   }
 
-  // Long-press (touch) to remove a chat sound.
-  let pressTimer: ReturnType<typeof setTimeout> | undefined;
-  let longPressed = false;
-  function pressStart(sound: Sound) {
-    longPressed = false;
-    if (!soundboard.canEdit) return;
-    pressTimer = setTimeout(() => {
-      longPressed = true;
-      removing = sound;
-    }, 550);
+  async function bringBack() {
+    try {
+      await soundboard.setHidden(roomId, []);
+    } catch (e) {
+      error = String(e);
+    }
   }
-  const pressEnd = () => clearTimeout(pressTimer);
 </script>
 
-<div class="panel" transition:fly={{ y: 24, duration: 160 }}>
+<div class="panel" transition:fly={{ y: -8, duration: 150 }}>
   <header>
     <strong>{tr("Soundboard")}</strong>
-    <label class="volume" title={tr("How loud sounds are for you")}>
-      {#if call.prefs.soundboardVolume < 0.01}<VolumeX size={18} />{:else}<Volume2 size={18} />{/if}
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.05"
-        value={call.prefs.soundboardVolume}
-        oninput={(e) => call.setSoundboardVolume(Number(e.currentTarget.value))}
-        aria-label={tr("Soundboard volume")}
-      />
-    </label>
+    <SoundVolume kind="soundboard" />
     <button class="icon" onclick={onClose} aria-label={tr("Close")}><X size={20} /></button>
   </header>
+  <p class="note">{tr("Everyone in the call hears them")}</p>
   {#if call.deafened}<p class="note">{tr("Undeafen to play sounds")}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
 
@@ -151,50 +149,52 @@
     </div>
   {:else}
     <div class="grid">
-      {#each builtinSounds as sound (sound.id)}
+      {#each shown as sound (sound.id)}
         {@const s = { kind: "builtin", sound } as const}
-        <button class="sound" class:playing={soundboard.playing === soundboard.key(s)} disabled={call.deafened} onclick={() => play(s)}>
-          <span class="emoji">{sound.emoji}</span><span class="name">{sound.name()}</span>
-        </button>
+        <SoundTile
+          emoji={sound.emoji}
+          label={sound.name()}
+          playing={soundboard.playing === soundboard.key(s)}
+          disabled={call.deafened}
+          onclick={() => play(s)}
+          onHold={soundboard.canEdit ? () => (removing = { kind: "builtin", sound }) : undefined}
+        />
       {/each}
+      {#each soundboard.sounds as sound (sound.id)}
+        {@const s = { kind: "room", sound } as const}
+        <SoundTile
+          emoji={sound.emoji ?? "🔊"}
+          label={sound.name}
+          playing={soundboard.playing === soundboard.key(s)}
+          disabled={call.deafened}
+          onclick={() => play(s)}
+          onHold={soundboard.canEdit ? () => (removing = { kind: "room", sound }) : undefined}
+        />
+      {/each}
+      {#if soundboard.canEdit}
+        <SoundTile add label={tr("Add a sound")} onclick={() => ((adding = true), (error = null))}>
+          {#snippet icon()}<Plus size={22} />{/snippet}
+        </SoundTile>
+      {/if}
     </div>
-    {#if soundboard.sounds.length || soundboard.canEdit}
-      <h4>{tr("This chat's sounds")}</h4>
-      <div class="grid">
-        {#each soundboard.sounds as sound (sound.id)}
-          {@const s = { kind: "room", sound } as const}
-          <button
-            class="sound"
-            class:playing={soundboard.playing === soundboard.key(s)}
-            disabled={call.deafened}
-            onclick={() => !longPressed && play(s)}
-            oncontextmenu={(e) => {
-              if (!soundboard.canEdit) return;
-              e.preventDefault();
-              removing = sound;
-            }}
-            onpointerdown={() => pressStart(sound)}
-            onpointerup={pressEnd}
-            onpointerleave={pressEnd}
-          >
-            <span class="emoji">{sound.emoji ?? "🔊"}</span><span class="name">{sound.name}</span>
-          </button>
-        {/each}
-        {#if soundboard.canEdit}
-          <button class="sound add-tile" onclick={() => ((adding = true), (error = null))}>
-            <span class="emoji"><Plus size={22} /></span><span class="name">{tr("Add a sound")}</span>
-          </button>
-        {/if}
-      </div>
+    {#if soundboard.canEdit}
+      <p class="hint">
+        {tr("Hold or right-click a sound to remove it.")}
+        {#if takenOff}<button class="link" onclick={bringBack}>{trn(takenOff, "Bring back {n} removed sound", "Bring back {n} removed sounds")}</button>{/if}
+      </p>
     {/if}
   {/if}
 
   {#if removing}
     <div class="confirm">
-      <p>{tr("Remove “{name}” for everyone in this chat?", { name: removing.name })}</p>
+      <p>
+        {removing.kind === "room"
+          ? tr("Remove “{name}” for everyone in this chat?", { name: removing.sound.name })
+          : tr("Take “{name}” off this chat's soundboard? You can bring it back later.", { name: removing.sound.name() })}
+      </p>
       <div class="actions">
         <button class="text" onclick={() => (removing = null)}>{tr("Cancel")}</button>
-        <button class="text danger" onclick={() => removing && remove(removing)}>{tr("Remove")}</button>
+        <button class="text danger" onclick={confirmRemove}>{tr("Remove")}</button>
       </div>
     </div>
   {/if}
@@ -202,13 +202,13 @@
 
 <style>
   .panel {
+    /* Drops down from the call header (CallView's .head), like the other panels. */
     position: absolute;
-    left: 12px;
-    right: 12px;
-    bottom: calc(110px + env(safe-area-inset-bottom));
-    max-width: 520px;
-    margin: 0 auto;
-    max-height: min(60vh, 520px);
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(420px, 100%);
+    box-sizing: border-box;
+    max-height: min(70vh, 560px);
     overflow-y: auto;
     z-index: 5;
     padding: 12px;
@@ -223,75 +223,10 @@
     justify-content: space-between;
     margin-bottom: 8px;
   }
-  .volume {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 8px 0 auto;
-    color: var(--muted);
-  }
-  .volume input {
-    width: 110px;
-    accent-color: var(--accent);
-  }
-  h4 {
-    margin: 14px 2px 8px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-    gap: 8px;
-  }
-  .sound {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 10px 6px;
-    border: 1px solid transparent;
-    border-radius: 14px;
-    background: var(--surface-hover);
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-    -webkit-touch-callout: none;
-    transition:
-      transform 0.12s ease,
-      border-color 0.2s ease;
-  }
-  .sound:active {
-    transform: scale(0.94);
-  }
-  .sound.playing {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-  .sound:disabled {
-    opacity: 0.4;
-  }
-  .sound .emoji {
-    font-size: 1.6rem;
-    line-height: 1;
-    display: grid;
-    place-items: center;
-    min-height: 1.6rem;
-  }
-  .sound .name {
-    font-size: 0.78rem;
-    text-align: center;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-  .add-tile {
-    border: 1px dashed var(--border);
-    background: none;
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+    gap: 6px;
   }
   .icon {
     width: 36px;
@@ -376,5 +311,19 @@
   }
   .confirm p {
     margin: 0 0 10px;
+  }
+  .hint {
+    margin: 10px 2px 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .link {
+    margin-left: 4px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
   }
 </style>

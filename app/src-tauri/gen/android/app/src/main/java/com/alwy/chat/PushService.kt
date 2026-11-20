@@ -73,7 +73,10 @@ class PushService : FirebaseMessagingService() {
       }
       markReceived(context)
       // On screen, the chat list already shows it.
-      if (MainActivity.visible) return
+      if (MainActivity.visible) {
+        Log.i("AlwyChat", "push: app on screen, no notification")
+        return
+      }
       val json = try {
         NativePush.notification(context, context.dataDir.absolutePath, roomId, eventId)
       } catch (e: Throwable) {

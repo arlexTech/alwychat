@@ -29,6 +29,15 @@
   } from "$lib/backend";
   import CategoryPage from "./CategoryPage.svelte";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Folder from "@lucide/svelte/icons/folder";
+  import Globe from "@lucide/svelte/icons/globe";
+  import Lock from "@lucide/svelte/icons/lock";
+  import FolderInput from "@lucide/svelte/icons/folder-input";
+  import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
+  import Ungroup from "@lucide/svelte/icons/ungroup";
+  import Check from "@lucide/svelte/icons/check";
+  import ReorderList from "./ReorderList.svelte";
+  import type { SpaceGroup } from "$lib/backend";
   import Pencil from "@lucide/svelte/icons/pencil";
   import { call } from "$lib/stores/call.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
@@ -76,6 +85,60 @@
   $effect(() => {
     if (spaceMenu) return onBack(() => (spaceMenu = null));
   });
+  /** A menu item: the space is read before the menu closes (the menu's `{@const menu}` follows
+   * `spaceMenu`, so reading it after closing gave null: its buttons did nothing). */
+  function closeMenuThen(act: (space: Ref) => void) {
+    const menu = spaceMenu;
+    spaceMenu = null;
+    if (menu) act({ id: menu.id, name: menu.name, avatar: menu.avatar });
+  }
+
+  // ── Groups of spaces (Discord's server folders) and the Spaces tab's order, synced between
+  // our devices (stores/spaces.svelte.ts). Folded groups are remembered per device. ──
+  let groupMenu = $state<{ group: SpaceGroup; x: number; y: number } | null>(null);
+  function openGroupMenu(event: MouseEvent, group: SpaceGroup) {
+    event.preventDefault();
+    groupMenu = { group, x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 180) };
+  }
+  $effect(() => {
+    if (groupMenu) return onBack(() => (groupMenu = null));
+  });
+  function closeGroupMenuThen(act: (group: SpaceGroup) => void) {
+    const menu = groupMenu;
+    groupMenu = null;
+    if (menu) act(menu.group);
+  }
+  /** "Move to a group…" open for this space. */
+  let moving = $state<Ref | null>(null);
+  /** A choice on that page: the space is read before the page closes (see closeMenuThen). */
+  function closeMovingThen(act: (space: Ref) => void) {
+    const space = moving;
+    moving = null;
+    if (space) act(space);
+  }
+  /** Naming a group: a new one for `spaceId`, or renaming `groupId`. */
+  let naming = $state<{ groupId: string | null; spaceId: string | null; name: string } | null>(null);
+  /** Reordering: the whole tab (null) or one group's spaces. */
+  let ordering = $state<{ groupId: string | null } | null>(null);
+  const orderItems = $derived.by(() => {
+    if (!ordering) return [];
+    if (ordering.groupId) {
+      const item = spaces.layout.find((i) => i.kind === "group" && i.group.id === ordering!.groupId);
+      return item?.kind === "group" ? item.spaces.map((sp) => ({ id: sp.id, name: sp.name, avatar: sp.avatar })) : [];
+    }
+    return spaces.layout.map((i) =>
+      i.kind === "group" ? { id: i.group.id, name: i.group.name, avatar: null, icon: Folder } : { id: i.space.id, name: i.space.name, avatar: i.space.avatar },
+    );
+  });
+  function saveName() {
+    const form = naming;
+    if (!form || !form.name.trim()) return;
+    naming = null;
+    const name = form.name.trim();
+    const done = form.groupId ? spaces.renameGroup(form.groupId, name) : form.spaceId ? spaces.moveSpace(form.spaceId, null, name) : null;
+    void done?.catch((e) => (error = String(e)));
+  }
+  const fail = (e: unknown) => (error = String(e));
 
   type Ref = { id: string; name: string; avatar: string | null };
   /** Spaces opened, outermost first (sub-spaces push onto it). */
@@ -390,28 +453,60 @@
   }
 </script>
 
+{#snippet spaceRow(space: (typeof spaces.list)[number], nested: boolean)}
+  {@const unread = unreadIn(space.rooms)}
+  <button
+    class="space"
+    class:nested
+    onclick={() => enterSpace({ id: space.id, name: space.name, avatar: space.avatar })}
+    oncontextmenu={(e) => openSpaceMenu(e, { id: space.id, name: space.name, avatar: space.avatar })}
+  >
+    <Avatar name={space.name} mxc={space.avatar} size={nested ? 40 : 48} square />
+    <span class="text">
+      <strong>{space.name}</strong>
+      <small class="space-meta">
+        {#if space.public !== undefined}
+          {#if space.public}<Globe size={12} />{tr("Public")}{:else}<Lock size={12} />{tr("Private")}{/if}
+        {/if}
+        {#if space.members !== undefined}<span>· {trn(space.members, "{n} member", "{n} members")}</span>{/if}
+        {#if spaces.spaceShown(space.id)}<span>{tr(" · also in Chats")}</span>{/if}
+      </small>
+    </span>
+    {#if mutes.space(space.id)}<span class="muted-bell" title={tr("Muted")}><BellOff size={17} /></span>{/if}
+    {#if unread}<span class="badge">{unread}</span>{/if}
+    <ChevronRight size={18} />
+  </button>
+{/snippet}
+
 {#if !current}
   <div class="list">
     {#if spaces.loaded && spaces.list.length === 0}
       <p class="state">{tr("You haven't joined any spaces yet.")}<br />{tr("Spaces group chats together, like Discord servers.")}</p>
     {/if}
-    {#each spaces.list as space (space.id)}
-      {@const unread = unreadIn(space.rooms)}
-      <button
-        class="space"
-        onclick={() => enterSpace({ id: space.id, name: space.name, avatar: space.avatar })}
-        oncontextmenu={(e) => openSpaceMenu(e, { id: space.id, name: space.name, avatar: space.avatar })}
-      >
-        <Avatar name={space.name} mxc={space.avatar} size={48} square />
-        <span class="text">
-          <strong>{space.name}</strong>
-          <small>
-            {#if mutes.space(space.id)}<BellOff size={12} />{/if}{trn(space.rooms.length, "{n} chat", "{n} chats")}{spaces.spaceShown(space.id) ? tr(" · also in Chats") : ""}
-          </small>
-        </span>
-        {#if unread}<span class="badge">{unread}</span>{/if}
-        <ChevronRight size={18} />
-      </button>
+    {#each spaces.layout as item (item.kind === "group" ? item.group.id : item.space.id)}
+      {#if item.kind === "space"}
+        {@render spaceRow(item.space, false)}
+      {:else}
+        {@const g = item.group}
+        {@const open = !collapsed.includes(g.id)}
+        {@const unread = item.spaces.reduce((n, sp) => n + unreadIn(sp.rooms), 0)}
+        <button class="space group" onclick={() => toggleCategory(g.id)} oncontextmenu={(e) => openGroupMenu(e, g)} aria-expanded={open}>
+          <span class="group-icon" aria-hidden="true">
+            {#each item.spaces.slice(0, 4) as sp (sp.id)}<Avatar name={sp.name} mxc={sp.avatar} size={22} square />{/each}
+          </span>
+          <span class="text">
+            <strong>{g.name}</strong>
+            <small>{trn(item.spaces.length, "{n} space", "{n} spaces")}</small>
+          </span>
+          {#if unread && !open}<span class="badge">{unread}</span>{/if}
+          <span class="fold" class:open><ChevronDown size={18} /></span>
+        </button>
+        {#if open}
+          <div class="group-spaces">
+            {#each item.spaces as sp (sp.id)}{@render spaceRow(sp, true)}{/each}
+          </div>
+        {/if}
+      {/if}
     {/each}
   </div>
 {:else}
@@ -562,14 +657,68 @@
   <div class="menu-catcher" onclick={() => (spaceMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (spaceMenu = null))}></div>
   <div class="row-menu" style:left="{menu.x}px" style:top="{menu.y}px" transition:fade={{ duration: 100 }}>
     {#if muted}
-      <button onclick={() => ((spaceMenu = null), void mutes.unmuteSpace(menu.id).catch((e) => (error = String(e))))}>
+      <button onclick={() => closeMenuThen((space) => void mutes.unmuteSpace(space.id).catch((e) => (error = String(e))))}>
         <Bell size={16} />{muted.until ? tr("Unmute space (muted until {time})", { time: laterTime(muted.until) }) : tr("Unmute space")}
       </button>
     {:else}
-      <button onclick={() => ((spaceMenu = null), (mutingSpace = menu))}><BellOff size={16} />{tr("Mute space…")}</button>
+      <button onclick={() => closeMenuThen((space) => (mutingSpace = space))}><BellOff size={16} />{tr("Mute space…")}</button>
     {/if}
-    <button onclick={() => ((spaceMenu = null), (settingsFor = menu))}><Settings size={16} />{tr("Space settings")}</button>
+    <button onclick={() => closeMenuThen((space) => (settingsFor = space))}><Settings size={16} />{tr("Space settings")}</button>
+    {#if path.length === 0}
+      <button onclick={() => closeMenuThen((space) => (moving = space))}><FolderInput size={16} />{tr("Move to a group…")}</button>
+      <button onclick={() => closeMenuThen((space) => (ordering = { groupId: spaces.groupOf(space.id)?.id ?? null }))}><ArrowUpDown size={16} />{tr("Reorder spaces")}</button>
+    {/if}
   </div>
+{/if}
+{#if groupMenu}
+  {@const menu = groupMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="menu-catcher" onclick={() => (groupMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (groupMenu = null))}></div>
+  <div class="row-menu" style:left="{menu.x}px" style:top="{menu.y}px" transition:fade={{ duration: 100 }}>
+    <button onclick={() => closeGroupMenuThen((g) => (naming = { groupId: g.id, spaceId: null, name: g.name }))}><Pencil size={16} />{tr("Rename group")}</button>
+    <button onclick={() => closeGroupMenuThen((g) => (ordering = { groupId: g.id }))}><ArrowUpDown size={16} />{tr("Reorder its spaces")}</button>
+    <button onclick={() => closeGroupMenuThen(() => (ordering = { groupId: null }))}><ArrowUpDown size={16} />{tr("Reorder spaces")}</button>
+    <button onclick={() => closeGroupMenuThen((g) => void spaces.deleteGroup(g.id).catch(fail))}><Ungroup size={16} />{tr("Ungroup")}</button>
+  </div>
+{/if}
+{#if moving}
+  {@const space = moving}
+  {@const inGroup = spaces.groupOf(space.id)}
+  <Page title={tr("Move {name} to…", { name: space.name })} onClose={() => (moving = null)}>
+    <div class="choices">
+      {#each spaces.prefs.space_groups ?? [] as g (g.id)}
+        <button
+          class="choice"
+          disabled={inGroup?.id === g.id}
+          onclick={() => closeMovingThen((sp) => void spaces.moveSpace(sp.id, g.id).catch(fail))}
+        >
+          <Folder size={18} /><span>{g.name}</span>{#if inGroup?.id === g.id}<Check size={16} />{/if}
+        </button>
+      {/each}
+      <button class="choice" onclick={() => closeMovingThen((sp) => (naming = { groupId: null, spaceId: sp.id, name: "" }))}><Plus size={18} /><span>{tr("New group…")}</span></button>
+      {#if inGroup}
+        <button class="choice" onclick={() => closeMovingThen((sp) => void spaces.moveSpace(sp.id, null).catch(fail))}><Ungroup size={18} /><span>{tr("Not in a group")}</span></button>
+      {/if}
+    </div>
+    <p class="hint">{tr("Groups and their order are the same in all your AlwyChat apps.")}</p>
+  </Page>
+{/if}
+{#if naming}
+  {@const form = naming}
+  <Page title={form.groupId ? tr("Rename group") : tr("New group")} onClose={() => (naming = null)}>
+    <form class="new-channel" onsubmit={(e) => (e.preventDefault(), saveName())}>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input placeholder={tr("Group name")} maxlength="40" bind:value={form.name} autofocus />
+      <button class="create" disabled={!form.name.trim()}>{form.groupId ? tr("Save") : tr("Create")}</button>
+    </form>
+  </Page>
+{/if}
+{#if ordering}
+  {@const groupId = ordering.groupId}
+  <Page title={groupId ? (spaces.prefs.space_groups.find((g) => g.id === groupId)?.name ?? tr("Group")) : tr("Reorder spaces")} onClose={() => (ordering = null)}>
+    <ReorderList items={orderItems} square onMove={(ids) => void (groupId ? spaces.setGroupOrder(groupId, ids) : spaces.setSpaceOrder(ids)).catch(fail)} />
+    <p class="hint">{tr("Drag by the handle. The order is the same in all your AlwyChat apps.")}</p>
+  </Page>
 {/if}
 {#if mutingSpace}
   {@const space = mutingSpace}
@@ -694,6 +843,65 @@
     margin-right: 6px;
     color: var(--muted);
     vertical-align: -2px;
+  }
+  .muted-bell {
+    display: grid;
+    flex: none;
+    color: var(--muted);
+  }
+  .space-meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .space.nested {
+    padding-left: 28px;
+  }
+  .group-icon {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(2, 22px);
+    gap: 2px;
+    width: 48px;
+    height: 48px;
+    padding: 1px;
+    box-sizing: border-box;
+    border-radius: 14px;
+    background: var(--surface-2);
+    place-content: center;
+  }
+  .fold {
+    display: grid;
+    transition: transform 0.15s var(--ease);
+    transform: rotate(-90deg);
+  }
+  .fold.open {
+    transform: none;
+  }
+  .choices {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .choice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 12px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .choice span {
+    flex: 1;
+  }
+  .choice:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
   .menu-catcher {
     position: fixed;

@@ -35,6 +35,7 @@ class Drafts {
   set(roomId: string, text: string, replyTo: string | null) {
     const current = this.#drafts.get(roomId);
     if ((current?.text ?? "") === text && (current?.reply_to ?? null) === replyTo) return;
+    this.#typedAt.set(roomId, Date.now());
     if (text.trim()) this.#drafts.set(roomId, { text, reply_to: replyTo, updated: Date.now() });
     else this.#drafts.delete(roomId);
     clearTimeout(this.#timers.get(roomId));
@@ -57,14 +58,19 @@ class Drafts {
 
   /** When we last cleared each draft, so a late echo of the old text doesn't bring it back. */
   #clearedAt = new Map<string, number>();
+  /** When the composer HERE last changed each draft: only then is an empty draft from sync
+   * possibly an older echo of our own. */
+  #typedAt = new Map<string, number>();
 
   /** From sync. Edits not saved yet win; otherwise the newest version does. */
   #merge(roomId: string, draft: Draft | null) {
     if (this.#timers.has(roomId)) return;
     const current = this.#drafts.get(roomId);
     if (!draft) {
-      // An empty draft has no date: ignore it right after we typed (it's an older echo).
-      if (!current || current.updated < Date.now() - ECHO_WINDOW_MS) this.#drafts.delete(roomId);
+      // An empty draft has no date: ignore it right after WE typed (it's an older echo). A
+      // draft typed on another device and cleared there (sent) within seconds used to stay
+      // here for good ("Draft: <a message already sent>").
+      if ((this.#typedAt.get(roomId) ?? 0) < Date.now() - ECHO_WINDOW_MS) this.#drafts.delete(roomId);
     } else if (draft.updated > (current?.updated ?? this.#clearedAt.get(roomId) ?? 0)) {
       this.#drafts.set(roomId, draft);
     }

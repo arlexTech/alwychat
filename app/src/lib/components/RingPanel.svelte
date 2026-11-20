@@ -39,7 +39,7 @@
   const busy = (invite: Invite | undefined) => invite?.status === "calling" || invite?.status === "ringing";
 </script>
 
-<div class="panel" transition:fly={{ y: 24, duration: 160 }}>
+<div class="panel" transition:fly={{ y: -8, duration: 150 }}>
   <header>
     <strong>{tr("Ring someone")}</strong>
     <button class="icon" onclick={onClose} aria-label={tr("Close")}><X size={20} /></button>
@@ -68,13 +68,13 @@
 
 <style>
   .panel {
+    /* Drops down from the call header (CallView's .head), like the other panels. */
     position: absolute;
-    left: 12px;
-    right: 12px;
-    bottom: calc(110px + env(safe-area-inset-bottom));
-    max-width: 520px;
-    margin: 0 auto;
-    max-height: min(60vh, 520px);
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(420px, 100%);
+    box-sizing: border-box;
+    max-height: min(70vh, 560px);
     overflow-y: auto;
     z-index: 5;
     padding: 12px;

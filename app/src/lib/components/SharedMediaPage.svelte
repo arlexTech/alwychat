@@ -7,6 +7,8 @@
   import Play from "@lucide/svelte/icons/play";
   import Link from "@lucide/svelte/icons/link";
   import MessageSquare from "@lucide/svelte/icons/message-square";
+  import Search from "@lucide/svelte/icons/search";
+  import X from "@lucide/svelte/icons/x";
   import { fileAction, openExternal, searchStatus, sharedMedia, type KindFilter, type SharedItem } from "$lib/backend";
   import { formatDuration, formatSize, shortTime } from "$lib/format";
   import { eventMediaUrl } from "$lib/media";
@@ -39,6 +41,25 @@
   let fileFor = $state<SharedItem | null>(null);
   let toast = $state<string | null>(null);
   let generation = 0;
+  /** Search in the links' text and file names (Files and Links tabs), over the whole history. */
+  let searching = $state(false);
+  let query = $state("");
+  let queryInput = $state<HTMLInputElement>();
+  // Focused (keyboard up) as soon as the field appears: `autofocus` didn't on Android.
+  $effect(() => {
+    if (searching && queryInput) queryInput.focus();
+  });
+  let queryTimer: ReturnType<typeof setTimeout> | undefined;
+  const filter = $derived(searching && tab !== "media" && query.trim() ? query.trim() : null);
+  function onQuery() {
+    clearTimeout(queryTimer);
+    queryTimer = setTimeout(() => void load(true), 250);
+  }
+  function closeSearch() {
+    searching = false;
+    query = "";
+    void load(true);
+  }
 
   // Android back closes the file sheet before the page.
   $effect(() => {
@@ -53,9 +74,11 @@
     error = null;
     try {
       const before = reset ? null : (items.at(-1)?.timestamp ?? null);
-      const page = await sharedMedia(roomId, kind, before);
+      const searched = filter;
+      const page = await sharedMedia(roomId, kind, before, searched);
       if (g !== generation) return;
-      items = reset ? remember(`shared:${roomId}:${kind}`, page) : [...items, ...page];
+      // Search results aren't kept as the tab's cached first page.
+      items = reset ? (searched ? page : remember(`shared:${roomId}:${kind}`, page)) : [...items, ...page];
       done = page.length < PAGE;
     } catch (e) {
       if (g === generation) error = String(e);
@@ -66,7 +89,7 @@
 
   function show(kind: KindFilter) {
     tab = kind;
-    items = peek<SharedItem[]>(`shared:${roomId}:${kind}`) ?? [];
+    items = filter ? [] : (peek<SharedItem[]>(`shared:${roomId}:${kind}`) ?? []);
     done = false;
     void load(true);
   }
@@ -118,11 +141,32 @@
 </script>
 
 <Page title={tr("Shared media")} {onClose}>
+  {#snippet actions()}
+    {#if tab !== "media"}
+      <button class="search-toggle" class:on={searching} onclick={() => (searching ? closeSearch() : (searching = true))} aria-label={tr("Search")} title={tr("Search")} aria-pressed={searching}>
+        <Search size={20} />
+      </button>
+    {/if}
+  {/snippet}
   <nav class="tabs">
     {#each TABS as t (t.id)}
       <button class:active={tab === t.id} onclick={() => show(t.id)}>{t.label}</button>
     {/each}
   </nav>
+  {#if searching && tab !== "media"}
+    <div class="search-box">
+      <Search size={16} />
+      <input
+        type="text"
+        enterkeyhint="search"
+        placeholder={tab === "files" ? tr("File name") : tr("Link or text")}
+        bind:value={query}
+        bind:this={queryInput}
+        oninput={onQuery}
+      />
+      <button onclick={closeSearch} aria-label={tr("Close search")}><X size={16} /></button>
+    </div>
+  {/if}
 
   {#if error}
     <p class="note error">{error}</p>
@@ -167,7 +211,7 @@
 
   {#if !loading && !error && items.length === 0}
     <p class="note">
-      {tab === "media" ? tr("No photos or videos yet.") : tab === "files" ? tr("No files yet.") : tr("No links yet.")}
+      {filter ? tr("Nothing matches “{query}”.", { query: filter }) : tab === "media" ? tr("No photos or videos yet.") : tab === "files" ? tr("No files yet.") : tr("No links yet.")}
     </p>
   {/if}
   {#if !complete}
@@ -203,8 +247,56 @@
   }
   .tabs button {
     padding: 10px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     border: none;
     border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .search-toggle {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .search-toggle.on {
+    color: var(--accent-a);
+  }
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -4px 0 12px;
+    padding: 0 6px 0 12px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+  .search-box input {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 0;
+    border: none;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    outline: none;
+  }
+  .search-box button {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
     background: none;
     color: var(--muted);
     cursor: pointer;

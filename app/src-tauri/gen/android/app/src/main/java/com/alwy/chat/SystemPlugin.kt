@@ -62,9 +62,18 @@ class RingArgs {
 }
 
 @InvokeArg
+class BrowserArgs {
+  lateinit var url: String
+}
+
+@InvokeArg
 class AudioArgs {
-  /** null: the call ended (back to normal audio). */
-  var speaker: Boolean? = null
+  /** "speaker", "earpiece", "headset" (the best connected one), "device" (`device` below),
+   * "release" (no call device: a Bluetooth headset goes back to its music profile while our
+   * mic is off), or null: the call ended (back to normal audio). */
+  var route: String? = null
+  /** An AudioDeviceInfo id from `audioRoutes`, for route "device". */
+  var device: Int? = null
 }
 
 @InvokeArg
@@ -105,7 +114,10 @@ class LabelsArgs {
  * Each `fix*` command asks the system, or opens the right settings page when it can't.
  */
 @TauriPlugin(
-  permissions = [Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications")],
+  permissions = [
+    Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications"),
+    Permission(strings = [Manifest.permission.BLUETOOTH_CONNECT], alias = "bluetooth"),
+  ],
 )
 class SystemPlugin(private val activity: Activity) : Plugin(activity) {
   private val pkg get() = activity.packageName
@@ -213,6 +225,30 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve()
   }
 
+  /**
+   * The sign-in page in the browser, started from our activity (the opener plugin starts it
+   * from the application context in a new task, which a Samsung phone never showed). No
+   * browser set as default: the system's "Open with" list instead.
+   */
+  @Command
+  fun openBrowser(invoke: Invoke) {
+    val args = invoke.parseArgs(BrowserArgs::class.java)
+    val view = Intent(Intent.ACTION_VIEW, Uri.parse(args.url)).addCategory(Intent.CATEGORY_BROWSABLE)
+    try {
+      activity.startActivity(view)
+    } catch (e: Exception) {
+      android.util.Log.w("AlwyChat", "no app opened the sign-in page: $e")
+      try {
+        activity.startActivity(Intent.createChooser(view, null))
+      } catch (e2: Exception) {
+        android.util.Log.w("AlwyChat", "no chooser either: $e2")
+        invoke.reject("No browser could open the page: ${e2.message}")
+        return
+      }
+    }
+    invoke.resolve()
+  }
+
   /** The app on screen rings for an incoming call (see IncomingCall.ringInApp). */
   @Command
   fun ringInApp(invoke: Invoke) {
@@ -221,43 +257,211 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve()
   }
 
+  /** Tells the page (call-action "audio_routes") when headsets come and go or Android moves
+   * the call's audio, while a call has the audio. */
+  private var deviceCallback: android.media.AudioDeviceCallback? = null
+  private var routeListener: android.media.AudioManager.OnCommunicationDeviceChangedListener? = null
+
+  private fun kindOf(type: Int): String? = when (type) {
+    android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "earpiece"
+    android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
+    android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+    android.media.AudioDeviceInfo.TYPE_BLE_HEADSET,
+    android.media.AudioDeviceInfo.TYPE_BLE_SPEAKER -> "bluetooth"
+    android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+    android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "wired"
+    android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+    android.media.AudioDeviceInfo.TYPE_USB_DEVICE -> "usb"
+    else -> null
+  }
+
+  /** A headset's name. Android often gives the PHONE's model as a Bluetooth device's product
+   * name; the real name needs BLUETOOTH_CONNECT ("Show headset names" asks it).
+   * "" = the page shows a generic name. */
+  @SuppressLint("MissingPermission")
+  private fun deviceName(d: android.media.AudioDeviceInfo, kind: String): String {
+    val product = d.productName?.toString()?.trim().orEmpty()
+    if (kind != "bluetooth") return if (kind == "wired" || kind == "usb") product.takeIf { it != Build.MODEL }.orEmpty() else ""
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+      activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    ) {
+      try {
+        val bt = activity.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter
+        val byAddress = d.address.takeIf { it.isNotBlank() && android.bluetooth.BluetoothAdapter.checkBluetoothAddress(it) }
+          ?.let { bt?.getRemoteDevice(it) }
+          ?.let { it.alias ?: it.name }
+        // Android may give a Bluetooth call device no address, or one that names nothing (seen on
+        // OxygenOS 16): then the headset connected for calls. Often more than one (a watch counts
+        // as a headset too): the one carrying the call's sound, else the only audio device.
+        val real = byAddress?.takeIf { it.isNotBlank() } ?: headsetProxy?.let { hs ->
+          val all = hs.connectedDevices
+          (all.firstOrNull { hs.isAudioConnected(it) }
+            ?: all.filter { it.bluetoothClass?.majorDeviceClass == android.bluetooth.BluetoothClass.Device.Major.AUDIO_VIDEO }.singleOrNull()
+            ?: all.singleOrNull())?.let { it.alias ?: it.name }
+        }
+        if (!real.isNullOrBlank()) return real
+      } catch (e: Exception) {
+        android.util.Log.w("AlwyChat", "headset name failed", e)
+      }
+    }
+    return if (product == Build.MODEL || product == Build.DEVICE) "" else product
+  }
+
+  /** Android's Bluetooth headset profile (which headsets are connected for calls), for names;
+   * opened once "Nearby devices" is allowed. The page is told again once it's there. */
+  private var headsetProxy: android.bluetooth.BluetoothHeadset? = null
+  private var headsetAsked = false
+
+  private fun openHeadsetProxy() {
+    if (headsetAsked || !bluetoothGranted()) return
+    val bt = activity.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter ?: return
+    headsetAsked = true
+    bt.getProfileProxy(activity, object : android.bluetooth.BluetoothProfile.ServiceListener {
+      override fun onServiceConnected(profile: Int, proxy: android.bluetooth.BluetoothProfile) {
+        headsetProxy = proxy as? android.bluetooth.BluetoothHeadset
+        try { NativeCall.action("audio_routes") } catch (_: Throwable) {}
+      }
+      override fun onServiceDisconnected(profile: Int) {
+        headsetProxy = null
+        headsetAsked = false
+      }
+    }, android.bluetooth.BluetoothProfile.HEADSET)
+  }
+
+  /** {devices: [{id, kind, name}], current: id | null} (Android 12+; older: empty). */
+  private fun routes(am: android.media.AudioManager): JSObject {
+    openHeadsetProxy()
+    val out = JSObject()
+    val list = app.tauri.plugin.JSArray()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      val seen = mutableSetOf<String>()
+      for (d in am.availableCommunicationDevices) {
+        val kind = kindOf(d.type) ?: continue
+        // A headset can be listed once per profile (LE + classic): keep one per name and kind.
+        val name = deviceName(d, kind)
+        if (!seen.add("$kind/$name")) continue
+        list.put(JSObject().apply {
+          put("id", d.id)
+          put("kind", kind)
+          put("name", name)
+        })
+      }
+      am.communicationDevice?.let { out.put("current", it.id) }
+    }
+    out.put("devices", list)
+    return out
+  }
+
+  private fun watchRoutes(am: android.media.AudioManager, on: Boolean) {
+    if (!on) {
+      deviceCallback?.let { am.unregisterAudioDeviceCallback(it) }
+      deviceCallback = null
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) routeListener?.let { am.removeOnCommunicationDeviceChangedListener(it) }
+      routeListener = null
+      return
+    }
+    if (deviceCallback != null) return
+    val tell = { try { NativeCall.action("audio_routes") } catch (_: Throwable) {} }
+    deviceCallback = object : android.media.AudioDeviceCallback() {
+      override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>) { tell() }
+      override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>) { tell() }
+    }
+    am.registerAudioDeviceCallback(deviceCallback, android.os.Handler(android.os.Looper.getMainLooper()))
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      routeListener = android.media.AudioManager.OnCommunicationDeviceChangedListener { tell() }
+      am.addOnCommunicationDeviceChangedListener(activity.mainExecutor, routeListener!!)
+    }
+  }
+
   /**
-   * Where call audio plays: the loudspeaker, or else headphones / Bluetooth when connected, the
-   * earpiece otherwise. `speaker` null ends the call mode. Answers `{speaker}` as applied.
+   * Where call audio plays (see AudioArgs). Answers the routes as `audioRoutes` does. On
+   * Android 11 and older only speaker on/off exists.
    */
   @Command
   fun callAudio(invoke: Invoke) {
     val args = invoke.parseArgs(AudioArgs::class.java)
     val am = activity.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-    val speaker = args.speaker
-    if (speaker == null) {
+    // Switching during a call runs off the main thread: setCommunicationDevice only returns
+    // once Android has moved the audio (~0.4 s), and the main thread also draws the WebView,
+    // so the whole app froze (the speaker button changed a second late). Entering and leaving
+    // call mode stay here: done in the background, the WebView's own audio set-up on the main
+    // thread waited 3 s on the busy audio service (the call view froze half-open on join).
+    val switching = args.route != null && args.route != "release" &&
+      am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION
+    if (!switching) {
+      audioThread.submit {}.get()  // a switch still running finishes first
+      return applyCallAudio(invoke, args)
+    }
+    // One thread keeps quick taps in order.
+    audioThread.execute {
+      try {
+        applyCallAudio(invoke, args)
+      } catch (e: Exception) {
+        invoke.reject(e.message ?: "call audio failed")
+      }
+    }
+  }
+
+  private val audioThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+  private fun applyCallAudio(invoke: Invoke, args: AudioArgs) {
+    val am = activity.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+    val route = args.route
+    if (route == null) {
+      watchRoutes(am, false)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.clearCommunicationDevice()
       else @Suppress("DEPRECATION") { am.isSpeakerphoneOn = false }
       am.mode = android.media.AudioManager.MODE_NORMAL
       return invoke.resolve()
     }
+    if (route == "release") {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.clearCommunicationDevice()
+      am.mode = android.media.AudioManager.MODE_NORMAL
+      watchRoutes(am, true)
+      return invoke.resolve(routes(am))
+    }
     am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       val devices = am.availableCommunicationDevices
-      val headset = listOf(
-        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-        android.media.AudioDeviceInfo.TYPE_BLE_HEADSET,
-        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
-        android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-        android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
-      )
-      val wanted = if (speaker) {
-        devices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-      } else {
-        devices.firstOrNull { it.type in headset }
-          ?: devices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+      val headsets = listOf("bluetooth", "wired", "usb")
+      val wanted = when (route) {
+        "device" -> devices.firstOrNull { it.id == args.device }
+        "speaker" -> devices.firstOrNull { kindOf(it.type) == "speaker" }
+        "headset" -> headsets.firstNotNullOfOrNull { k -> devices.firstOrNull { kindOf(it.type) == k } }
+        else -> null
+      } ?: devices.firstOrNull { kindOf(it.type) == "earpiece" }
+      if (wanted != null && !am.setCommunicationDevice(wanted)) {
+        android.util.Log.w("AlwyChat", "call audio: Android refused ${wanted.productName} (${wanted.type})")
       }
-      if (wanted != null) am.setCommunicationDevice(wanted)
     } else {
       @Suppress("DEPRECATION")
-      am.isSpeakerphoneOn = speaker
+      am.isSpeakerphoneOn = route == "speaker"
     }
-    invoke.resolve(JSObject().apply { put("speaker", speaker) })
+    watchRoutes(am, true)
+    invoke.resolve(routes(am))
+  }
+
+  private fun bluetoothGranted() = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+    activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+  /** Asks "Nearby devices" (for headset names) if needed; answers {granted}. */
+  @Command
+  fun bluetoothNames(invoke: Invoke) {
+    if (bluetoothGranted()) return invoke.resolve(JSObject().apply { put("granted", true) })
+    requestPermissionForAlias("bluetooth", invoke, "bluetoothAnswered")
+  }
+
+  @PermissionCallback
+  private fun bluetoothAnswered(invoke: Invoke) {
+    openHeadsetProxy()
+    invoke.resolve(JSObject().apply { put("granted", bluetoothGranted()) })
+  }
+
+  /** The places call audio can go now, and the current one. */
+  @Command
+  fun audioRoutes(invoke: Invoke) {
+    val am = activity.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+    invoke.resolve(routes(am))
   }
 
   /** The user's 12/24-hour choice (Settings → System → Date & time). */

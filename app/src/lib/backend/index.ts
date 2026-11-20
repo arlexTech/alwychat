@@ -70,12 +70,17 @@ export const login = async (server: string, invite?: string): Promise<Account> =
   }
   return invoke<Account>("login_with_tokens", { done });
 };
+/** The core's log lines since `since` (UTC "YYYY-MM-DD HH:MM:SS.mmm"; apps only). */
+/** "Open the sign-in page again" (apps). */
+export const openLoginPage = (url: string) => invoke<void>("open_login_page", { url });
 export const cancelLogin = () => (isWeb ? Promise.resolve(cancelSignIn()) : invoke<void>("cancel_login"));
 export const logout = () => invoke<void>("logout");
 /** Stop using a session the server ended, keeping local data (unlike logout). */
 export const endSession = () => invoke<void>("end_session");
 /** The server ended our session (signed out elsewhere, revoked…). Returns an unsubscribe function. */
 export const onSessionEnded = (handler: () => void) => listen("session-ended", handler);
+/** Apps: the server's sign-in page the browser was asked to show (to open it again or copy it). */
+export const onLoginPage = (handler: (url: string) => void) => listen<string>("login-page", (e) => handler(e.payload));
 
 /** An incoming ring, or the answer to ours. */
 export type CallSignal =
@@ -91,7 +96,11 @@ export type CallSignal =
     }
   | { kind: "declined"; room_id: string; user_id: string }
   /** Our ring rings on one of their devices (AlwyChat answers this; other apps don't). */
-  | { kind: "ringing"; room_id: string; user_id: string; device_id: string };
+  | { kind: "ringing"; room_id: string; user_id: string; device_id: string }
+  /** Someone in a call raised or lowered their hand (Element Call compatible). */
+  | { kind: "hand"; room_id: string; user_id: string; device_id: string | null; raised: boolean }
+  /** Someone in a call reacted with an emoji (shown a few seconds). */
+  | { kind: "reaction"; room_id: string; user_id: string; device_id: string | null; emoji: string };
 
 export const onCallSignal = (handler: (signal: CallSignal) => void) =>
   listen<CallSignal>("call-signal", (e) => handler(e.payload));
@@ -105,13 +114,21 @@ export const callNotification = (
   muted: boolean | null = null,
   camera = false,
 ) => invoke<void>("call_notification", { active, texts, roomId, muted, camera });
-/** Android: call audio on the speaker (true), earpiece/headphones (false), or normal again (null). */
 /** Desktop: AlwyChat opens (in the tray) when the computer starts. */
 export const autostartGet = () => invoke<boolean>("autostart_get");
 export const autostartSet = (on: boolean) => invoke<void>("autostart_set", { on });
 /** Android: the call's picture-in-picture window wide (screen share) or tall. */
 export const pipShape = (wide: boolean) => invoke<void>("pip_shape", { wide });
-export const callAudio = (speaker: boolean | null) => invoke<void>("call_audio", { speaker });
+/** Where an Android call's audio can go. */
+export type AudioRoute = { id: number; kind: "earpiece" | "speaker" | "bluetooth" | "wired" | "usb"; name: string };
+export type AudioRoutes = { devices: AudioRoute[]; current?: number };
+/** Android: call audio on the speaker, earpiece, best headset, one device (`device` = its id),
+ * or normal again (null). Answers the routes after the change. */
+export const callAudio = (route: "speaker" | "earpiece" | "headset" | "device" | "release" | null, device?: number) =>
+  invoke<AudioRoutes>("call_audio", { route, device: device ?? null });
+export const audioRoutes = () => invoke<AudioRoutes>("audio_routes");
+/** Android: asks "Nearby devices" (Bluetooth headset names) if needed; whether it's granted. */
+export const bluetoothNames = () => invoke<boolean>("bluetooth_names");
 /** Android, app on screen: the phone's ringtone + vibration for an incoming call. */
 export const ringInApp = (on: boolean) => invoke<void>("ring_in_app", { on });
 /** A button of the call notification was tapped. */
@@ -127,7 +144,7 @@ export type CallLink = {
 export const onCallLink = (handler: (link: CallLink) => void) => listen<CallLink>("call-link", (e) => handler(e.payload));
 /** The incoming call notification that launched the app, if any. */
 export const launchCall = () => invoke<CallLink | null>("launch_call");
-export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off" | "stop_location";
+export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off" | "stop_location" | "audio_routes";
 export const onCallAction = (handler: (action: CallAction) => void) =>
   listen<CallAction>("call-action", (e) => handler(e.payload));
 export const declineCall = (roomId: string, notificationId: string) =>
@@ -396,6 +413,10 @@ export interface Sound {
   by: string | null;
 }
 export const roomSounds = (roomId: string) => invoke<Sound[]>("room_sounds", { roomId });
+/** When the call in a chat began (oldest join among the people in it now), ms since epoch. */
+export const callStartedAt = (roomId: string) => invoke<number | null>("call_started_at", { roomId });
+export const hiddenBuiltinSounds = (roomId: string) => invoke<string[]>("hidden_builtin_sounds", { roomId });
+export const setHiddenBuiltinSounds = (roomId: string, hidden: string[]) => invoke<void>("set_hidden_builtin_sounds", { roomId, hidden });
 export const setRoomSounds = (roomId: string, items: Sound[]) => invoke<void>("set_room_sounds", { roomId, items });
 export const canEditSounds = (roomId: string) => invoke<boolean>("can_edit_sounds", { roomId });
 export const uploadSound = (data: string, mime: string) => invoke<string>("upload_sound", { data, mime });
@@ -417,6 +438,8 @@ export interface CallKey {
 export const callKeys = (roomId: string) => invoke<CallKey[]>("call_keys", { roomId });
 export const onCallKey = (handler: (key: CallKey) => void) => listen<CallKey>("call-key", (e) => handler(e.payload));
 export const leaveCall = () => invoke<void>("leave_call");
+export const raiseHand = (raised: boolean) => invoke<void>("raise_hand", { raised });
+export const callReact = (emoji: string, name: string) => invoke<void>("call_react", { emoji, name });
 /** False once the caller left (or we joined on another device), by the server; null: unknown. */
 export const ringActive = (roomId: string) => invoke<boolean | null>("ring_active", { roomId });
 
@@ -663,6 +686,10 @@ export interface SpaceInfo {
   avatar: string | null;
   /** Joined chats inside it, at any depth. */
   rooms: string[];
+  /** People who joined it (absent in lists saved by older versions). */
+  members?: number;
+  /** Anyone can find and join it. */
+  public?: boolean;
 }
 export interface CallMember {
   user_id: string;
@@ -689,6 +716,17 @@ export interface ChatListPrefs {
   rooms: Record<string, boolean>;
   /** Custom chat-list folders, in display order. */
   folders: Folder[];
+  /** The Spaces tab's order: space IDs and group IDs (unlisted spaces come after). */
+  space_order: string[];
+  /** Groups of spaces (Discord's server folders), each with its spaces in order. */
+  space_groups: SpaceGroup[];
+}
+
+/** A named group of top-level spaces in the Spaces tab. */
+export interface SpaceGroup {
+  id: string;
+  name: string;
+  spaces: string[];
 }
 
 /** A chat-list folder: chats picked by type and/or by hand. */
@@ -783,8 +821,8 @@ export const searchMessages = (
     kind: opts.kind ?? null,
     before: opts.before ?? null,
   });
-export const sharedMedia = (roomId: string, kind: KindFilter, before: number | null = null) =>
-  invoke<SharedItem[]>("shared_media", { roomId, kind, before });
+export const sharedMedia = (roomId: string, kind: KindFilter, before: number | null = null, filter: string | null = null) =>
+  invoke<SharedItem[]>("shared_media", { roomId, kind, before, filter });
 export const searchStatus = (roomId: string | null = null) => invoke<SearchStatus>("search_status", { roomId });
 export const startSearchBackfill = () => invoke<void>("start_search_backfill");
 
@@ -1035,6 +1073,8 @@ export interface Settings {
   message_layout: MessageLayout;
   /** Chats whose new photos/videos from others are saved to the gallery (this device). */
   auto_save_rooms: string[];
+  /** Leave deleted messages out of chats (chats can override it on this device). */
+  hide_deleted: boolean;
 }
 /** Android: dark system bar icons on a light theme, and the colour behind the bars. */
 export const setSystemBars = (light: boolean, background: string) =>

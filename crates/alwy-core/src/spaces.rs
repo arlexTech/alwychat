@@ -36,6 +36,10 @@ pub struct SpaceInfo {
     pub avatar: Option<String>,
     /// Joined chats inside it, at any depth (not sub-spaces themselves).
     pub rooms: Vec<String>,
+    /// How many people joined it.
+    pub members: u64,
+    /// Anyone can find and join it (else invite-only or by request).
+    pub public: bool,
 }
 
 /// A child of a space, from the server's space hierarchy (joined or not).
@@ -68,6 +72,20 @@ pub struct ChatListPrefs {
     pub rooms: HashMap<String, bool>,
     /// Custom chat-list folders (Telegram style), in display order.
     pub folders: Vec<Folder>,
+    /// The Spaces tab's order: top-level space IDs and group IDs (spaces not listed come
+    /// after, in the server's order).
+    pub space_order: Vec<String>,
+    /// Groups of spaces (Discord's server folders), each with its spaces in order.
+    pub space_groups: Vec<SpaceGroup>,
+}
+
+/// A named group of top-level spaces in the Spaces tab.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpaceGroup {
+    pub id: String,
+    pub name: String,
+    pub spaces: Vec<String>,
 }
 
 /// A chat-list folder: chats picked by type and/or by hand.
@@ -391,11 +409,27 @@ async fn spaces_overview(client: &Client, service: &SpaceService) -> Vec<SpaceIn
         .top_level_joined_spaces()
         .await
         .into_iter()
-        .map(|space| SpaceInfo {
-            rooms: rooms_of.remove(&space.room_id).unwrap_or_default(),
-            id: space.room_id.to_string(),
-            name: space.display_name,
-            avatar: space.avatar_url.map(|u| u.to_string()),
+        .map(|space| {
+            let room = client.get_room(&space.room_id);
+            SpaceInfo {
+                rooms: rooms_of.remove(&space.room_id).unwrap_or_default(),
+                members: room
+                    .as_ref()
+                    .map(|r| r.joined_members_count())
+                    .unwrap_or(space.num_joined_members),
+                public: room
+                    .as_ref()
+                    .and_then(|r| r.join_rule())
+                    .is_some_and(|rule| {
+                        matches!(
+                            rule,
+                            matrix_sdk::ruma::events::room::join_rules::JoinRule::Public
+                        )
+                    }),
+                id: space.room_id.to_string(),
+                name: space.display_name,
+                avatar: space.avatar_url.map(|u| u.to_string()),
+            }
         })
         .collect()
 }

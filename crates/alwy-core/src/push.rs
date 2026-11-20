@@ -122,6 +122,9 @@ pub struct PushCall {
 static PUSHED_RINGS: std::sync::Mutex<crate::rtc::RecentRings> =
     std::sync::Mutex::new(crate::rtc::RecentRings::new());
 
+/// How long a message notification may wait for its chat to be loaded.
+const CHAT_READY_MAX: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl crate::Core {
     /// The push gateway our homeserver advertises (asked each time: it's one small request at
     /// startup, and a server can add or remove it), else the one built into this build.
@@ -313,9 +316,16 @@ impl crate::Core {
             // No push rule matches a call ring once decrypted (servers only have one for the old
             // `m.call.invite`), so the SDK filters it out: look at the event ourselves.
             NotificationStatus::EventFilteredOut => {
-                return Ok(self.pushed_ring(&client, room_id, event_id).await);
+                let ring = self.pushed_ring(&client, room_id, event_id).await;
+                if ring.is_none() {
+                    tracing::info!(%event_id, "push: filtered out by the push rules, not shown");
+                }
+                return Ok(ring);
             }
-            _ => return Ok(None),
+            other => {
+                tracing::info!(%event_id, status = ?std::mem::discriminant(&other), "push: no event to show");
+                return Ok(None);
+            }
         };
 
         let sender = item
@@ -367,7 +377,10 @@ impl crate::Core {
                         .and_then(|c| crate::rooms::preview(&c))
                     {
                         Some(text) => text,
-                        None => return Ok(None),
+                        None => {
+                            tracing::info!(%event_id, "push: a message without a preview, not shown");
+                            return Ok(None);
+                        }
                     }
                 }
                 AnySyncTimelineEvent::State(_) => return Ok(None),
@@ -385,6 +398,19 @@ impl crate::Core {
                 .get()
                 .into(),
         };
+        // Shown only once the chat is loaded with this message: a tap then opens it at once.
+        // A thread reply never shows in the chat's main timeline: only the chat is loaded.
+        let in_thread = matches!(&item.raw_event, RawNotificationEvent::Timeline(raw)
+        if raw.get_field::<serde_json::Value>("content").ok().flatten().is_some_and(|c| {
+            c.pointer("/m.relates_to/rel_type").and_then(|v| v.as_str()) == Some("m.thread")
+        }));
+        let wait = if in_thread {
+            std::time::Duration::ZERO
+        } else {
+            CHAT_READY_MAX
+        };
+        self.ready_for(room_id.as_str(), event_id.as_str(), wait)
+            .await;
         Ok(Some(PushNotification {
             room_id: room_id.to_string(),
             event_id: event_id.to_string(),

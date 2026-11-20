@@ -1,0 +1,77 @@
+#!/bin/bash
+# Signs builds of your projects with keys that only the "buildsign" account can read, so a
+# build (and anything it runs: npm, cargo and Gradle packages, an AI assistant) can get its
+# result signed without ever seeing a key. Each project has its own keys
+# (/etc/build-sign/<project>/), added with setup.sh. Installed root-owned as
+# /usr/local/bin/build-sign; your account may run it as buildsign through sudo, nothing else.
+#
+#   sudo -n -u buildsign /usr/local/bin/build-sign PROJECT apk < unsigned.apk > signed.apk
+#   sudo -n -u buildsign /usr/local/bin/build-sign PROJECT tauri-update NAME < file > file.sig
+#
+# Data goes through stdin/stdout: this account can't read your files, you can't read its.
+# Every signature is logged in /var/lib/build-sign/sign.log (readable by everyone): when, who
+# asked, project, what, size and SHA-256 of what was signed.
+set -euo pipefail
+umask 077
+export PATH=/usr/bin:/bin
+unset JAVA_TOOL_OPTIONS _JAVA_OPTIONS JDK_JAVA_OPTIONS CLASSPATH
+
+lib=/usr/local/lib/build-sign
+home=/var/lib/build-sign
+log=$home/sign.log
+max=$((1024 * 1024 * 1024))
+
+fail() { echo "build-sign: $*" >&2; exit 1; }
+usage="usage: PROJECT apk < in.apk > out.apk | PROJECT tauri-update NAME < file > file.sig"
+[ "$(id -un)" = buildsign ] || fail "run it as buildsign: sudo -u buildsign $0 …"
+
+project=${1:-}
+what=${2:-}
+[[ "$project" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]] || fail "$usage"
+keys=/etc/build-sign/$project
+[ -d "$keys" ] || fail "no keys for project \"$project\" (add them: sudo scripts/signing/setup.sh $project)"
+name=-
+case "$what" in
+  apk)
+    [ $# -eq 2 ] || fail "$usage"
+    [ -f "$keys/android.jks" ] || fail "$project has no Android key"
+    ;;
+  tauri-update)
+    [ $# -eq 3 ] || fail "$usage"
+    name=$3
+    [[ "$name" =~ ^[A-Za-z0-9._+-]{1,128}$ ]] || fail "bad file name"
+    [ -f "$keys/tauri-update.key" ] || fail "$project has no Tauri updater key"
+    ;;
+  *) fail "$usage" ;;
+esac
+
+work=$(mktemp -d "$home/work.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+head -c $((max + 1)) > "$work/in"
+size=$(stat -c %s "$work/in")
+[ "$size" -gt 0 ] || fail "nothing on stdin"
+[ "$size" -le "$max" ] || fail "over 1 GiB, refused"
+
+case "$what" in
+  apk)
+    alias=$(cat "$keys/android.alias")
+    mv "$work/in" "$work/in.apk"
+    # The same password for the key, from its own file: given one file twice, apksigner reads
+    # its second line for the key.
+    cp "$keys/android.pass" "$work/key.pass"
+    java -jar "$lib/apksigner.jar" sign \
+      --ks "$keys/android.jks" --ks-key-alias "$alias" \
+      --ks-pass "file:$keys/android.pass" --key-pass "file:$work/key.pass" \
+      --in "$work/in.apk" --out "$work/out" >&2
+    java -jar "$lib/apksigner.jar" verify "$work/out" >&2
+    signed=$work/in.apk
+    ;;
+  tauri-update)
+    "$lib/tauri-update-sign" sign "$keys/tauri-update.key" "$keys/tauri-update.pass" "$name" < "$work/in" > "$work/out"
+    signed=$work/in
+    ;;
+esac
+
+sha=$(sha256sum "$signed" | cut -c1-64)
+printf '%s %s %s %s %s %s bytes sha256 %s\n' "$(date -Is)" "${SUDO_USER:-?}" "$project" "$what" "$name" "$size" "$sha" >> "$log"
+cat "$work/out"

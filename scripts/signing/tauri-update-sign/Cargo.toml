@@ -1,0 +1,17 @@
+[package]
+name = "tauri-update-sign"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "Signs update files the way the Tauri CLI does (minisign), for the buildsign account"
+
+# Not part of the app's workspace: built on its own, installed by ../setup.sh.
+[workspace]
+
+[dependencies]
+minisign = "0.7"
+base64 = "0.22"
+
+[profile.release]
+strip = true

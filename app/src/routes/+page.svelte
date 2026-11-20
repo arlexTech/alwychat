@@ -11,6 +11,8 @@
     isWeb,
     login,
     logout,
+    onLoginPage,
+    openLoginPage,
     prepareLogin,
     onSessionEnded,
     restoreSession,
@@ -84,7 +86,7 @@
   type Check =
     | { state: "checking"; for: string }
     | { state: "ok"; for: string; info: ServerInfo }
-    | { state: "missing" | "unsupported"; for: string; reason: string };
+    | { state: "missing" | "unsupported"; for: string; reason: string; detail?: string };
   let check = $state<Check | null>(null);
   let checkTimer: ReturnType<typeof setTimeout> | undefined;
   let firstCheck = true;
@@ -98,8 +100,11 @@
         return { state: "unsupported", for: name, reason: tr("This server is too old for AlwyChat (no sliding sync).") };
       }
       return { state: "ok", for: name, info };
-    } catch {
-      return { state: "missing", for: name, reason: tr("No Matrix server answers at {name}.", { name }) };
+    } catch (e) {
+      // The underlying error too (DNS, certificate, timeout…): "no server" alone left nothing
+      // to go on when a server that works elsewhere failed on one phone.
+      const detail = String(e).replace(/^Error: /, "");
+      return { state: "missing", for: name, reason: tr("No Matrix server answers at {name}.", { name }), detail };
     }
   }
   $effect(() => {
@@ -183,19 +188,42 @@
     invite = null;
   }
 
+  /** The server's sign-in page once the app has asked the browser to show it (apps only). */
+  let loginPage = $state<string | null>(null);
+  let copied = $state(false);
+  async function copyLoginPage() {
+    if (!loginPage) return;
+    try {
+      await navigator.clipboard.writeText(loginPage);
+      copied = true;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   async function signIn(event: SubmitEvent) {
     event.preventDefault();
     error = null;
     if (!ready) return;
     view = "waiting";
+    loginPage = null;
+    copied = false;
+    const stop = isWeb ? () => {} : await onLoginPage((url) => (loginPage = url)).catch(() => () => {});
     try {
       account = await login(server.trim(), invite ?? undefined);
       keepAccount(account);
       forgetInvite();
       view = "signed-in";
     } catch (e) {
-      if (view === "waiting") error = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : String(e);
+      if (view === "waiting") {
+        error = message.startsWith("the server didn't answer in time")
+          ? `${tr("{server} didn't answer in time. Check the connection and try again.", { server: server.trim() })} (${message.match(/\(([^)]*)\)$/)?.[1] ?? "?"})`
+          : message;
+      }
       view = "signed-out";
+    } finally {
+      stop();
     }
   }
 
@@ -264,14 +292,24 @@
               {:else if check.state === "ok"}✓ {tr("Found {host}", { host: new URL(check.info.homeserver).host })}
               {:else}{check.reason}{/if}
             </p>
+            {#if check.state === "missing" && check.detail}<p class="check detail">{check.detail}</p>{/if}
           {/if}
           <p class="muted">{tr("Your browser will open your server's sign-in page.")}</p>
         </form>
       {:else if view === "waiting"}
         <div class="waiting">
           <div class="spinner" aria-hidden="true"></div>
-          <p>{tr("Finish signing in in your browser…")}</p>
-          <p class="muted">{tr("This window will update by itself.")}</p>
+          {#if loginPage || isWeb}
+            <p>{tr("Finish signing in in your browser…")}</p>
+            <p class="muted">{tr("This window will update by itself.")}</p>
+          {:else}
+            <p>{tr("Connecting to {server}…", { server: server.trim() })}</p>
+          {/if}
+          {#if loginPage}
+            <p class="muted">{tr("The browser didn't open, or you closed it?")}</p>
+            <button class="ghost" onclick={() => loginPage && openLoginPage(loginPage).catch((e) => (error = String(e)))}>{tr("Open the sign-in page again")}</button>
+            <button class="ghost" onclick={copyLoginPage}>{copied ? tr("Link copied: paste it in your browser") : tr("Copy the link")}</button>
+          {/if}
           <button class="ghost" onclick={cancelSignIn}>{tr("Cancel")}</button>
         </div>
       {/if}
@@ -307,6 +345,11 @@
     margin: 8px 2px 0;
     font-size: 0.85rem;
     color: var(--muted);
+  }
+  .check.detail {
+    margin-top: 2px;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
   }
   .check.ok {
     color: #3ba55d;

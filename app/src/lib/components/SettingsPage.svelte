@@ -368,6 +368,14 @@
     },
   ];
 
+  const chatsToggles: Toggle[] = [
+    {
+      key: "hide_deleted",
+      label: tr("Hide deleted messages"),
+      hint: tr("Off: \"Message deleted\" stays where the message was. Each chat can choose for itself in its settings. On this device."),
+    },
+  ];
+
   const media: Toggle[] = [
     {
       key: "hd_media",
@@ -762,6 +770,7 @@
         </button>
       {/each}
     </div>
+    {#if emojiStyle.notice}<small class="credit">{tr("{style} emoji can't be drawn on this device, so they're not offered here.", { style: emojiStyle.notice === "google" ? "Google" : "Twitter" })}</small>{/if}
     {#if emojiStyle.current === "twitter"}<small class="credit">{tr("Twemoji graphics © Twitter and contributors, CC-BY 4.0")}</small>{/if}
     <h3 class="section">{tr("Text size")}</h3>
     <div class="m-seg">
@@ -789,6 +798,7 @@
         onchange={(e) => spaces.setGlobal(e.currentTarget.checked).catch((err) => (error = String(err)))}
       />
     </label>
+    {#each chatsToggles as t (t.key)}{@render row(t)}{/each}
 
     <h3 class="section">{tr("Folders")}</h3>
     <ul class="folders">

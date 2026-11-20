@@ -36,6 +36,10 @@ use url::Url;
 use crate::{Error, Result};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/** Each server step before the sign-in page opens (lookup, metadata, registration): without
+ * a limit a stalled connection left the app on "Finish signing in in your browser…" with no
+ * browser ever opening. */
+const LOGIN_STEP_TIMEOUT: Duration = Duration::from_secs(30);
 /// MAS only accepts a custom-scheme redirect whose reversed scheme is under this host.
 const CLIENT_URI: &str = "https://arlextech.github.io/alwychat";
 /// Mobile redirect target (and notification links), declared to the OS by the deep-link plugin
@@ -364,19 +368,32 @@ impl Core {
                 .sample_string(&mut rand::rng(), 10)
                 .to_lowercase()
         );
-        let client = self
-            .build_client(Server::Name(server), &passphrase, &store_dir)
-            .await?;
-        info!("client built");
+        info!("opening the local store and looking up the server");
+        let step = |what: &'static str| {
+            move |_| {
+                warn!(what, "sign-in: the server didn't answer in time");
+                Error::ServerSlow(what)
+            }
+        };
+        let client = matrix_sdk::timeout::timeout(
+            self.build_client(Server::Name(server), &passphrase, &store_dir),
+            LOGIN_STEP_TIMEOUT,
+        )
+        .await
+        .map_err(step("server lookup"))??;
+        info!(homeserver = %client.homeserver(), "client built");
         let oauth = client.oauth();
 
-        match oauth.server_metadata().await {
+        match matrix_sdk::timeout::timeout(oauth.server_metadata(), LOGIN_STEP_TIMEOUT)
+            .await
+            .map_err(step("server metadata"))?
+        {
             Ok(_) => {}
             Err(e) if e.is_not_supported() => return Err(Error::OAuthUnsupported),
             Err(e) => return Err(Error::OAuth(e.to_string())),
         }
 
-        info!("server metadata ok");
+        info!("server metadata ok, registering this app with the sign-in service");
         let (finish, finished) = oneshot::channel();
         // A newer sign-in replaces (and so cancels) an older one.
         *self.pending_login.lock().unwrap() = Some(finish);
@@ -425,9 +442,9 @@ impl Core {
         if invite.is_some() {
             builder = builder.prompt(vec![Prompt::Create]);
         }
-        let auth = builder
-            .build()
+        let auth = matrix_sdk::timeout::timeout(builder.build(), LOGIN_STEP_TIMEOUT)
             .await
+            .map_err(step("client registration"))?
             .map_err(|e| Error::OAuth(e.to_string()))?;
         let mut page = auth.url.clone();
         if let Some(token) = invite.filter(|t| !t.is_empty()) {

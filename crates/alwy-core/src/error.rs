@@ -12,6 +12,8 @@ pub enum Error {
     OAuth(String),
     #[error("this server doesn't support browser sign-in")]
     OAuthUnsupported,
+    #[error("the server didn't answer in time, check the connection and try again ({0})")]
+    ServerSlow(&'static str),
     #[error("couldn't open the browser: {0}")]
     Browser(String),
     #[error("sign-in was not completed in time")]

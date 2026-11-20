@@ -43,6 +43,9 @@ pub struct Settings {
     pub message_layout: String,
     /// Chats whose new photos and videos from others are saved to the gallery (this device).
     pub auto_save_rooms: Vec<String>,
+    /// Leave deleted messages out of chats ("Message deleted" rows). Chats can override it
+    /// on this device.
+    pub hide_deleted: bool,
 }
 
 impl Default for Settings {
@@ -62,6 +65,7 @@ impl Default for Settings {
             text_scale: 100,
             message_layout: "auto".to_owned(),
             auto_save_rooms: Vec::new(),
+            hide_deleted: false,
         }
     }
 }

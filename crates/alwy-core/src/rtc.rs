@@ -70,6 +70,82 @@ pub enum CallSignal {
         user_id: String,
         device_id: String,
     },
+    /// Someone in a call raised or lowered their hand (Element Call's format: a "🖐️" reaction
+    /// on their call membership, redacted to lower it).
+    Hand {
+        room_id: String,
+        user_id: String,
+        device_id: Option<String>,
+        raised: bool,
+    },
+    /// Someone in a call reacted (`io.element.call.reaction`, shown a few seconds).
+    Reaction {
+        room_id: String,
+        user_id: String,
+        device_id: Option<String>,
+        emoji: String,
+    },
+}
+
+/// Element Call's in-call reaction event.
+const CALL_REACTION: &str = "io.element.call.reaction";
+/// The reaction key of a raised hand (Element Call's).
+const RAISED_HAND: &str = "🖐️";
+
+/// A raised hand's room, user and device.
+type HandOf = (String, String, Option<String>);
+/// Raised hands seen, by their reaction event: a redaction of one lowers that hand.
+static HANDS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, HandOf>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Whose call membership `event_id` is (user, device), from the room's current call state.
+async fn membership_of(room: &Room, event_id: &str) -> Option<(OwnedUserId, Option<String>)> {
+    let events = room
+        .get_state_events(StateEventType::from(CALL_MEMBER))
+        .await
+        .ok()?;
+    for event in events {
+        let matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Sync(raw) = event else {
+            continue;
+        };
+        if raw
+            .get_field::<String>("event_id")
+            .ok()
+            .flatten()
+            .as_deref()
+            != Some(event_id)
+        {
+            continue;
+        }
+        let sender = raw.get_field::<OwnedUserId>("sender").ok().flatten()?;
+        let device = raw
+            .get_field::<serde_json::Value>("content")
+            .ok()
+            .flatten()
+            .and_then(|c| {
+                c.get("device_id")
+                    .and_then(|d| d.as_str())
+                    .map(ToOwned::to_owned)
+            });
+        return Some((sender, device));
+    }
+    None
+}
+
+#[derive(Deserialize)]
+struct RelatesTo {
+    #[serde(default)]
+    rel_type: Option<String>,
+    event_id: String,
+    #[serde(default)]
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CallReactionContent {
+    #[serde(rename = "m.relates_to")]
+    relates_to: RelatesTo,
+    emoji: String,
 }
 
 pub(crate) type CallSignalHandler = Box<dyn Fn(CallSignal) + Send + Sync>;
@@ -103,6 +179,8 @@ pub(crate) struct ActiveCall {
     heartbeat: crate::rt::AbortHandle,
     /// Sharing our media key (encrypted rooms).
     keys: Option<crate::rt::AbortHandle>,
+    /// Our raised hand's reaction event (redacted to lower it).
+    hand: Option<OwnedEventId>,
 }
 
 impl Drop for ActiveCall {
@@ -238,6 +316,7 @@ impl crate::Core {
             delay_id,
             heartbeat,
             keys,
+            hand: None,
         });
         Ok(CallConnection {
             url: sfu.url,
@@ -305,6 +384,32 @@ impl crate::Core {
         Ok(())
     }
 
+    /// When the call in this chat began, as far as its current members tell (ms since epoch):
+    /// the oldest join among the people in it now. None: nobody is in a call there.
+    pub async fn call_started_at(&self, room_id: &str) -> Option<u64> {
+        let room = self.room(room_id).ok()?;
+        let now = matrix_sdk::ruma::MilliSecondsSinceUnixEpoch::now()
+            .get()
+            .into();
+        let events = room
+            .get_state_events(StateEventType::from(CALL_MEMBER))
+            .await
+            .ok()?;
+        events
+            .into_iter()
+            .filter_map(|event| {
+                let matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Sync(raw) =
+                    event
+                else {
+                    return None;
+                };
+                let content = raw.get_field::<serde_json::Value>("content").ok()??;
+                let sent = raw.get_field::<u64>("origin_server_ts").ok()??;
+                joined_at(&content, sent, now)
+            })
+            .min()
+    }
+
     /// Whether a ring in `room_id` should go on ringing, asked of the server (a phone woken by a
     /// push doesn't sync): Some(false) once nobody else is in the call any more (the caller hung
     /// up) or one of our own devices joined it (answered elsewhere); None if the server can't be
@@ -317,6 +422,52 @@ impl crate::Core {
             return Some(false);
         }
         Some(!senders.is_empty())
+    }
+
+    /// Raise or lower our hand in the call we're in (Element Call's format, so its users see
+    /// it too).
+    pub async fn raise_hand(&self, raised: bool) -> Result<()> {
+        let mut call = self.call.lock().await;
+        let Some(call) = call.as_mut() else {
+            return Err(Error::Call("not in a call".into()));
+        };
+        if raised && call.hand.is_none() {
+            let content = json!({
+                "m.relates_to": {
+                    "rel_type": "m.annotation",
+                    "event_id": call.member_event,
+                    "key": RAISED_HAND,
+                },
+            });
+            call.hand = Some(
+                call.room
+                    .send_raw("m.reaction", content)
+                    .await?
+                    .response
+                    .event_id,
+            );
+        } else if !raised && let Some(id) = call.hand.take() {
+            call.room.redact(&id, None, None).await?;
+        }
+        Ok(())
+    }
+
+    /// A reaction in the call we're in (Element Call's `io.element.call.reaction`).
+    pub async fn call_react(&self, emoji: &str, name: &str) -> Result<()> {
+        let (room, member_event) = {
+            let call = self.call.lock().await;
+            let Some(call) = call.as_ref() else {
+                return Err(Error::Call("not in a call".into()));
+            };
+            (call.room.clone(), call.member_event.clone())
+        };
+        let content = json!({
+            "m.relates_to": { "rel_type": "m.reference", "event_id": member_event },
+            "emoji": emoji,
+            "name": name,
+        });
+        room.send_raw(CALL_REACTION, content).await?;
+        Ok(())
     }
 
     /// The room of the call we're in.
@@ -604,6 +755,64 @@ async fn call_signal(
                 expires_at,
             })
         }
+        "m.reaction" if !own => {
+            let relates: RelatesTo = event
+                .get_field::<serde_json::Value>("content")
+                .ok()??
+                .get("m.relates_to")
+                .and_then(|r| serde_json::from_value(r.clone()).ok())?;
+            let key = relates.key.as_deref()?.trim_end_matches('\u{fe0f}');
+            if relates.rel_type.as_deref() != Some("m.annotation") || key != "🖐" {
+                return None;
+            }
+            let (user, device) = membership_of(room, &relates.event_id).await?;
+            HANDS.lock().unwrap().insert(
+                event_id,
+                (room.room_id().to_string(), user.to_string(), device.clone()),
+            );
+            Some(CallSignal::Hand {
+                room_id: room.room_id().to_string(),
+                user_id: user.to_string(),
+                device_id: device,
+                raised: true,
+            })
+        }
+        "m.room.redaction" if !own => {
+            let redacts = event
+                .get_field::<String>("redacts")
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    event
+                        .get_field::<serde_json::Value>("content")
+                        .ok()
+                        .flatten()
+                        .and_then(|c| {
+                            c.get("redacts")
+                                .and_then(|r| r.as_str())
+                                .map(ToOwned::to_owned)
+                        })
+                })?;
+            let (room_id, user_id, device_id) = HANDS.lock().unwrap().remove(&redacts)?;
+            Some(CallSignal::Hand {
+                room_id,
+                user_id,
+                device_id,
+                raised: false,
+            })
+        }
+        CALL_REACTION if !own => {
+            let content: CallReactionContent = event.get_field("content").ok()??;
+            let (user, device) = membership_of(room, &content.relates_to.event_id).await?;
+            // One emoji (Element Call trims excess characters too).
+            let emoji: String = content.emoji.chars().take(8).collect();
+            Some(CallSignal::Reaction {
+                room_id: room.room_id().to_string(),
+                user_id: user.to_string(),
+                device_id: device,
+                emoji,
+            })
+        }
         RTC_DECLINE | RTC_DECLINE_STABLE if !own => {
             let content: DeclineContent = event.get_field("content").ok()??;
             OUR_RINGS
@@ -616,6 +825,27 @@ async fn call_signal(
                 })
         }
         _ => None,
+    }
+}
+
+/// When a membership still in the call joined (ms): its `created_ts` (kept across refreshes),
+/// else when it was sent. None: empty, or past its `expires`.
+fn joined_at(content: &serde_json::Value, sent: u64, now: u64) -> Option<u64> {
+    if !in_call(content) {
+        return None;
+    }
+    // The older list form: the earliest of its entries.
+    let one = |m: &serde_json::Value| {
+        let created = m.get("created_ts").and_then(|v| v.as_u64()).unwrap_or(sent);
+        let alive = m
+            .get("expires")
+            .and_then(|v| v.as_u64())
+            .is_none_or(|e| created.saturating_add(e) > now);
+        alive.then_some(created)
+    };
+    match content.get("memberships").and_then(|l| l.as_array()) {
+        Some(list) => list.iter().filter_map(one).min(),
+        None => one(content),
     }
 }
 
@@ -721,6 +951,23 @@ async fn schedule_leave(room: &Room, state_key: &str) -> Option<String> {
     }
 }
 
+/// The server's copy of our call membership is empty (we count as gone). Unknown = not gone.
+async fn membership_gone(room: &Room, state_key: &str) -> bool {
+    use matrix_sdk::ruma::api::client::state::get_state_event_for_key;
+    let request = get_state_event_for_key::v3::Request::new(
+        room.room_id().to_owned(),
+        StateEventType::from(CALL_MEMBER),
+        state_key.to_owned(),
+    );
+    match room.client().send(request).await {
+        Ok(r) => serde_json::from_str::<serde_json::Value>(r.event_or_content.get())
+            .is_ok_and(|content| !in_call(&content)),
+        Err(e) => {
+            e.client_api_error_kind() == Some(&matrix_sdk::ruma::api::error::ErrorKind::NotFound)
+        }
+    }
+}
+
 /// Keep pushing the delayed leave back while we're in the call. If the server sent it anyway
 /// (the computer slept, or the network was away for longer than the delay), everyone saw us
 /// leave while we're still connected: schedule a new one and publish our membership again.
@@ -730,11 +977,20 @@ async fn heartbeat(room: Room, state_key: String, membership: serde_json::Value,
     }
     // The server sent our leave and our membership isn't back yet.
     let mut absent = false;
+    let mut beats = 0u32;
     loop {
         crate::rt::sleep(HEARTBEAT).await;
         let Some(id) = delay.lock().unwrap().clone() else {
             return;
         };
+        // Every ~30 s, also look at the room itself: if our membership is empty there for any
+        // reason (seen 2026-11-20: someone stayed connected for minutes while everyone else's
+        // list showed them gone), publish it again.
+        beats = beats.wrapping_add(1);
+        if !absent && beats.is_multiple_of(4) && membership_gone(&room, &state_key).await {
+            warn!(room = %room.room_id(), "our call membership is gone from the room: publishing it again");
+            absent = true;
+        }
         let request = update_delayed::Request::new(id, UpdateAction::Restart);
         if let Err(e) = room.client().send(request).await {
             warn!("call heartbeat failed: {e}");
@@ -767,6 +1023,39 @@ async fn heartbeat(room: Room, state_key: String, membership: serde_json::Value,
 #[cfg(test)]
 mod tests {
     use matrix_sdk::ruma::{UserId, serde::Raw};
+
+    #[test]
+    fn call_start_is_the_oldest_live_join() {
+        use serde_json::json;
+        let now = 1_800_000_000_000u64;
+        let h = 3_600_000u64;
+        // Per-device form: created_ts wins over the (refreshed) send time.
+        assert_eq!(
+            super::joined_at(
+                &json!({"created_ts": now - h, "expires": 4 * h}),
+                now - 5,
+                now
+            ),
+            Some(now - h)
+        );
+        // Expired, empty (left), or no created_ts (send time).
+        assert_eq!(
+            super::joined_at(
+                &json!({"created_ts": now - 5 * h, "expires": 4 * h}),
+                now,
+                now
+            ),
+            None
+        );
+        assert_eq!(super::joined_at(&json!({}), now, now), None);
+        assert_eq!(
+            super::joined_at(&json!({"device_id": "D"}), now - 9, now),
+            Some(now - 9)
+        );
+        // Older list form: earliest live entry.
+        let list = json!({"memberships": [{"created_ts": now - 2 * h, "expires": 4 * h}, {"created_ts": now - 10 * h, "expires": 4 * h}]});
+        assert_eq!(super::joined_at(&list, now, now), Some(now - 2 * h));
+    }
 
     #[test]
     fn rings_once_per_call() {

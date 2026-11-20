@@ -95,6 +95,7 @@
   import { clockTime, dayLabel, shortTime } from "$lib/format";
   import { chat } from "$lib/stores/chat.svelte";
   import { layouts } from "$lib/stores/layout.svelte";
+  import { deletedPrefs } from "$lib/stores/deleted.svelte";
   import { friendlyError } from "$lib/errors";
   import { drafts } from "$lib/stores/drafts.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
@@ -250,6 +251,8 @@
   let replyTo = $state<MessageEntry | null>(null);
   /** The message being edited: the composer then replaces its text instead of sending. */
   let editing = $state<MessageEntry | null>(null);
+  /** The composer's text before an edit started: put back when the edit ends. */
+  let beforeEdit = "";
   let sendError = $state<string | null>(null);
   let toast = $state<string | null>(null);
   type ViewerItem = { media: string; kind: "image" | "video"; caption: string | null };
@@ -330,6 +333,7 @@
     untrack(() => mention.reset(id, !room.is_dm));
     replyTo = null;
     editing = null;
+    beforeEdit = "";
     sendError = null;
     untrack(() => {
       recorder.cancel();
@@ -444,12 +448,16 @@
     return trn(Math.round(ms / 86_400_000), "{n} day", "{n} days");
   }
 
+  /** Settings → Chats & media "Hide deleted messages", or this chat's own choice. */
+  const hideDeleted = $derived(deletedPrefs.hides(room.id));
+
   const rows = $derived.by(() => {
     const out: Row[] = [];
     for (const e of tl.entries) {
       switch (e.type) {
         case "message": {
           if (expired(e)) break;
+          if (hideDeleted && e.content.kind === "redacted") break;
           const prev = out.at(-1);
           if (prev?.kind === "message" && joinsAlbum(prev.album?.at(-1) ?? prev.msg, e)) {
             prev.album = [...(prev.album ?? [prev.msg]), e];
@@ -592,8 +600,9 @@
   $effect(() => {
     void tl.entries;
     void shown.length;
-    // Not while looking at an older part of the chat (search result, timeline strip).
-    if (!scroller || tl.focused) return;
+    // Not while looking at an older part of the chat (search result, timeline strip), nor
+    // while jumping to a message.
+    if (!scroller || tl.focused || Date.now() < jumpHold) return;
     if ((atBottom || Date.now() < followUntil) && Math.abs(scroller.scrollTop) > 1) scroller.scrollTop = 0;
   });
 
@@ -854,7 +863,8 @@
     const mentions = mention.mentionsFor(body);
     mention.clear();
     editing = null;
-    draft = "";
+    draft = beforeEdit;
+    beforeEdit = "";
     await tick();
     autosize();
     if (body === editableText(msg)) return;
@@ -869,6 +879,7 @@
 
   function startEdit(msg: MessageEntry) {
     replyTo = null;
+    if (!editing) beforeEdit = draft;
     editing = msg;
     draft = editableText(msg);
     tick().then(() => {
@@ -883,7 +894,8 @@
   function cancelEdit() {
     mention.clear();
     editing = null;
-    draft = "";
+    draft = beforeEdit;
+    beforeEdit = "";
     tick().then(autosize);
   }
 
@@ -1157,7 +1169,7 @@
     const visual = items.some((m) => m.content.kind === "image" || m.content.kind === "video");
     const pinned = pinnedIds.has(msg.item_id);
     return {
-      react: (key) => react(msg, key),
+      react: c.kind === "redacted" ? undefined : (key) => react(msg, key),
       reply: msg.can_reply ? () => startReply(msg) : undefined,
       copy: text ? () => copyText(text) : undefined,
       copyLink: link ? () => copyText(link) : undefined,
@@ -1206,6 +1218,17 @@
   let toolsShown = $state(false);
   $effect(() => {
     if (emojiOpen) return closeOnBack(() => (emojiOpen = false));
+  });
+  // A tap anywhere outside the composer (the messages, the header) closes the emoji panel, as
+  // it closes the keyboard.
+  $effect(() => {
+    if (!emojiOpen) return;
+    const outside = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.isConnected && !target.closest("form.composer, [role=dialog]")) emojiOpen = false;
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
   });
 
   function sheet(action: () => unknown) {
@@ -1403,7 +1426,12 @@
     mediaOpen = false;
     await tick();
     if (tl.entries.some((e) => e.type === "message" && e.item_id === eventId)) return jumpTo(eventId);
-    chat.jump(room.id, eventId);
+    // Older pages, or a timeline opened around it: then to it, every time (the effects below
+    // skipped a second jump to the same message).
+    await chat.jump(room.id, eventId);
+    await tick();
+    jumpedTo = tl.focused;
+    await jumpTo(eventId);
   }
 
   // A timeline opened on a message: bring it into view once loaded.
@@ -1425,23 +1453,93 @@
     tick().then(() => jumpTo(target));
   });
 
+  /** Until then (ms), a jump is in progress: the view isn't pulled back to the newest. */
+  let jumpHold = 0;
   async function jumpTo(eventId: string) {
+    jumpHold = Date.now() + 3000;
+    atBottom = false;
+    followUntil = 0;
     // Its row (a photo inside an album is found by the album's row), drawn if it wasn't.
-    const at = rows.findIndex((r) => r.kind === "message" && (r.msg.item_id === eventId || r.album?.some((m) => m.item_id === eventId)));
+    const find = () => rows.findIndex((r) => r.kind === "message" && (r.msg.item_id === eventId || r.album?.some((m) => m.item_id === eventId)));
+    // A timeline just opened around it can still be empty: `openChat` returns before its
+    // first messages arrive (the jump found nothing and the chat stayed at the bottom of
+    // that part, below the message).
+    const waitUntil = Date.now() + 5000;
+    let at = find();
+    while (at < 0 && Date.now() < waitUntil) {
+      await new Promise((r) => setTimeout(r, 50));
+      at = find();
+    }
+    jumpHold = Date.now() + 3000;
     const row = rows[at];
     if (row?.kind !== "message") return;
     if (rows.length - at > limit) {
       limit = rows.length - at + 20;
       await tick();
     }
+    // After the window's widening two frames later (it would move the rows under us).
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const el = scroller.querySelector<HTMLElement>(`[data-event="${CSS.escape(row.msg.item_id)}"]`);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!el) return holdInView(row.msg.item_id, 0);
+    // Far away: straight there (a long smooth scroll got cut short by rows being drawn).
+    const far = Math.abs(el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) > scroller.clientHeight * 2;
+    el.scrollIntoView({ behavior: far ? "instant" : "smooth", block: "center" });
     el.animate([{ background: "rgb(123 92 255 / 0.25)" }, { background: "transparent" }], {
       duration: 1200,
       easing: "ease-out",
     });
+    holdInView(row.msg.item_id, far ? 0 : 600);
   }
+
+  /** "Latest" from a message opened around (search, reply quote): back to the live chat, at
+   *  its newest message. The jump's hold kept the view where it was (and the scroll position
+   *  of the older part stayed with the new list). */
+  async function goLatest() {
+    holdStop?.();
+    jumpHold = 0;
+    await tl.latest();
+    await tick();
+    atBottom = true;
+    followUntil = Date.now() + 2000;
+    scroller.scrollTop = 0;
+  }
+
+  /** After a jump, keep the message in the middle for a few seconds: photos and link cards
+   *  between it and the newest message finish loading and grow, and the bottom-up list pushed
+   *  the message out of view (a search result landed days away from it). Touching or scrolling
+   *  lets go at once. */
+  let holdStop: (() => void) | null = null;
+  function holdInView(eventId: string, delay: number) {
+    holdStop?.();
+    const begin = performance.now() + delay;
+    const until = begin + 4000;
+    jumpHold = Date.now() + delay + 4000;
+    let frame = 0;
+    const inputs = ["pointerdown", "wheel", "touchstart", "keydown"] as const;
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      for (const t of inputs) window.removeEventListener(t, stop, true);
+      if (holdStop === stop) holdStop = null;
+    };
+    holdStop = stop;
+    for (const t of inputs) window.addEventListener(t, stop, { capture: true, passive: true });
+    const step = (now: number) => {
+      if (now > until || !scroller?.isConnected) return stop();
+      if (now >= begin) {
+        const el = scroller.querySelector<HTMLElement>(`[data-event="${CSS.escape(eventId)}"]`);
+        if (el) {
+          const box = scroller.getBoundingClientRect();
+          const r = el.getBoundingClientRect();
+          // Its middle to the list's middle (a message taller than the screen: its top).
+          const drift = r.height > box.height ? r.top - box.top - 8 : r.top + r.height / 2 - (box.top + box.height / 2);
+          if (Math.abs(drift) > 4) scroller.scrollTop += drift;
+        }
+      }
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+  }
+  $effect(() => () => holdStop?.());
 
   function replyText(msg: MessageEntry) {
     const c = msg.content;
@@ -1650,7 +1748,7 @@
             quickReaction={QUICK_REACTION}
             onReact={(key) => react(row.msg, key)}
             onReply={() => startReply(row.msg)}
-            onJumpTo={jumpTo}
+            onJumpTo={(id) => void (thread ? jumpTo(id) : showMessage(id))}
             onUnlock={() => (encryption.sheetOpen = true)}
             onEdit={() => startEdit(row.msg)}
             onDelete={() => (confirmDelete = [row.msg])}
@@ -1921,7 +2019,7 @@
   </button>
 {/if}
 {#if tl.focused}
-  <button class="latest" onclick={() => tl.latest()} transition:fade={{ duration: 150 }}>
+  <button class="latest" onclick={() => void goLatest()} transition:fade={{ duration: 150 }}>
     <ArrowDown size={16} /> {tr("Latest")}
   </button>
 {/if}

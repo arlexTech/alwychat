@@ -40,6 +40,8 @@
   import Page, { setPageLayout } from "./Page.svelte";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import { layouts } from "$lib/stores/layout.svelte";
+  import { deletedPrefs } from "$lib/stores/deleted.svelte";
+  import MessageSquareX from "@lucide/svelte/icons/message-square-x";
   import type { MessageLayout } from "$lib/backend";
   import Images from "@lucide/svelte/icons/images";
   import ImageDown from "@lucide/svelte/icons/image-down";
@@ -223,6 +225,19 @@
       <option value="auto">{tr("Automatic")}</option>
       <option value="bubbles">{tr("My messages on the right")}</option>
       <option value="left">{tr("Everyone on the left")}</option>
+    </select>
+  </div>
+  <div class="m-row">
+    <span class="m-icon"><MessageSquareX size={20} /></span>
+    <span class="m-text"><strong>{tr("Deleted messages")}</strong><small>{tr("On this device")}</small></span>
+    <select
+      class="m-select"
+      value={deletedPrefs.chatChoice(roomId) === null ? "default" : deletedPrefs.chatChoice(roomId) ? "hide" : "show"}
+      onchange={(e) => deletedPrefs.setChat(roomId, e.currentTarget.value === "default" ? null : e.currentTarget.value === "hide")}
+    >
+      <option value="default">{deletedPrefs.general ? tr("App default (hidden)") : tr("App default (shown)")}</option>
+      <option value="show">{tr("Show")}</option>
+      <option value="hide">{tr("Hide")}</option>
     </select>
   </div>
   {#if summary && !summary.is_dm && spaces.spacesOf(roomId).length}

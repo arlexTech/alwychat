@@ -32,6 +32,7 @@
     children,
     layout = getContext<PageLayout | undefined>(LAYOUT) ?? "full",
     cancel = false,
+    actions,
   }: {
     title: string;
     onClose: () => void;
@@ -39,6 +40,8 @@
     layout?: PageLayout;
     /** Closing abandons something (a share from another app): ✕ "Cancel" instead of ←. */
     cancel?: boolean;
+    /** Buttons on the right of the title (search…). */
+    actions?: Snippet;
   } = $props();
 
   // Android's back gesture does what the ← (or Cancel) button does, for every page: pages that
@@ -63,6 +66,7 @@
     {:else}
       <button class="back" onclick={onClose} aria-label={tr("Back")}><ArrowLeft size={22} /></button>
       <h2>{title}</h2>
+      {#if actions}<div class="actions">{@render actions()}</div>{/if}
     {/if}
   </header>
   <div class="body">
@@ -115,6 +119,12 @@
   h2 {
     margin: 0;
     font-size: 1.25rem;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
   }
   .back {
     display: grid;

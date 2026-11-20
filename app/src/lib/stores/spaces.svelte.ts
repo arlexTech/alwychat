@@ -6,14 +6,18 @@ import {
   type ChatListPrefs,
   type Folder,
   type RoomSummary,
+  type SpaceGroup,
   type SpaceInfo,
 } from "$lib/backend";
+
+/** A row of the Spaces tab: a space, or a group of spaces. */
+export type SpaceItem = { kind: "space"; space: SpaceInfo } | { kind: "group"; group: SpaceGroup; spaces: SpaceInfo[] };
 
 /** Joined spaces, which chats are in them, and whether those also show in "Chats". */
 class Spaces {
   // Last run's list until the live one arrives (the Spaces tab never opens empty).
   list = $state<SpaceInfo[]>(peek<SpaceInfo[]>("spaces", true) ?? []);
-  prefs = $state<ChatListPrefs>({ show_space_chats: false, spaces: {}, rooms: {}, folders: [] });
+  prefs = $state<ChatListPrefs>({ show_space_chats: false, spaces: {}, rooms: {}, folders: [], space_order: [], space_groups: [] });
   loaded = $state(!!peek<SpaceInfo[]>("spaces", true));
   /** Chat → the top-level spaces it's in. */
   #spacesOf = $derived.by(() => {
@@ -35,10 +39,108 @@ class Spaces {
     this.#reload();
     // Changed on another device: picked up when we come back to the app.
     document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && this.#reload());
+    // A computer's window is rarely hidden: coming back to it counts too.
+    window.addEventListener("focus", () => this.#reload());
   }
 
   #reload() {
     getChatListPrefs().then((p) => (this.prefs = p), () => {});
+  }
+
+  /** The Spaces tab in its saved order: groups with their spaces, then spaces nobody placed yet
+   * (newly joined) in the server's order. Spaces we left are skipped; empty groups too. */
+  layout = $derived.by((): SpaceItem[] => {
+    const byId = new Map(this.list.map((s) => [s.id, s]));
+    const groups = this.prefs.space_groups ?? [];
+    const grouped = new Set(groups.flatMap((g) => g.spaces));
+    const out: SpaceItem[] = [];
+    const placed = new Set<string>();
+    const addGroup = (g: SpaceGroup) => {
+      if (placed.has(g.id)) return;
+      placed.add(g.id);
+      const spaces = g.spaces.flatMap((id) => byId.get(id) ?? []);
+      if (spaces.length) out.push({ kind: "group", group: g, spaces });
+    };
+    for (const id of this.prefs.space_order ?? []) {
+      const g = groups.find((x) => x.id === id);
+      if (g) addGroup(g);
+      else if (byId.has(id) && !grouped.has(id) && !placed.has(id)) {
+        placed.add(id);
+        out.push({ kind: "space", space: byId.get(id)! });
+      }
+    }
+    for (const g of groups) addGroup(g);
+    for (const s of this.list) if (!grouped.has(s.id) && !placed.has(s.id)) out.push({ kind: "space", space: s });
+    return out;
+  });
+
+  /** The group a space is in, if any. */
+  groupOf(spaceId: string): SpaceGroup | undefined {
+    return (this.prefs.space_groups ?? []).find((g) => g.spaces.includes(spaceId));
+  }
+
+  /** New order of the Spaces tab's rows (space and group IDs). */
+  setSpaceOrder(ids: string[]) {
+    return this.update((p) => {
+      p.space_order = ids;
+    });
+  }
+
+  /** New order of a group's spaces. */
+  setGroupOrder(groupId: string, ids: string[]) {
+    return this.update((p) => {
+      const g = (p.space_groups ??= []).find((x) => x.id === groupId);
+      if (g) g.spaces = ids;
+    });
+  }
+
+  /** Put a space in a group (null: out of any group, back where the group is). A new group is
+   * created when `newName` is given. */
+  moveSpace(spaceId: string, groupId: string | null, newName?: string) {
+    const visible = this.layout.map((i) => (i.kind === "group" ? i.group.id : i.space.id));
+    return this.update((p) => {
+      p.space_groups ??= [];
+      p.space_order = p.space_order?.length ? p.space_order : visible;
+      const from = p.space_groups.find((g) => g.spaces.includes(spaceId));
+      if (from) from.spaces = from.spaces.filter((id) => id !== spaceId);
+      p.space_order = p.space_order.filter((id) => id !== spaceId);
+      let target = groupId ? p.space_groups.find((g) => g.id === groupId) : undefined;
+      if (!target && newName !== undefined) {
+        target = { id: `group-${Date.now().toString(36)}`, name: newName, spaces: [] };
+        p.space_groups.push(target);
+        // The new group takes the space's place.
+        const at = visible.indexOf(spaceId);
+        p.space_order.splice(at < 0 ? p.space_order.length : at, 0, target.id);
+      }
+      if (target) target.spaces.push(spaceId);
+      else {
+        // Out of its group: right after the group.
+        const at = from ? p.space_order.indexOf(from.id) : -1;
+        p.space_order.splice(at < 0 ? p.space_order.length : at + 1, 0, spaceId);
+      }
+      p.space_groups = p.space_groups.filter((g) => g.spaces.length);
+      p.space_order = p.space_order.filter((id) => !id.startsWith("group-") || p.space_groups.some((g) => g.id === id));
+    });
+  }
+
+  renameGroup(groupId: string, name: string) {
+    return this.update((p) => {
+      const g = (p.space_groups ??= []).find((x) => x.id === groupId);
+      if (g) g.name = name;
+    });
+  }
+
+  /** Ungroup: its spaces take the group's place. */
+  deleteGroup(groupId: string) {
+    const visible = this.layout.map((i) => (i.kind === "group" ? i.group.id : i.space.id));
+    return this.update((p) => {
+      const g = (p.space_groups ??= []).find((x) => x.id === groupId);
+      p.space_groups = p.space_groups.filter((x) => x.id !== groupId);
+      const order = p.space_order?.length ? p.space_order : visible;
+      const at = order.indexOf(groupId);
+      p.space_order = order.filter((id) => id !== groupId);
+      p.space_order.splice(at < 0 ? p.space_order.length : at, 0, ...(g?.spaces ?? []));
+    });
   }
 
   spacesOf(roomId: string): string[] {
