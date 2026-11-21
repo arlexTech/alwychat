@@ -144,7 +144,7 @@ export type CallLink = {
 export const onCallLink = (handler: (link: CallLink) => void) => listen<CallLink>("call-link", (e) => handler(e.payload));
 /** The incoming call notification that launched the app, if any. */
 export const launchCall = () => invoke<CallLink | null>("launch_call");
-export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off" | "stop_location" | "audio_routes";
+export type CallAction = "hang_up" | "toggle_mic" | "pip_on" | "pip_off" | "stop_location" | "audio_routes" | "app_hidden" | "app_shown";
 export const onCallAction = (handler: (action: CallAction) => void) =>
   listen<CallAction>("call-action", (e) => handler(e.payload));
 export const declineCall = (roomId: string, notificationId: string) =>

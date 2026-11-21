@@ -200,6 +200,9 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     if (args.unmute.isNotEmpty()) MainActivity.unmuteLabel = args.unmute
     if (args.hangUp.isNotEmpty()) MainActivity.hangUpLabel = args.hangUp
     (activity as? MainActivity)?.updatePip()
+    if (!args.active) (activity as? MainActivity)?.overLockScreen(false)
+    // Answered: the call's own screen rules take over (the proximity sensor on the earpiece).
+    else (activity as? MainActivity)?.keepScreenOn(false)
     if (args.active) {
       CallService.start(activity, args.title, args.text, args.hangUp, args.channel, args.roomId, args.muted, args.mute, args.unmute, args.camera)
     } else {
@@ -254,6 +257,11 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
   fun ringInApp(invoke: Invoke) {
     val args = invoke.parseArgs(RingArgs::class.java)
     IncomingCall.ringInApp(activity, args.on)
+    // The ring ended: unless it was answered (the call starts within a moment), the app no
+    // longer shows over the lock screen.
+    if (!args.on) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+      if (!MainActivity.inCall) (activity as? MainActivity)?.overLockScreen(false)
+    }, 4000)
     invoke.resolve()
   }
 

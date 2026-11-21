@@ -95,11 +95,32 @@ class MainActivity : TauriActivity() {
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    forCall(intent)
     keepShare(intent)
     // Already on screen (a floating window, split screen): the page never becomes "visible"
     // again, so tell it a share is waiting.
     if (share != null) webView(window.decorView)?.let { view ->
       view.post { view.evaluateJavascript("window.dispatchEvent(new Event('alwychat-share'))", null) }
+    }
+  }
+
+  // Out of sight in a call without picture-in-picture, Android stops our camera: the page
+  // pauses it (the others then see our photo, not a frozen picture) and starts it again here.
+  private var hiddenInCall = false
+
+  override fun onStop() {
+    super.onStop()
+    if (inCall && !isInPictureInPictureMode) {
+      hiddenInCall = true
+      try { NativeCall.action("app_hidden") } catch (_: Throwable) {}
+    }
+  }
+
+  override fun onStart() {
+    super.onStart()
+    if (hiddenInCall) {
+      hiddenInCall = false
+      try { NativeCall.action("app_shown") } catch (_: Throwable) {}
     }
   }
 
@@ -127,8 +148,36 @@ class MainActivity : TauriActivity() {
     return null
   }
 
+  /** Opened by an incoming call (its full-screen notification, Answer): show over the lock
+   * screen and turn the screen on, like a phone call. Only for the call: dropped again when the
+   * ring ends unanswered or the call ends, so the chats never stay reachable without unlocking. */
+  fun overLockScreen(on: Boolean) {
+    // While it rings, the screen stays on (on the lock screen Android turns it off after ~10 s,
+    // and the first tap on Answer then only woke it up). Dropped once answered or ended.
+    keepScreenOn(on)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(on)
+      setTurnScreenOn(on)
+    } else {
+      @Suppress("DEPRECATION")
+      val flags = android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+      if (on) window.addFlags(flags) else window.clearFlags(flags)
+    }
+  }
+
+  fun keepScreenOn(on: Boolean) {
+    val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+    if (on) window.addFlags(flag) else window.clearFlags(flag)
+  }
+
+  private fun forCall(intent: Intent?) {
+    if (intent?.data?.path == "/call") overLockScreen(true)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     Crashes.watch(this)
+    forCall(intent)
     // The UI is dark: light status/navigation bar icons on a transparent bar.
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),

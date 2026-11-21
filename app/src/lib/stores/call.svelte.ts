@@ -381,6 +381,10 @@ class CallStore {
           if (this.roomId) void this.toggleMic();
         } else if (action === "audio_routes") {
           void this.#routesChanged();
+        } else if (action === "app_hidden") {
+          void this.#pauseCamera(true);
+        } else if (action === "app_shown") {
+          void this.#pauseCamera(false);
         } else if (action === "stop_location") {
           // Handled by the live location store.
         } else if (action === "pip_on") {
@@ -851,6 +855,7 @@ class CallStore {
     this.calling = false;
     clearInterval(this.#clockTimer);
     this.startedAt = null;
+    this.#cameraPaused = false;
     this.ringingDevices = [];
     this.hands = {};
     this.handUp = false;
@@ -1198,6 +1203,28 @@ class CallStore {
     await this.#lk.localParticipant.setCameraEnabled(this.camOn).catch((e) => this.#fail("camera", e));
     this.#sync();
     if (this.camOn) void this.#countCameras();
+  }
+
+  /** The camera was on when the app went out of sight (no picture-in-picture): Android freezes
+   * it there, so it's stopped (the others see our photo, like WhatsApp's "video paused") and
+   * started again when we're back. The camera button keeps showing it on. */
+  #cameraPaused = false;
+  async #pauseCamera(pause: boolean) {
+    const lk = this.#lk;
+    if (!lk) return;
+    if (pause) {
+      if (!this.camOn || this.#cameraPaused) return;
+      this.#cameraPaused = true;
+      await lk.localParticipant.setCameraEnabled(false).catch(() => {});
+    } else {
+      if (!this.#cameraPaused) return;
+      this.#cameraPaused = false;
+      if (!this.camOn) return;
+      await lk.localParticipant
+        .setCameraEnabled(true, { facingMode: this.facing })
+        .catch((e) => this.#fail("camera", e));
+    }
+    this.#sync();
   }
 
   async #countCameras() {
