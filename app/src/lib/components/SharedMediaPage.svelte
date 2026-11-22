@@ -16,6 +16,7 @@
   import MediaViewer from "./MediaViewer.svelte";
   import Page from "./Page.svelte";
   import { onBack } from "$lib/back.svelte";
+  import { sharedItemMenu } from "$lib/menus";
 
   let {
     roomId,
@@ -173,7 +174,7 @@
   {:else if tab === "media"}
     <div class="grid">
       {#each visual as item, i (item.event_id)}
-        <button class="cell" onclick={() => (viewer = i)} aria-label={item.kind === "video" ? tr("Play video") : tr("Open photo")}>
+        <button class="cell" onclick={() => (viewer = i)} oncontextmenu={(e) => sharedItemMenu(e, roomId, item, onShow)} aria-label={item.kind === "video" ? tr("Play video") : tr("Open photo")}>
           <img src={eventMediaUrl(item.media!, true)} alt="" loading="lazy" decoding="async" />
           {#if item.kind === "video"}
             <span class="badge"><Play size={11} fill="currentColor" />{formatDuration(item.duration_ms)}</span>
@@ -186,7 +187,7 @@
       {#each items as item (item.event_id)}
         <li>
           {#if tab === "files"}
-            <button class="main" onclick={() => (fileFor = item)}>
+            <button class="main" onclick={() => (fileFor = item)} oncontextmenu={(e) => sharedItemMenu(e, roomId, item, onShow)}>
               <span class="icon">{#if item.kind === "voice"}<Mic size={20} />{:else}<FileText size={20} />{/if}</span>
               <span class="text">
                 <strong>{item.kind === "voice" ? tr("Voice message") : item.filename}</strong>
@@ -194,7 +195,7 @@
               </span>
             </button>
           {:else}
-            <button class="main" onclick={() => item.url && openExternal(item.url)}>
+            <button class="main" onclick={() => item.url && openExternal(item.url)} oncontextmenu={(e) => sharedItemMenu(e, roomId, item, onShow)}>
               <span class="icon"><Link size={20} /></span>
               <span class="text">
                 <strong>{item.url ? host(item.url) : tr("Link")}</strong>
@@ -223,7 +224,8 @@
 
 {#if viewer !== null}
   <MediaViewer
-    items={visual.map((i) => ({ media: i.media!, kind: i.kind as "image" | "video", caption: null }))}
+    items={visual.map((i) => ({ media: i.media!, kind: i.kind as "image" | "video", caption: null, event_id: i.event_id }))}
+    {roomId}
     index={viewer}
     onClose={() => (viewer = null)}
     onShow={(i) => {

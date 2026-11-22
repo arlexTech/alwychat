@@ -6,9 +6,14 @@
 //! Video (cameras, screens) goes to the UI as JPEG frames (`video`). No per-person volume yet:
 //! the platform audio module mixes remote tracks itself; "mute for me" disables their tracks.
 
+mod screen_audio;
 mod video;
 
-pub use video::{CAMERA_PREVIEW, CameraPreview, FrameSink, LOCAL_CAMERA, LOCAL_SCREEN};
+pub use screen_audio::{ScreenApp, SoundChoice};
+pub use video::{
+    CAMERA_PREVIEW, CameraPreview, FrameSink, LOCAL_CAMERA, LOCAL_SCREEN, ScreenEncoder,
+    ScreenQuality, ScreenSendStats, screen_send_stats, set_screen_preview,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -30,7 +35,7 @@ use livekit::{
 };
 use serde::Serialize;
 use tokio::{sync::mpsc::UnboundedReceiver, task::JoinHandle};
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Someone in the call, as the UI shows them.
 #[derive(Debug, Clone, Serialize)]
@@ -42,8 +47,10 @@ pub struct CallMember {
     pub mic_on: bool,
     /// Key of their camera's frames (see `FrameSink`), if it's on.
     pub camera: Option<String>,
-    /// Key of their shared screen's frames, if any.
+    /// Key of their shared screen's frames, if any (and we watch it).
     pub screen: Option<String>,
+    /// They share their screen (watched or not).
+    pub sharing: bool,
     /// Their connection to the call is lost (they reconnect, or leave after a timeout).
     pub lost: bool,
 }
@@ -179,7 +186,30 @@ struct Shared {
     watching: HashMap<String, tokio::task::JoinHandle<()>>,
     camera: Option<video::Capture>,
     screen: Option<video::Capture>,
+    /// The screen share's sound (other apps' audio), while sharing.
+    screen_audio: Option<screen_audio::ScreenAudio>,
+    /// Others (LiveKit identities) whose shared screen we chose not to watch: not received at
+    /// all, until they share again.
+    unwatched: HashSet<String>,
+    /// Others whose screen's sound we silenced.
+    screen_sound_off: HashSet<String>,
+    /// How loud others' screen sound is for us (gain, 1 = as sent).
+    screen_volumes: HashMap<String, f32>,
     setup: AudioSetup,
+}
+
+/// The screen sound to start with: a whole monitor carries every app's sound; a window only
+/// its own app's, which the desktop doesn't say (Wayland), so none until it's picked.
+fn first_sound(size: (u32, u32), monitors: &[(u32, u32)]) -> SoundChoice {
+    let near = |a: u32, b: u32| a.abs_diff(b) <= 2;
+    if monitors
+        .iter()
+        .any(|&(w, h)| near(w, size.0) && near(h, size.1))
+    {
+        SoundChoice::All
+    } else {
+        SoundChoice::None
+    }
 }
 
 /// A call in progress. Dropping it stops following events; `leave` disconnects cleanly.
@@ -292,6 +322,10 @@ impl NativeCall {
             watching: HashMap::new(),
             camera: None,
             screen: None,
+            screen_audio: None,
+            unwatched: HashSet::new(),
+            screen_sound_off: HashSet::new(),
+            screen_volumes: HashMap::new(),
             setup,
         }));
         let sink: Sink = Arc::new(on_event);
@@ -488,10 +522,95 @@ impl NativeCall {
         Ok(())
     }
 
-    /// Share the screen (the desktop asks which one) or stop sharing.
-    pub async fn set_screen(&self, on: bool) -> Result<(), String> {
-        let old = self.shared.lock().unwrap().screen.take();
+    /// A screen share's quality while sharing (frame rate and size, from the next frame).
+    pub fn set_screen_quality(&self, quality: ScreenQuality) {
+        if let Some(screen) = &self.shared.lock().unwrap().screen {
+            screen.set_quality(quality);
+        }
+    }
+
+    /// The shared screen's sound: what goes with it and the apps playing now (None when not
+    /// sharing or without a sound server).
+    pub fn screen_sound(&self) -> Option<(SoundChoice, Vec<ScreenApp>)> {
+        let shared = self.shared.lock().unwrap();
+        let audio = shared.screen_audio.as_ref()?;
+        Some((audio.choice(), audio.apps()))
+    }
+
+    pub fn set_screen_sound(&self, choice: SoundChoice) {
+        if let Some(audio) = &self.shared.lock().unwrap().screen_audio {
+            audio.set_choice(choice);
+        }
+    }
+
+    /// Watch someone's shared screen or not (not = it isn't received at all, saving data).
+    pub fn set_watching_screen(&self, identity: &str, watch: bool) {
+        // (Un)subscribing spawns LiveKit tasks; the app calls this from outside the runtime.
+        let _runtime = self.runtime.enter();
+        {
+            let mut shared = self.shared.lock().unwrap();
+            if watch {
+                shared.unwatched.remove(identity);
+            } else {
+                shared.unwatched.insert(identity.to_owned());
+            }
+        }
+        if let Some(p) = self
+            .room
+            .remote_participants()
+            .values()
+            .find(|p| p.identity().as_str() == identity)
+        {
+            for publication in p.track_publications().values() {
+                if publication.source() == TrackSource::Screenshare {
+                    publication.set_subscribed(watch);
+                }
+            }
+        }
+        (self.sink)(CallEvent::Members {
+            members: members(&self.room, &self.shared),
+        });
+    }
+
+    /// Hear someone's shared screen's sound or not (their voice isn't touched).
+    pub fn set_screen_sound_off(&self, identity: &str, off: bool, volume: f32) {
+        let _runtime = self.runtime.enter();
+        {
+            let mut shared = self.shared.lock().unwrap();
+            shared
+                .screen_volumes
+                .insert(identity.to_owned(), volume.clamp(0.0, 4.0));
+            if off {
+                shared.screen_sound_off.insert(identity.to_owned());
+            } else {
+                shared.screen_sound_off.remove(identity);
+            }
+        }
+        apply_audio(&self.room, &self.shared);
+    }
+
+    /// Share the screen (the desktop asks which one) or stop sharing. `monitors`: the sizes
+    /// of this computer's monitors, to tell a whole screen from a window. Closing the picker
+    /// without choosing gives `Err(CANCELLED)`.
+    pub async fn set_screen(
+        &self,
+        on: bool,
+        quality: ScreenQuality,
+        monitors: &[(u32, u32)],
+    ) -> Result<(), String> {
+        let (old, old_audio) = {
+            let mut shared = self.shared.lock().unwrap();
+            (shared.screen.take(), shared.screen_audio.take())
+        };
         if let Some(old) = old {
+            old.stop();
+            let _ = self
+                .room
+                .local_participant()
+                .unpublish_track(&old.track.sid())
+                .await;
+        }
+        if let Some(old) = old_audio {
             old.stop();
             let _ = self
                 .room
@@ -501,11 +620,20 @@ impl NativeCall {
         }
         if on {
             let sink = self.sink.clone();
-            let capture = video::share_screen(&self.room, self.frames.clone(), move || {
-                sink(CallEvent::ScreenEnded);
-            })
-            .await?;
+            let capture =
+                video::share_screen(&self.room, self.frames.clone(), quality, move || {
+                    sink(CallEvent::ScreenEnded);
+                })
+                .await?;
+            let size = capture.size;
             self.shared.lock().unwrap().screen = Some(capture);
+            // Its sound: the picture works without it (no sound server, refused).
+            let choice = first_sound(size, monitors);
+            info!("screen share: {}x{} → sound {choice:?}", size.0, size.1);
+            match screen_audio::start(&self.room, choice).await {
+                Ok(audio) => self.shared.lock().unwrap().screen_audio = Some(audio),
+                Err(e) => warn!("screen share without sound: {e}"),
+            }
         }
         self.refresh();
         Ok(())
@@ -527,6 +655,7 @@ impl NativeCall {
             let mut shared = self.shared.lock().unwrap();
             shared.camera = None;
             shared.screen = None;
+            shared.screen_audio = None;
             for (_, task) in shared.watching.drain() {
                 task.abort();
             }
@@ -704,6 +833,7 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
         ),
         camera: shared.camera.as_ref().map(|_| LOCAL_CAMERA.to_owned()),
         screen: shared.screen.as_ref().map(|_| LOCAL_SCREEN.to_owned()),
+        sharing: shared.screen.is_some(),
         lost: false,
     }];
     let mut others: Vec<_> = room
@@ -718,6 +848,9 @@ fn members(room: &Room, shared: &Mutex<Shared>) -> Vec<CallMember> {
                 mic_on: has_live_mic(publications.values().map(|p| (p.source(), p.is_muted()))),
                 camera: video_key(&publications, TrackSource::Camera, &shared.watching),
                 screen: video_key(&publications, TrackSource::Screenshare, &shared.watching),
+                sharing: publications
+                    .values()
+                    .any(|p| p.source() == TrackSource::Screenshare && !p.is_muted()),
                 lost: p.connection_quality() == livekit::prelude::ConnectionQuality::Lost,
             }
         })
@@ -733,13 +866,25 @@ fn apply_audio(room: &Room, shared: &Mutex<Shared>) {
     for participant in room.remote_participants().values() {
         let user = user_of(participant.identity().as_str()).to_owned();
         let silent = shared.deafened || shared.muted_for_me.contains(&user);
+        let screen_off = shared
+            .screen_sound_off
+            .contains(participant.identity().as_str());
         let volume = shared.volumes.get(&user).copied().unwrap_or(1.0);
+        let screen_volume = shared
+            .screen_volumes
+            .get(participant.identity().as_str())
+            .copied()
+            .unwrap_or(1.0);
         for publication in participant.track_publications().values() {
             if let Some(RemoteTrack::Audio(track)) = publication.track() {
                 let soundboard = publication.name() == SOUNDBOARD_TRACK;
-                let silent = silent || (shared.soundboard_off && soundboard);
+                let silent = silent
+                    || (shared.soundboard_off && soundboard)
+                    || (screen_off && publication.source() == TrackSource::ScreenshareAudio);
                 let gain = if soundboard {
                     shared.soundboard_volume
+                } else if publication.source() == TrackSource::ScreenshareAudio {
+                    screen_volume
                 } else {
                     volume
                 };
@@ -785,10 +930,22 @@ async fn follow(
             RoomEvent::Reconnected => sink(CallEvent::Connected),
             // A new audio track follows deafen / "mute for me" right away.
             RoomEvent::TrackSubscribed {
-                track, publication, ..
+                track,
+                publication,
+                participant,
             } => {
                 if let RemoteTrack::Video(video) = track {
-                    watch(&shared, video, &publication, &frames);
+                    let unwatched = publication.source() == TrackSource::Screenshare
+                        && shared
+                            .lock()
+                            .unwrap()
+                            .unwatched
+                            .contains(participant.identity().as_str());
+                    if unwatched {
+                        publication.set_subscribed(false);
+                    } else {
+                        watch(&shared, video, &publication, &frames);
+                    }
                 }
                 apply_audio(&room, &shared);
                 sink(snapshot(&room));
@@ -804,10 +961,22 @@ async fn follow(
                 }
                 sink(snapshot(&room));
             }
+            // A new share from them is watched again (a choice per share, as on Discord).
+            RoomEvent::TrackUnpublished {
+                publication,
+                participant,
+            } => {
+                if publication.source() == TrackSource::Screenshare {
+                    let mut s = shared.lock().unwrap();
+                    s.unwatched.remove(participant.identity().as_str());
+                    s.screen_sound_off.remove(participant.identity().as_str());
+                    s.screen_volumes.remove(participant.identity().as_str());
+                }
+                sink(snapshot(&room));
+            }
             RoomEvent::ParticipantConnected(_)
             | RoomEvent::ParticipantDisconnected(_)
             | RoomEvent::TrackPublished { .. }
-            | RoomEvent::TrackUnpublished { .. }
             | RoomEvent::TrackMuted { .. }
             | RoomEvent::TrackUnmuted { .. }
             | RoomEvent::LocalTrackPublished { .. }
@@ -820,7 +989,17 @@ async fn follow(
 
 #[cfg(test)]
 mod tests {
-    use super::user_of;
+    use super::{SoundChoice, first_sound, user_of};
+
+    #[test]
+    fn window_or_monitor() {
+        let monitors = [(2560, 1440), (1920, 1080)];
+        assert_eq!(first_sound((2560, 1440), &monitors), SoundChoice::All);
+        assert_eq!(first_sound((1920, 1080), &monitors), SoundChoice::All);
+        assert_eq!(first_sound((1918, 1080), &monitors), SoundChoice::All);
+        assert_eq!(first_sound((1280, 900), &monitors), SoundChoice::None);
+        assert_eq!(first_sound((1280, 900), &[]), SoundChoice::None);
+    }
 
     #[test]
     fn identity_to_user() {

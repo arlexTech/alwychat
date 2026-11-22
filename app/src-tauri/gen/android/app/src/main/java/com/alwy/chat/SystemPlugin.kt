@@ -5,14 +5,18 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.app.NotificationManager
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
@@ -52,8 +56,24 @@ class CallArgs {
 }
 
 @InvokeArg
+class FullScreenArgs {
+  var on: Boolean = false
+}
+
+@InvokeArg
 class PipShapeArgs {
   var wide: Boolean = false
+}
+
+@InvokeArg
+class BackgroundCameraArgs {
+  var on: Boolean = false
+  var front: Boolean = true
+}
+
+@InvokeArg
+class PipAllowedArgs {
+  var on: Boolean = false
 }
 
 @InvokeArg
@@ -179,6 +199,37 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve(ret)
   }
 
+  /** Whether going home during a call opens picture-in-picture (Settings → Voice & video). */
+  @Command
+  fun pipAllowed(invoke: Invoke) {
+    val args = invoke.parseArgs(PipAllowedArgs::class.java)
+    if (MainActivity.pipEnabled != args.on) {
+      MainActivity.pipEnabled = args.on
+      (activity as? MainActivity)?.updatePip()
+    }
+    invoke.resolve()
+  }
+
+  /** The camera of a call while the app is out of sight (see BackgroundCamera): answers
+   * `{ok}`; not ok = the page pauses the camera instead. */
+  @Command
+  fun backgroundCamera(invoke: Invoke) {
+    val args = invoke.parseArgs(BackgroundCameraArgs::class.java)
+    activity.runOnUiThread {
+      val main = activity as? MainActivity
+      val ok = if (!args.on) {
+        BackgroundCamera.stop()
+        true
+      } else {
+        val view = main?.pageView()
+        view != null && runCatching {
+          BackgroundCamera.start(activity, view, args.front, main.screenRotation())
+        }.onFailure { Log.w("AlwyChat", "background camera: $it") }.getOrDefault(false)
+      }
+      invoke.resolve(JSObject().put("ok", ok))
+    }
+  }
+
   /** The picture-in-picture window's shape: wide for a screen share, else tall. */
   @Command
   fun pipShape(invoke: Invoke) {
@@ -186,6 +237,26 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     if (MainActivity.pipWide != args.wide) {
       MainActivity.pipWide = args.wide
       (activity as? MainActivity)?.updatePip()
+    }
+    invoke.resolve()
+  }
+
+  /** The call's big picture in real full screen: system bars hidden (a swipe shows them for a
+   *  moment) and the picture turning with the phone, even with auto-rotate off (like video
+   *  apps); off puts both back. */
+  @Command
+  fun fullScreen(invoke: Invoke) {
+    val args = invoke.parseArgs(FullScreenArgs::class.java)
+    activity.runOnUiThread {
+      val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+      if (args.on) {
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+      } else {
+        controller.show(WindowInsetsCompat.Type.systemBars())
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+      }
     }
     invoke.resolve()
   }
@@ -200,7 +271,10 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     if (args.unmute.isNotEmpty()) MainActivity.unmuteLabel = args.unmute
     if (args.hangUp.isNotEmpty()) MainActivity.hangUpLabel = args.hangUp
     (activity as? MainActivity)?.updatePip()
-    if (!args.active) (activity as? MainActivity)?.overLockScreen(false)
+    if (!args.active) {
+      BackgroundCamera.stop()
+      (activity as? MainActivity)?.overLockScreen(false)
+    }
     // Answered: the call's own screen rules take over (the proximity sensor on the earpiece).
     else (activity as? MainActivity)?.keepScreenOn(false)
     if (args.active) {

@@ -9,6 +9,7 @@
   import { eventMediaUrl } from "$lib/media";
   import Avatar from "./Avatar.svelte";
   import Highlight from "./Highlight.svelte";
+  import { searchHitMenu } from "$lib/menus";
 
   let {
     hits,
@@ -37,7 +38,7 @@
 <ul>
   {#each hits as hit (hit.event_id)}
     <li>
-      <button onclick={() => onPick(hit)}>
+      <button onclick={() => onPick(hit)} oncontextmenu={(e) => searchHitMenu(e, hit, () => onPick(hit))}>
         {#if showChat}
           <Avatar name={hit.room_name} mxc={hit.room_avatar} size={44} />
         {/if}

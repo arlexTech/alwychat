@@ -9,7 +9,18 @@
   import Avatar from "./Avatar.svelte";
   import { portal } from "$lib/portal";
 
-  let { readers, onClose }: { readers: Reader[]; onClose: () => void } = $props();
+  let {
+    readers,
+    onClose,
+    title = tr("Seen by"),
+    sections = null,
+  }: {
+    readers: Reader[];
+    onClose: () => void;
+    title?: string;
+    /** Grouped instead (poll votes: one group per answer). */
+    sections?: { label: string; readers: Reader[] }[] | null;
+  } = $props();
   $effect(() => onBack(onClose));
 
   // ── Pull down to close: on a phone, a swipe down while the list is at its top drags the
@@ -69,18 +80,21 @@
   style:--drag="{drag}px"
   use:portal
   role="dialog"
-  aria-label={tr("Seen by")}
+  aria-label={title}
   transition:fly={{ y: 40, duration: 200 }}
 >
   <div class="grip"></div>
-  <h2>{tr("Seen by")} <span>{readers.length}</span></h2>
+  <h2>{title} <span>{readers.length}</span></h2>
   <ul bind:this={list}>
-    {#each readers as r, i (r.user_id ?? `${r.name}|${i}`)}
-      <li>
-        <Avatar name={r.name} mxc={r.avatar} size={36} />
-        <span class="who"><strong>{r.name}</strong><small>{r.user_id}</small></span>
-        {#if r.ts}<span class="when">{messageStamp(r.ts)}</span>{/if}
-      </li>
+    {#each sections ?? [{ label: "", readers }] as group, g (g)}
+      {#if group.label}<li class="section"><strong>{group.label}</strong><span>{group.readers.length}</span></li>{/if}
+      {#each group.readers as r, i (r.user_id ?? `${r.name}|${i}`)}
+        <li>
+          <Avatar name={r.name} mxc={r.avatar} size={36} />
+          <span class="who"><strong>{r.name}</strong><small>{r.user_id}</small></span>
+          {#if r.ts}<span class="when">{messageStamp(r.ts)}</span>{/if}
+        </li>
+      {/each}
     {/each}
   </ul>
 </div>
@@ -149,6 +163,14 @@
     align-items: center;
     gap: 12px;
     padding: 8px 4px;
+  }
+  li.section {
+    justify-content: space-between;
+    padding: 12px 4px 2px;
+    font-size: 0.85rem;
+  }
+  li.section span {
+    color: var(--muted);
   }
   .who {
     display: flex;

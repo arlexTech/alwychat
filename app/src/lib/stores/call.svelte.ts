@@ -2,7 +2,7 @@
 // or in Rust where the webview has no WebRTC (Linux desktop: `native`; pictures arrive as frames,
 // see nativeVideo.svelte.ts).
 import { loudness, playCue, type CallCue } from "$lib/callSounds";
-import type { LocalAudioTrack, LocalVideoTrack, Participant, RemoteAudioTrack, RemoteParticipant, RemoteTrack, Room, Track as LkTrack } from "livekit-client";
+import type { AudioCaptureOptions, LocalAudioTrack, LocalTrack, LocalVideoTrack, Participant, RemoteAudioTrack, RemoteParticipant, RemoteTrack, Room, Track as LkTrack } from "livekit-client";
 import type { MatrixKeyProvider as KeyProvider } from "$lib/callKeys";
 import {
   isAndroid,
@@ -46,12 +46,30 @@ import {
   type CallSignal,
   type Member,
   type RoomSummary,
+  backgroundCamera,
+  pipAllowed,
+  nativeCallScreenPreview,
+  nativeCallScreenQuality,
+  nativeCallScreenStats,
+  nativeCallScreenSound,
+  nativeCallSetScreenSound,
+  nativeCallWatchScreen,
+  isWindows,
+  winScreenQuality,
+  winScreenSound,
+  winScreenSources,
+  type WinShareEvent,
+  type WinSound,
+  type WinSource,
+  type NativeScreenSound,
+  type SoundChoice,
 } from "$lib/backend";
 import { MediaQuery } from "svelte/reactivity";
 import { startRinging, stopRinging } from "$lib/ringtone";
 import { nav } from "./nav.svelte";
 import { chatList } from "./chatList.svelte";
 import { nativeVideo } from "./nativeVideo.svelte";
+import { WinShare, winShareSupported } from "./winShare";
 import { tr } from "$lib/i18n/index.svelte";
 
 // livekit-client is a large part of the app's code and only calls in the web view need it
@@ -95,6 +113,8 @@ export interface Tile {
   /** Native calls: frame keys of the camera / screen (drawn by NativeVideo.svelte). */
   cameraFrames: string | null;
   screenFrames: string | null;
+  /** They share their screen, watched or not (see `call.watchScreen`). */
+  sharing: boolean;
   /** Their connection is lost: they come back, or leave after LiveKit's timeout. */
   lost: boolean;
 }
@@ -140,7 +160,54 @@ export interface CallPrefs {
   btListenMode: boolean;
   /** Android: show Bluetooth headsets' names (needs "Nearby devices"). */
   btNames: boolean;
+  /** Android: going home during a call shrinks it into picture-in-picture. */
+  pip: boolean;
+  /** Screen sharing: the quality last used (fluid for games, balanced, or sharp text). */
+  screenQuality: ScreenQuality;
+  /** What a new share starts with: the last used quality, or always the same. */
+  screenDefault: ScreenQuality | "last";
+  /** Linux: the app whose sound was last picked for a window share (picked again if playing). */
+  screenApp?: string;
+  /** Screen sharing codec: AV1 = lightest stream; Auto = H.264 on the graphics card where known. */
+  screenCodec: ScreenCodec;
+  /** How much data a screen share may use (scales the quality's bitrate). */
+  screenData: ScreenData;
 }
+
+export type ScreenCodec = "auto" | "av1" | "h264" | "vp8";
+export type ScreenData = "low" | "normal" | "high";
+/** Bitrate factors: the data choice, and AV1 needing ~40 % less for the same picture. */
+const DATA_FACTOR: Record<ScreenData, number> = { low: 0.45, normal: 1, high: 1.5 };
+export const CODEC_FACTOR = (c: ScreenCodec) => (c === "av1" ? 0.6 : 1);
+/** What a share sends right now (its biggest layer). */
+export interface ScreenStats {
+  encoder: string;
+  fps: number;
+  width: number;
+  height: number;
+  /** "none", "cpu", "bandwidth", "other". */
+  limit: string;
+  mbps: number;
+}
+
+export type ScreenQuality = "speed_max" | "speed" | "balanced" | "quality" | "quality_max";
+/** What each screen-share choice asks of the encoder; bigger screens are shrunk to fit. */
+export const SCREEN_QUALITY: Record<ScreenQuality, { fps: number; maxBitrate: number; width: number; height: number; fluid: boolean }> = {
+  speed_max: { fps: 60, maxBitrate: 6_000_000, width: 1280, height: 720, fluid: true },
+  speed: { fps: 60, maxBitrate: 8_000_000, width: 1920, height: 1080, fluid: true },
+  balanced: { fps: 30, maxBitrate: 5_000_000, width: 1920, height: 1080, fluid: true },
+  quality: { fps: 30, maxBitrate: 6_000_000, width: 2560, height: 1440, fluid: false },
+  quality_max: { fps: 15, maxBitrate: 6_000_000, width: 3840, height: 2160, fluid: false },
+};
+
+/** The share's quality steps, from speed (frame rate) to quality (sharpness), as offered. */
+export const SCREEN_CHOICES: { id: ScreenQuality; label: () => string; hint: () => string }[] = [
+  { id: "speed_max", label: () => tr("Max speed"), hint: () => tr("60 fps at 720p: the smoothest, even on a slow connection") },
+  { id: "speed", label: () => tr("Speed"), hint: () => tr("60 fps at 1080p: games and videos") },
+  { id: "balanced", label: () => tr("Balanced"), hint: () => tr("30 fps at 1080p: good for most things") },
+  { id: "quality", label: () => tr("Quality"), hint: () => tr("30 fps at 1440p: sharper text and details") },
+  { id: "quality_max", label: () => tr("Max quality"), hint: () => tr("15 fps at full size (up to 4K): crisp documents and code") },
+];
 
 /** Someone in a call or a voice channel, as the person menu shows them. */
 export interface CallPerson {
@@ -172,9 +239,21 @@ function loadPrefs(): CallPrefs {
     reactionVolume: 1,
     btListenMode: false,
     btNames: false,
+    pip: false,
+    screenQuality: "balanced",
+    screenDefault: "last",
+    screenCodec: "auto",
+    screenData: "normal",
   };
   try {
-    return { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
+    const saved = { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") } as CallPrefs;
+    // Before 5 steps: "smooth" / "text".
+    const old: Record<string, ScreenQuality> = { smooth: "speed", text: "quality_max" };
+    if (old[saved.screenQuality]) saved.screenQuality = old[saved.screenQuality];
+    if (saved.screenDefault !== "last" && old[saved.screenDefault]) saved.screenDefault = old[saved.screenDefault];
+    if (!SCREEN_QUALITY[saved.screenQuality]) saved.screenQuality = "balanced";
+    if (saved.screenDefault !== "last" && !SCREEN_QUALITY[saved.screenDefault]) saved.screenDefault = "last";
+    return saved;
   } catch {
     return defaults;
   }
@@ -370,6 +449,7 @@ class CallStore {
     if (isAndroid) {
       // The incoming call notification (the app wasn't on screen when it rang).
       void onCallLink((link) => void this.#link(link));
+      void pipAllowed(this.prefs.pip).catch(() => {});
       void launchCall().then((link) => link && this.#link(link)).catch(() => {});
       // The ringtone waits while the app is in the background (the notification rings then).
       document.addEventListener("visibilitychange", () => {
@@ -382,9 +462,9 @@ class CallStore {
         } else if (action === "audio_routes") {
           void this.#routesChanged();
         } else if (action === "app_hidden") {
-          void this.#pauseCamera(true);
+          void this.#cameraHidden(true);
         } else if (action === "app_shown") {
-          void this.#pauseCamera(false);
+          void this.#cameraHidden(false);
         } else if (action === "stop_location") {
           // Handled by the live location store.
         } else if (action === "pip_on") {
@@ -610,6 +690,8 @@ class CallStore {
   }
 
   #lk: Room | null = null;
+  /** livekit-client's VideoPreset (the engine loads lazily). */
+  #VideoPreset: (typeof import("livekit-client"))["VideoPreset"] | null = null;
   /** Who is speaking by our own measure (LiveKit's comes from the server about twice a second,
    * smoothed: the ring lagged ~1 s behind the voice), by LiveKit identity. */
   #voices = new Map<string, { speaking: boolean; lastLoud: number }>();
@@ -704,7 +786,7 @@ class CallStore {
         this.#sync();
         return;
       }
-      const [{ Room, RoomEvent, ConnectionState, VideoPresets, ScreenSharePresets }, { MatrixKeyProvider, e2eeWorker }] =
+      const [{ Room, RoomEvent, ConnectionState, VideoPresets, ScreenSharePresets, VideoPreset }, { MatrixKeyProvider, e2eeWorker }] =
         await loadEngine();
       const keys = new MatrixKeyProvider();
       const worker = await e2eeWorker();
@@ -729,6 +811,7 @@ class CallStore {
         e2ee: worker ? { keyProvider: keys, worker } : undefined,
       });
       this.#lk = lk;
+      this.#VideoPreset = VideoPreset;
       this.#keys = keys;
       for (const key of await callKeys(room.id)) void keys.add(key).catch((e) => console.warn("call key", e));
       lk.on(RoomEvent.ParticipantConnected, () => this.#sync())
@@ -833,7 +916,7 @@ class CallStore {
       this.#sync();
       const others = this.tiles.filter((t) => !t.isMe);
       this.#present = new Set(others.map((t) => t.id));
-      this.#sharing = new Set(others.filter((t) => t.screen || t.screenFrames).map((t) => t.id));
+      this.#sharing = new Set(others.filter((t) => t.sharing).map((t) => t.id));
       this.#cue("join");
     }
   }
@@ -855,7 +938,20 @@ class CallStore {
     this.calling = false;
     clearInterval(this.#clockTimer);
     this.startedAt = null;
+    this.#intent = null;
+    this.showMyScreen = false;
+    this.screenPending = false;
+    this.screenStarting = false;
+    this.screenSound = null;
+    this.screenNote = null;
+    this.screenPicker?.pick(null);
+    void this.#win?.stop();
+    this.#win = null;
+    this.unwatched = new Set();
+    this.screenSoundOff = new Set();
+    this.screenVolumes = {};
     this.#cameraPaused = false;
+    this.#endHiddenCam();
     this.ringingDevices = [];
     this.hands = {};
     this.handUp = false;
@@ -933,9 +1029,15 @@ class CallStore {
     this.#knownRoutes = new Set(routes.devices.map((r) => r.id));
   }
 
+  /** The built-in place we chose (or the user picked): when the call's audio starts, the
+   * WebView moves it to the loudspeaker by itself (Chromium's audio thread), so a voice call
+   * ended up on the speaker; that move is undone. */
+  #intent: "speaker" | "earpiece" | null = null;
   async #route(route: "speaker" | "earpiece" | "headset" | "device", device?: number) {
     if (!isAndroid) return;
     this.#released = null;
+    const picked = route === "device" ? this.audioRoutes.find((r) => r.id === device)?.kind : route;
+    this.#intent = picked === "speaker" || picked === "earpiece" ? picked : null;
     if (route !== "device") this.#speakerOn = route === "speaker";
     const kinds = route === "headset" ? HEADSETS : [route === "device" ? "" : route];
     const match = route === "device" ? this.audioRoutes.find((r) => r.id === device) : kinds.map((k) => this.audioRoutes.find((r) => r.kind === k)).find(Boolean);
@@ -976,7 +1078,9 @@ class CallStore {
     // Earbuds just connected: the call goes into them (like phone calls).
     if (added) return void this.#route("device", added.id);
     // The headset in use went away: back to the default place.
-    if (!current) void this.#autoRoute(this.camOn);
+    if (!current) return void this.#autoRoute(this.camOn);
+    // Moved between the phone's own earpiece and speaker without us: put it back.
+    if (this.#intent && current.kind !== this.#intent && (current.kind === "speaker" || current.kind === "earpiece")) void this.#route(this.#intent);
   }
 
   async toggleDeafen() {
@@ -1033,6 +1137,11 @@ class CallStore {
   setBtListenMode(on: boolean) {
     this.prefs = { ...this.prefs, btListenMode: on };
     this.#savePrefs();
+  }
+  setPip(on: boolean) {
+    this.prefs = { ...this.prefs, pip: on };
+    this.#savePrefs();
+    void pipAllowed(on).catch(() => {});
   }
   setBtNames(on: boolean) {
     this.prefs = { ...this.prefs, btNames: on };
@@ -1227,6 +1336,109 @@ class CallStore {
     this.#sync();
   }
 
+  /** Out of sight (no picture-in-picture), the WebView stops handing camera frames to the
+   * page. The app then opens the camera itself (BackgroundCamera.kt) and sends each frame as
+   * I420 bytes over a message port; they're written into a generated track that replaces the
+   * camera's in the published track until we're back, when the WebView's camera returns.
+   * Where that isn't possible, the camera is paused instead (the others see our photo). */
+  #hiddenCam: {
+    port: MessagePort;
+    writer: WritableStreamDefaultWriter<VideoFrame>;
+    gen: MediaStreamTrack;
+    sender: RTCRtpSender;
+  } | null = null;
+  /** The app is out of sight (the latest app_hidden / app_shown). */
+  #appHidden = false;
+  async #cameraHidden(hidden: boolean) {
+    this.#appHidden = hidden;
+    const lk = this.#lk;
+    if (!lk) return;
+    const track = lk.localParticipant.getTrackPublication(Track.Source.Camera)?.videoTrack as LocalVideoTrack | undefined;
+    if (hidden) {
+      const sender = track?.sender;
+      if (!this.camOn || !track || !sender || this.#hiddenCam || this.#cameraPaused) return;
+      const Generator = (globalThis as { MediaStreamTrackGenerator?: new (o: { kind: string }) => MediaStreamTrack & { writable: WritableStream<VideoFrame> } }).MediaStreamTrackGenerator;
+      if (!Generator || typeof VideoFrame === "undefined") return this.#pauseCamera(true);
+      const portReady = new Promise<MessagePort | null>((resolve) => {
+        const timer = setTimeout(() => (window.removeEventListener("message", got), resolve(null)), 3000);
+        function got(e: MessageEvent) {
+          if (e.data !== "alwychat-camera" || !e.ports[0]) return;
+          clearTimeout(timer);
+          window.removeEventListener("message", got);
+          resolve(e.ports[0]);
+        }
+        window.addEventListener("message", got);
+      });
+      const ok = await backgroundCamera(true, this.facing === "user").catch(() => false);
+      const port = ok ? await portReady : null;
+      // Back on screen meanwhile (a quick trip to another app): the WebView's camera is still
+      // on the sender, so only the native camera has to go.
+      if (!this.#appHidden) {
+        port?.close();
+        if (ok) void backgroundCamera(false, true).catch(() => {});
+        return;
+      }
+      if (!port) {
+        void backgroundCamera(false, true).catch(() => {});
+        return this.#pauseCamera(true);
+      }
+      const gen = new Generator({ kind: "video" });
+      const writer = gen.writable.getWriter();
+      port.onmessage = (e) => {
+        const data = e.data;
+        if (!(data instanceof ArrayBuffer) || data.byteLength < 8) return;
+        // A frame still being written: drop this one rather than queue up delay.
+        if ((writer.desiredSize ?? 1) <= 0) return;
+        const head = new DataView(data, 0, 8);
+        const frame = new VideoFrame(new Uint8Array(data, 8), {
+          format: "I420",
+          codedWidth: head.getInt32(0, true),
+          codedHeight: head.getInt32(4, true),
+          timestamp: Math.round(performance.now() * 1000),
+        });
+        writer.write(frame).catch(() => frame.close());
+      };
+      this.#hiddenCam = { port, writer, gen, sender };
+      // Swapped on the WebRTC sender itself: LiveKit keeps its camera track (and its encryption
+      // and layer settings, which its own replaceTrack redoes: the others then got black frames).
+      try {
+        await sender.replaceTrack(gen);
+      } catch (e) {
+        console.warn("background camera", e);
+        this.#endHiddenCam();
+        return this.#pauseCamera(true);
+      }
+    } else {
+      if (this.#cameraPaused) return this.#pauseCamera(false);
+      const cam = this.#hiddenCam;
+      if (!cam) return;
+      void backgroundCamera(false, true).catch(() => {});
+      // The camera track again: Chromium resumes it once we're on screen. If it ended meanwhile,
+      // LiveKit opens the camera again (and puts it on the sender itself).
+      try {
+        if (track && track.mediaStreamTrack.readyState === "live") await cam.sender.replaceTrack(track.mediaStreamTrack);
+        else if (track) await track.restartTrack({ facingMode: this.facing, resolution: { width: 1280, height: 720 } });
+      } catch (e) {
+        console.warn("camera back", e);
+        await lk.localParticipant.setCameraEnabled(false).catch(() => {});
+        if (this.camOn) await lk.localParticipant.setCameraEnabled(true, { facingMode: this.facing }).catch((err) => this.#fail("camera", err));
+      }
+      this.#endHiddenCam();
+      this.#sync();
+    }
+  }
+
+  #endHiddenCam() {
+    const cam = this.#hiddenCam;
+    if (!cam) return;
+    this.#hiddenCam = null;
+    cam.port.onmessage = null;
+    cam.port.close();
+    void cam.writer.close().catch(() => {});
+    cam.gen.stop();
+    void backgroundCamera(false, true).catch(() => {});
+  }
+
   async #countCameras() {
     const devices = await navigator.mediaDevices?.enumerateDevices().catch(() => []);
     this.cameraCount = (devices ?? []).filter((d) => d.kind === "videoinput").length;
@@ -1255,18 +1467,358 @@ class CallStore {
     this.#sync();
   }
 
+  /** Our own shared screen shown in the call (off by default: seeing it twice is useless). */
+  showMyScreen = $state(false);
+  /** Sharing asked, the desktop's picker still open (nothing is sent yet). */
+  screenPending = $state(false);
+  /** Picked (Windows app capture), waiting for the first picture and the server. */
+  screenStarting = $state(false);
+  /** Linux: the sound going with our shared screen, and the apps playing (null = none). */
+  screenSound = $state<NativeScreenSound | null>(null);
+  async refreshScreenSound() {
+    if (this.#win) return this.#showWinSound();
+    if (!this.#nativeIn || !this.screenOn) return void (this.screenSound = null);
+    this.screenSound = await nativeCallScreenSound().catch(() => null);
+    // A window share starts silent (GNOME doesn't say which app it is): in its first seconds,
+    // and until a choice is made by hand, take the app picked last time if it's playing, else
+    // the only app playing.
+    const sound = this.screenSound;
+    if (sound && sound.choice.kind === "none" && Date.now() < this.#soundAutoUntil) {
+      const app = sound.apps.find((a) => a.id === this.prefs.screenApp) ?? (sound.apps.length === 1 ? sound.apps[0] : null);
+      if (app) {
+        this.#soundAutoUntil = 0;
+        await this.setScreenSound({ kind: "app", app: app.id }, false);
+      }
+    }
+  }
+  /** Until when a window share may still pick its app's sound by itself (0 = not any more). */
+  #soundAutoUntil = 0;
+  async setScreenSound(choice: SoundChoice, byHand = true) {
+    if (byHand) {
+      this.#soundAutoUntil = 0;
+      if (choice.kind === "app" && !this.#win) {
+        this.prefs = { ...this.prefs, screenApp: choice.app };
+        this.#savePrefs();
+      }
+    }
+    if (this.#win) {
+      this.#winSound = choice.kind;
+      this.#showWinSound();
+      return void (await winScreenSound(choice.kind).catch((e) => console.warn("screen sound", e)));
+    }
+    if (this.screenSound) this.screenSound = { ...this.screenSound, choice };
+    await nativeCallSetScreenSound(choice).catch((e) => console.warn("screen sound", e));
+  }
+
+  /** Others' shares we don't watch (not received at all) / don't hear, by LiveKit identity;
+   * forgotten when that share ends. */
+  unwatched = $state(new Set<string>());
+  screenSoundOff = $state(new Set<string>());
+  /** Not watching a share silences it too; watching again brings its sound back. */
+  watchScreen(identity: string, watch: boolean) {
+    const next = new Set(this.unwatched);
+    const sound = new Set(this.screenSoundOff);
+    if (watch) next.delete(identity), sound.delete(identity);
+    else next.add(identity), sound.add(identity);
+    this.unwatched = next;
+    this.screenSoundOff = sound;
+    this.#applyScreen(identity);
+  }
+  /** How loud someone's screen sound is for us (slider position 0–1; forgotten with the share). */
+  screenVolumes = $state<Record<string, number>>({});
+  screenVolumeOf(identity: string) {
+    return this.screenVolumes[identity] ?? 1;
+  }
+  setScreenVolume(identity: string, volume: number) {
+    this.screenVolumes = { ...this.screenVolumes, [identity]: volume };
+    // Moving the slider up un-mutes; down to 0 mutes.
+    if (volume < 0.01 !== this.screenSoundOff.has(identity)) return this.setScreenSoundOff(identity, volume < 0.01);
+    this.#applyScreen(identity);
+  }
+  setScreenSoundOff(identity: string, off: boolean) {
+    if (!off && this.screenVolumeOf(identity) < 0.01) this.screenVolumes = { ...this.screenVolumes, [identity]: 1 };
+    const next = new Set(this.screenSoundOff);
+    if (off) next.add(identity);
+    else next.delete(identity);
+    this.screenSoundOff = next;
+    this.#applyScreen(identity);
+  }
+  #applyScreen(identity: string) {
+    const watch = !this.unwatched.has(identity);
+    const sound = !this.screenSoundOff.has(identity);
+    const volume = loudness(this.screenVolumeOf(identity));
+    if (this.#nativeIn) return void nativeCallWatchScreen(identity, watch, sound, volume).catch((e) => console.warn("watch screen", e));
+    const p = this.#lk?.remoteParticipants.get(identity);
+    if (!p) return;
+    p.setVolume(volume, Track.Source.ScreenShareAudio);
+    p.getTrackPublication(Track.Source.ScreenShare)?.setSubscribed(watch);
+    p.getTrackPublication(Track.Source.ScreenShareAudio)?.setSubscribed(sound);
+    this.#sync();
+  }
+  setShowMyScreen(on: boolean) {
+    this.showMyScreen = on;
+    if (this.#nativeIn) void nativeCallScreenPreview(on).catch(() => {});
+  }
+
+  /** What a new share starts with (Settings → Voice & video). */
+  setScreenDefault(choice: ScreenQuality | "last") {
+    this.prefs = { ...this.prefs, screenDefault: choice };
+    this.#savePrefs();
+  }
+
+  /** The codec setting as this engine can use it: no AV1 on Linux's engine (no backup copy). */
+  #codec(): ScreenCodec {
+    return this.native && this.prefs.screenCodec === "av1" ? "auto" : this.prefs.screenCodec;
+  }
+
+  /** A quality's settings with the bitrate this device's data and codec choices give. */
+  #screenQ(quality: ScreenQuality) {
+    const q = SCREEN_QUALITY[quality] ?? SCREEN_QUALITY.balanced;
+    const factor = (DATA_FACTOR[this.prefs.screenData] ?? 1) * CODEC_FACTOR(this.#codec());
+    return { ...q, maxBitrate: Math.round(q.maxBitrate * factor) };
+  }
+
+  /** The codec the webview publishes a screen with (AV1 keeps VP8 as backup for viewers that
+   * can't decode it); Auto = H.264 in the Windows app (the graphics card encodes it there). */
+  #screenCodecOptions(): { videoCodec: "av1" | "h264" | "vp8"; backupCodec?: { codec: "vp8" } | false } {
+    const c = this.prefs.screenCodec;
+    if (c === "av1") return { videoCodec: "av1", backupCodec: { codec: "vp8" } };
+    if (c === "h264" || (c === "auto" && isWindows)) return { videoCodec: "h264", backupCodec: false };
+    return { videoCodec: "vp8", backupCodec: false };
+  }
+
+  setScreenEncoding(change: Partial<Pick<CallPrefs, "screenCodec" | "screenData">>) {
+    this.prefs = { ...this.prefs, ...change };
+    this.#savePrefs();
+  }
+
+  /** What our share sends right now (shown on its card while sharing). */
+  screenStats = $state<ScreenStats | null>(null);
+  #statsPolling = false;
+  async #pollScreenStats() {
+    if (this.#statsPolling || !this.screenOn) return;
+    this.#statsPolling = true;
+    while (this.screenOn) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (!this.screenOn) break;
+      this.screenStats = await this.#readScreenStats().catch(() => null);
+    }
+    this.screenStats = null;
+    this.#statsPolling = false;
+  }
+  async #readScreenStats(): Promise<ScreenStats | null> {
+    if (this.#nativeIn) return nativeCallScreenStats();
+    const pub = this.#lk?.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+    const sender = (pub?.videoTrack as LocalVideoTrack | undefined)?.sender;
+    if (!sender) return null;
+    let best: ScreenStats | null = null;
+    let codecs = new Map<string, string>();
+    const report = await sender.getStats();
+    report.forEach((r) => r.type === "codec" && codecs.set(r.id, String(r.mimeType ?? "").replace("video/", "")));
+    report.forEach((r) => {
+      if (r.type !== "outbound-rtp" || (best && (r.frameWidth ?? 0) < best.width)) return;
+      const codec = codecs.get(r.codecId) ?? "";
+      best = {
+        encoder: [codec, r.encoderImplementation, r.powerEfficientEncoder ? "GPU" : ""].filter(Boolean).join(" · "),
+        fps: r.framesPerSecond ?? 0,
+        width: r.frameWidth ?? 0,
+        height: r.frameHeight ?? 0,
+        limit: r.qualityLimitationReason ?? "none",
+        mbps: (r.targetBitrate ?? 0) / 1e6,
+      };
+    });
+    codecs = new Map();
+    return best;
+  }
+
+  /** The quality of the share going on (remembered as the last used): changed live. */
+  async setScreenQuality(quality: ScreenQuality) {
+    this.prefs = { ...this.prefs, screenQuality: quality };
+    this.#savePrefs();
+    if (!this.screenOn) return;
+    const q = this.#screenQ(quality);
+    if (this.#win) void winScreenQuality(q).catch((e) => console.warn("screen quality", e));
+    if (this.#nativeIn) return void (await nativeCallScreenQuality(q).catch((e) => this.#fail("screen sharing", e)));
+    const track = this.#lk?.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.videoTrack as LocalVideoTrack | undefined;
+    if (!track) return;
+    const fluid = q.fluid;
+    const media = track.mediaStreamTrack;
+    media.contentHint = fluid ? "motion" : "detail";
+    await media.applyConstraints({ width: { max: q.width }, height: { max: q.height }, frameRate: { max: q.fps } }).catch((e) => console.warn("screen constraints", e));
+    const sender = track.sender;
+    if (!sender) return;
+    const params = sender.getParameters();
+    for (const enc of params.encodings) {
+      // The backup layer (shrunk) gets a third of the bitrate, like when it was published.
+      const backup = (enc.scaleResolutionDownBy ?? 1) > 1;
+      enc.maxFramerate = q.fps;
+      enc.maxBitrate = backup ? Math.round(Math.max(300_000, q.maxBitrate / 3)) : q.maxBitrate;
+    }
+    params.degradationPreference = fluid ? "maintain-framerate" : "maintain-resolution";
+    await sender.setParameters(params).catch((e) => console.warn("screen encoding", e));
+  }
+
+  /** Start sharing (the default quality from the settings) or stop. */
   async toggleScreen() {
     this.error = null;
+    if (!this.screenOn && this.prefs.screenDefault !== "last") this.prefs = { ...this.prefs, screenQuality: this.prefs.screenDefault };
+    const q = this.#screenQ(this.prefs.screenQuality);
     if (this.#nativeIn) {
-      // The desktop asks which screen or window (Wayland: the portal dialog).
+      // The desktop asks which screen or window (Wayland: the portal dialog); nothing is sent
+      // before something is chosen. Closing the picker = "cancelled", not an error.
       this.screenOn = !this.screenOn;
-      return void (await nativeCallSetScreen(this.screenOn).catch((e) => this.#fail("screen sharing", e)));
+      this.screenSound = null;
+      if (!this.screenOn) {
+        this.screenPending = false;
+        return void (await nativeCallSetScreen(false).catch((e) => this.#fail("screen sharing", e)));
+      }
+      void nativeCallScreenPreview(this.showMyScreen).catch(() => {});
+      this.screenPending = true;
+      try {
+        // Published once with room for the most demanding choice (60 fps 1080p); the capture's
+        // rate and size follow the chosen quality, live.
+        await nativeCallSetScreen(true, { ...q, maxBitrate: this.#screenQ("speed").maxBitrate }, this.#codec());
+        this.#soundAutoUntil = Date.now() + 15_000;
+        void this.#pollScreenStats();
+        void this.refreshScreenSound();
+      } catch (e) {
+        if (String(e).includes("cancelled")) this.screenOn = false;
+        else this.#fail("screen sharing", e);
+      } finally {
+        this.screenPending = false;
+      }
+      return;
     }
     if (!this.#lk) return;
+    // Windows app: our own picker and capture, which follows an app across its windows.
+    if (isWindows && winShareSupported()) return this.screenOn ? this.#stopWinShare() : this.#startWinShare(q);
     this.screenOn = !this.screenOn;
+    const fluid = SCREEN_QUALITY[this.prefs.screenQuality]?.fluid ?? true;
     await this.#lk.localParticipant
-      .setScreenShareEnabled(this.screenOn, { audio: true })
+      .setScreenShareEnabled(
+        this.screenOn,
+        // "motion": the browser keeps the frame rate and lowers detail when it must (games,
+        // videos); "detail" keeps text sharp and drops frames instead.
+        {
+          // The shared sound never includes this app's own playback (the others' voices):
+          // `restrictOwnAudio` (Chromium); browsers that don't know it ignore it.
+          audio: { restrictOwnAudio: true, echoCancellation: false, noiseSuppression: false, autoGainControl: false } as AudioCaptureOptions,
+          resolution: { width: q.width, height: q.height, frameRate: q.fps },
+          contentHint: fluid ? "motion" : "detail",
+        },
+        {
+          screenShareEncoding: { maxBitrate: q.maxBitrate, maxFramerate: q.fps },
+          // The backup layer at the same frame rate (LiveKit's default runs it at 3 fps).
+          screenShareSimulcastLayers: this.#VideoPreset
+            ? [new this.#VideoPreset(q.width / 2, q.height / 2, Math.round(Math.max(300_000, q.maxBitrate / 3)), q.fps)]
+            : undefined,
+          degradationPreference: fluid ? "maintain-framerate" : "maintain-resolution",
+          ...this.#screenCodecOptions(),
+        },
+      )
       .catch((e) => this.#fail("screen sharing", e));
+    this.#sync();
+  }
+
+  // ── Windows: app-side screen capture (stores/winShare.ts) ──
+  /** Our screen/window picker while open. */
+  screenPicker = $state<{ sources: WinSource[]; pick: (s: WinSource | null) => void } | null>(null);
+  /** What the share is doing ("Sharing League of Legends", "Waiting for … to come back"). */
+  screenNote = $state<string | null>(null);
+  #win: WinShare | null = null;
+  #winTracks: LocalTrack[] = [];
+  #winSound: WinSound = "all";
+  #winApp = "";
+
+  async refreshScreenSources() {
+    if (!this.screenPicker) return;
+    const sources = await winScreenSources().catch(() => null);
+    if (sources && this.screenPicker) this.screenPicker = { ...this.screenPicker, sources };
+  }
+
+  /** The card's sound menu: everything but AlwyChat, nothing, or the shared app. */
+  #showWinSound() {
+    const choice: SoundChoice = this.#winSound === "app" ? { kind: "app", app: "shared" } : { kind: this.#winSound };
+    this.screenSound = { choice, apps: this.#winApp ? [{ id: "shared", name: this.#winApp }] : [] };
+  }
+
+  async #startWinShare(q: (typeof SCREEN_QUALITY)[ScreenQuality]) {
+    const sources = await winScreenSources().catch((e) => (this.#fail("screen sharing", e), null));
+    if (!sources) return;
+    const source = await new Promise<WinSource | null>((pick) => (this.screenPicker = { sources, pick }));
+    this.screenPicker = null;
+    const lk = this.#lk;
+    if (!source || !lk) return;
+    // A window carries its own app's sound; a whole screen every app's but ours.
+    this.#winSound = source.kind === "window" ? "app" : "all";
+    this.#winApp = source.app;
+    const share = new WinShare();
+    this.#win = share;
+    this.screenOn = true;
+    this.screenStarting = true;
+    this.#showWinSound();
+    try {
+      await share.start(source.id, q, this.#winSound, (e) => this.#winEvent(share, e));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([share.firstFrame, new Promise((_, fail) => (timer = setTimeout(() => fail(new Error("no picture came")), 10_000)))]).finally(() =>
+        clearTimeout(timer),
+      );
+      if (this.#win !== share) return;
+      const fluid = SCREEN_QUALITY[this.prefs.screenQuality]?.fluid ?? true;
+      share.video.contentHint = fluid ? "motion" : "detail";
+      const encoding = { maxBitrate: q.maxBitrate, maxFramerate: q.fps };
+      const video = await lk.localParticipant.publishTrack(share.video, {
+        source: Track.Source.ScreenShare,
+        name: "screen",
+        videoEncoding: encoding,
+        screenShareEncoding: encoding,
+        screenShareSimulcastLayers: this.#VideoPreset ? [new this.#VideoPreset(q.width / 2, q.height / 2, Math.round(Math.max(300_000, q.maxBitrate / 3)), q.fps)] : undefined,
+        degradationPreference: fluid ? "maintain-framerate" : "maintain-resolution",
+        ...this.#screenCodecOptions(),
+      });
+      const audio = await lk.localParticipant.publishTrack(share.audio, {
+        source: Track.Source.ScreenShareAudio,
+        name: "screen-audio",
+        dtx: false,
+        red: false,
+        audioPreset: { maxBitrate: 128_000 },
+      });
+      this.#winTracks = [video.track, audio.track].filter((t): t is LocalTrack => !!t);
+    } catch (e) {
+      await this.#stopWinShare();
+      this.#fail("screen sharing", e);
+    } finally {
+      this.screenStarting = false;
+      this.#sync();
+    }
+  }
+
+  #winEvent(share: WinShare, e: WinShareEvent) {
+    if (this.#win !== share) return;
+    if (e.kind === "source") {
+      this.#winApp = e.app;
+      this.screenNote = e.app ? tr("Sharing {app}", { app: e.app }) : null;
+      this.#showWinSound();
+    } else if (e.kind === "waiting") {
+      this.screenNote = tr("Waiting for {app} to come back…", { app: this.#winApp });
+    } else if (e.kind === "ended") {
+      void this.#stopWinShare();
+      this.#showError(tr("Screen sharing stopped: {reason}", { reason: e.reason }));
+    }
+  }
+
+  async #stopWinShare() {
+    const share = this.#win;
+    this.#win = null;
+    this.screenOn = false;
+    this.screenPending = false;
+    this.screenStarting = false;
+    this.screenSound = null;
+    this.screenNote = null;
+    const lk = this.#lk;
+    for (const t of this.#winTracks) await lk?.localParticipant.unpublishTrack(t, true).catch(() => {});
+    this.#winTracks = [];
+    await share?.stop();
     this.#sync();
   }
 
@@ -1403,6 +1955,7 @@ class CallStore {
       screen: screen?.track && !screen.isMuted ? screen.track : null,
       cameraFrames: null,
       screenFrames: null,
+      sharing: !!screen && !screen.isMuted,
       lost: !isMe && (p.connectionQuality as string) === "lost",
     };
   }
@@ -1422,12 +1975,14 @@ class CallStore {
       screen: null,
       cameraFrames: m.camera,
       screenFrames: m.screen,
+      sharing: m.sharing ?? !!m.screen,
       lost: !m.is_local && m.lost,
     };
   }
 
   #sync() {
     this.#syncMembers();
+    if (this.screenOn) void this.#pollScreenStats();
     if (this.status === "connected" && !this.calling) this.#startClock();
   }
 
@@ -1461,7 +2016,13 @@ class CallStore {
     if (this.#present === null) return;
     const others = this.tiles.filter((t) => !t.isMe);
     const now = new Set(others.map((t) => t.id));
-    const sharing = new Set(others.filter((t) => t.screen || t.screenFrames).map((t) => t.id));
+    const sharing = new Set(others.filter((t) => t.sharing).map((t) => t.id));
+    // A share that ended takes our "not watching" / "no sound" choice with it.
+    const gone = (set: Set<string>) => [...set].filter((id) => !sharing.has(id));
+    if (gone(this.unwatched).length) this.unwatched = new Set([...this.unwatched].filter((id) => sharing.has(id)));
+    if (gone(this.screenSoundOff).length) this.screenSoundOff = new Set([...this.screenSoundOff].filter((id) => sharing.has(id)));
+    if (Object.keys(this.screenVolumes).some((id) => !sharing.has(id)))
+      this.screenVolumes = Object.fromEntries(Object.entries(this.screenVolumes).filter(([id]) => sharing.has(id)));
     const joined = [...now].some((id) => !this.#present!.has(id));
     const left = [...this.#present].some((id) => !now.has(id));
     const shared = [...sharing].some((id) => !this.#sharing.has(id));

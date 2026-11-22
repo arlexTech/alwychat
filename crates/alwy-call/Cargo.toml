@@ -19,6 +19,8 @@ tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 # Camera (Linux).
 v4l = "0.14"
+# Screen share sound (Linux): other apps' audio through PulseAudio / pipewire-pulse.
+libpulse-binding = "2"
 
 [lints]
 workspace = true

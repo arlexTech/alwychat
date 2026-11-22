@@ -97,6 +97,8 @@ pub struct MessageEntry {
     pub reply_to: Option<ReplyPreview>,
     pub reactions: Vec<Reaction>,
     pub send_state: Option<SendState>,
+    /// While a photo/video/file is going up: how much of it the server has (0–1).
+    pub upload_progress: Option<f32>,
     /// Not sent because these people, verified before, reset their encryption since: sending
     /// anyway accepts that (`send_despite_identity_changes`).
     pub identity_changed: Vec<String>,
@@ -733,20 +735,27 @@ impl crate::Core {
         event_ids: &[String],
         target_room_id: &str,
     ) -> Result<usize> {
-        let timeline = self.timeline(room_id)?;
+        // Shared media and search results forward messages the open timeline may not have
+        // loaded (or from a chat that isn't open): those are fetched.
+        let timeline = self.timeline(room_id).ok();
+        let source = self.room(room_id)?;
         let target = self.room(target_room_id)?;
         let mut sent = 0;
         for id in event_ids {
             let event_id = OwnedEventId::try_from(id.as_str()).map_err(|_| Error::UnknownEvent)?;
-            let Some(item) = timeline.item_by_event_id(&event_id).await else {
+            let mut msgtype = None;
+            if let Some(timeline) = &timeline
+                && let Some(item) = timeline.item_by_event_id(&event_id).await
+            {
+                msgtype = item.content().as_message().map(|m| m.msgtype().clone());
+            }
+            if msgtype.is_none() {
+                msgtype = fetched_msgtype(&source, &event_id).await;
+            }
+            let Some(msgtype) = msgtype else {
                 continue;
             };
-            let Some(message) = item.content().as_message() else {
-                continue;
-            };
-            target
-                .send(RoomMessageEventContent::new(message.msgtype().clone()))
-                .await?;
+            target.send(RoomMessageEventContent::new(msgtype)).await?;
             sent += 1;
         }
         Ok(sent)
@@ -1103,7 +1112,17 @@ impl Mapper {
                     }
                     MsgLikeKind::Poll(p) => {
                         let own = self.timeline.room().own_user_id().to_string();
-                        poll_content(p.results(), &own, event.sender().as_str() == own)
+                        poll_content(p.results(), &own, event.sender().as_str() == own, |u| {
+                            match OwnedUserId::try_from(u) {
+                                Ok(user) => self.reader(&user, None),
+                                Err(_) => Reader {
+                                    user_id: u.to_owned(),
+                                    name: u.to_owned(),
+                                    avatar: None,
+                                    ts: None,
+                                },
+                            }
+                        })
                     }
                     MsgLikeKind::Redacted => MessageContent::Redacted,
                     MsgLikeKind::UnableToDecrypt(e) => {
@@ -1168,8 +1187,16 @@ impl Mapper {
                     }
                 });
                 let mut identity_changed = Vec::new();
+                let mut upload_progress = None;
                 let send_state = match event.send_state() {
-                    Some(EventSendState::NotSentYet { .. }) => Some(SendState::Sending),
+                    Some(EventSendState::NotSentYet { progress }) => {
+                        upload_progress = progress.as_ref().and_then(|p| {
+                            let p = p.progress;
+                            (p.total > 0)
+                                .then(|| (p.current as f64 / p.total as f64).min(1.0) as f32)
+                        });
+                        Some(SendState::Sending)
+                    }
                     Some(EventSendState::SendingFailed { error, .. }) => {
                         warn!("message not sent: {error}");
                         if let matrix_sdk::QueueWedgeError::IdentityViolations { users } =
@@ -1200,6 +1227,7 @@ impl Mapper {
                     reply_to,
                     reactions,
                     send_state,
+                    upload_progress,
                     identity_changed,
                     seen_by: event
                         .read_receipts()
@@ -1302,12 +1330,23 @@ impl Mapper {
     /// Fetch profiles of read-receipt holders we haven't seen yet.
     async fn load_readers<'a>(&mut self, items: impl Iterator<Item = &'a Arc<TimelineItem>>) {
         let room = self.timeline.room().clone();
-        let missing: Vec<OwnedUserId> = items
-            .filter_map(|i| i.as_event())
-            .flat_map(|e| e.read_receipts().keys())
-            .filter(|u| !self.readers.contains_key(*u))
-            .cloned()
-            .collect();
+        let mut missing: Vec<OwnedUserId> = Vec::new();
+        for event in items.filter_map(|i| i.as_event()) {
+            missing.extend(event.read_receipts().keys().cloned());
+            // Poll voters are listed under each answer.
+            if let Some(MsgLikeKind::Poll(p)) = event.content().as_msglike().map(|m| &m.kind) {
+                let votes = p.results().votes;
+                missing.extend(
+                    votes
+                        .values()
+                        .flatten()
+                        .filter_map(|u| OwnedUserId::try_from(u.as_str()).ok()),
+                );
+            }
+        }
+        missing.retain(|u| !self.readers.contains_key(u));
+        missing.sort();
+        missing.dedup();
         for user in missing {
             let reader = match room.get_member_no_sync(&user).await {
                 Ok(Some(m)) => Reader {
@@ -1523,13 +1562,18 @@ pub struct PollAnswer {
     pub text: String,
     pub votes: u32,
     pub mine: bool,
+    /// Who chose it: only once results are visible (open poll, or ended).
+    pub voters: Vec<Reader>,
 }
 
 fn poll_content(
     results: matrix_sdk_ui::timeline::PollResult,
     own: &str,
     is_mine: bool,
+    person: impl Fn(&str) -> Reader,
 ) -> MessageContent {
+    let disclosed = results.kind == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed;
+    let visible = disclosed || results.end_time.is_some();
     let voters: std::collections::HashSet<&String> = results.votes.values().flatten().collect();
     let answers = results
         .answers
@@ -1541,6 +1585,10 @@ fn poll_content(
                 text: a.text.clone(),
                 votes: votes.map_or(0, |v| v.len() as u32),
                 mine: votes.is_some_and(|v| v.iter().any(|u| u == own)),
+                voters: match votes {
+                    Some(v) if visible => v.iter().map(|u| person(u)).collect(),
+                    _ => Vec::new(),
+                },
             }
         })
         .collect();
@@ -1549,7 +1597,7 @@ fn poll_content(
         answers,
         voters: voters.len() as u32,
         max_selections: results.max_selections as u32,
-        disclosed: results.kind == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed,
+        disclosed,
         ended: results.end_time.is_some(),
         is_mine,
     }
@@ -1733,5 +1781,22 @@ fn utd_reason(message: &matrix_sdk_ui::timeline::EncryptedMessage) -> &'static s
         UtdCause::HistoricalMessageAndBackupIsDisabled
         | UtdCause::HistoricalMessageAndDeviceIsUnverified => "before_device",
         _ => "unknown",
+    }
+}
+
+/// A message's content, fetched from the store or the server (decrypted).
+async fn fetched_msgtype(
+    room: &matrix_sdk::Room,
+    event_id: &OwnedEventId,
+) -> Option<matrix_sdk::ruma::events::room::message::MessageType> {
+    use matrix_sdk::ruma::events::{
+        AnySyncMessageLikeEvent, AnySyncTimelineEvent, SyncMessageLikeEvent,
+    };
+    let event = room.load_or_fetch_event(event_id, None).await.ok()?;
+    match event.raw().deserialize().ok()? {
+        AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(e),
+        )) => Some(e.content.msgtype),
+        _ => None,
     }
 }

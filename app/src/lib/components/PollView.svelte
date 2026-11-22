@@ -2,6 +2,8 @@
   import { tr, trn } from "$lib/i18n/index.svelte";
   import Check from "@lucide/svelte/icons/check";
   import { endPoll, votePoll, type MessageContent } from "$lib/backend";
+  import Avatar from "./Avatar.svelte";
+  import ReadersSheet from "./ReadersSheet.svelte";
 
   type Poll = Extract<MessageContent, { kind: "poll" }>;
   let { roomId, pollId, poll }: { roomId: string; pollId: string; poll: Poll } = $props();
@@ -16,6 +18,9 @@
   const total = $derived(poll.answers.reduce((n, a) => n + a.votes, 0));
   const winning = $derived(Math.max(0, ...poll.answers.map((a) => a.votes)));
   const pending = $derived(!pollId.startsWith("$"));
+  /** Everyone who voted (once), for the sheet's count. */
+  const everyone = $derived([...new Map(poll.answers.flatMap((a) => a.voters).map((r) => [r.user_id, r])).values()]);
+  let votesOpen = $state(false);
 
   async function choose(id: string) {
     if (poll.ended || pending) return;
@@ -65,18 +70,35 @@
         {#if showResults}<span class="fill" style:width="{share * 100}%"></span>{/if}
         <span class="mark">{#if mine.includes(a.id)}<Check size={14} strokeWidth={3} />{/if}</span>
         <span class="label">{a.text}</span>
+        {#if showResults && a.voters.length}
+          <span class="faces">
+            {#each a.voters.slice(0, 3) as v (v.user_id)}<Avatar name={v.name} mxc={v.avatar} size={18} />{/each}
+          </span>
+        {/if}
         {#if showResults}<span class="count">{a.votes}</span>{/if}
       </button>
     {/each}
   </div>
   <div class="footer">
-    <small>{footer()}</small>
+    {#if everyone.length}
+      <button class="see" onclick={() => (votesOpen = true)}>{footer()} · {tr("See votes")}</button>
+    {:else}
+      <small>{footer()}</small>
+    {/if}
     {#if poll.is_mine && !poll.ended && !pending}
       <button class="end" onclick={end}>{tr("End poll")}</button>
     {/if}
   </div>
   {#if error}<small class="error">{error}</small>{/if}
 </div>
+{#if votesOpen}
+  <ReadersSheet
+    title={tr("Votes")}
+    readers={everyone}
+    sections={poll.answers.filter((a) => a.voters.length).map((a) => ({ label: a.text, readers: a.voters }))}
+    onClose={() => (votesOpen = false)}
+  />
+{/if}
 
 <style>
   .poll {
@@ -157,6 +179,27 @@
   }
   .footer small {
     opacity: 0.75;
+  }
+  .faces {
+    position: relative;
+    display: flex;
+    flex: none;
+  }
+  .faces :global(> *:not(:first-child)) {
+    margin-left: -6px;
+  }
+  .see {
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font-size: 0.8rem;
+    opacity: 0.8;
+    text-align: left;
+    cursor: pointer;
+  }
+  .see:hover {
+    text-decoration: underline;
   }
   .end {
     padding: 4px 10px;

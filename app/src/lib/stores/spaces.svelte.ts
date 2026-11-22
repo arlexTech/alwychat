@@ -248,8 +248,10 @@ class Spaces {
   }
 }
 
+/** Counts in badges (tabs, folders, spaces): muted chats never, "mentions only" chats only
+ * for a mention. */
 export const isUnread = (r: RoomSummary) =>
-  !r.is_muted && (r.unread_messages > 0 || r.marked_unread || r.is_invite);
+  !r.is_muted && ((r.mentions_only ? r.unread_mentions > 0 : r.unread_messages > 0) || r.marked_unread || r.is_invite);
 
 /** Whether a chat is in a folder. Archived chats only when picked by hand. */
 export function inFolder(folder: Folder, room: RoomSummary): boolean {

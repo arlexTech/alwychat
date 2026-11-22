@@ -94,7 +94,14 @@ jobs:
           # Native calls (crates/alwy-call): LiveKit's prebuilt WebRTC needs clang 21+ (the
           # runner has 14) and V4L2 headers for the camera.
           wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 21
-          sudo apt-get install -y libv4l-dev
+          sudo apt-get install -y libv4l-dev libpulse-dev
+          # NVIDIA graphics cards encode screen shares (NVENC): webrtc-sys only needs cuda.h to
+          # build it in, and loads NVIDIA's libraries at run time (PCs without them still work).
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cuda-cudart-dev-12-9
+          echo "CUDA_HOME=/usr/local/cuda-12.9/targets/x86_64-linux" >> "$GITHUB_ENV"
           echo "CC=clang-21" >> "$GITHUB_ENV"
           echo "CXX=clang++-21" >> "$GITHUB_ENV"
 

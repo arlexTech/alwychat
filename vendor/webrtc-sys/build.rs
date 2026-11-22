@@ -278,9 +278,15 @@ fn main() {
             }
 
             if x86 || arm {
+                // AlwyChat: also /opt/cuda (Arch's cuda package).
+                println!("cargo:rerun-if-env-changed=CUDA_HOME");
                 let cuda_home = PathBuf::from(match env::var("CUDA_HOME") {
                     Ok(p) => p,
-                    Err(_) => "/usr/local/cuda".to_owned(),
+                    Err(_) => ["/usr/local/cuda", "/opt/cuda"]
+                        .into_iter()
+                        .find(|d| PathBuf::from(d).join("include/cuda.h").exists())
+                        .unwrap_or("/usr/local/cuda")
+                        .to_owned(),
                 });
                 let cuda_include_dir = cuda_home.join("include");
 

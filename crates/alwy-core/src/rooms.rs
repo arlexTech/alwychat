@@ -56,6 +56,8 @@ pub struct RoomSummary {
     /// Tagged low priority: shown under "Archived" (Element: "Low priority").
     pub is_archived: bool,
     pub is_muted: bool,
+    /// Notifies only for mentions and keywords: plain new messages don't count as unread badges.
+    pub mentions_only: bool,
     pub is_encrypted: bool,
     pub unread_messages: u64,
     pub unread_mentions: u64,
@@ -289,6 +291,8 @@ async fn summarize(room: &Room) -> RoomSummary {
             || room.cached_user_defined_notification_mode() == Some(RoomNotificationMode::Mute),
         ),
         is_encrypted: room.encryption_state().is_encrypted(),
+        mentions_only: room.cached_user_defined_notification_mode()
+            == Some(RoomNotificationMode::MentionsAndKeywordsOnly),
         unread_messages: room.num_unread_messages(),
         unread_mentions: room.num_unread_mentions(),
         marked_unread: crate::offline::waiting_flag(room.room_id().as_str(), "unread")

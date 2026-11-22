@@ -66,7 +66,7 @@
         {#if call.camOn}<Video size={19} />{:else}<VideoOff size={19} />{/if}
       </button>
       {#if call.canShareScreen}
-        <button class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-pressed={call.screenOn} aria-label={tr("Share screen")} title={tr("Share screen")}><MonitorUp size={19} /></button>
+        <button class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-pressed={call.screenOn} aria-label={call.screenOn ? tr("Stop sharing") : tr("Share screen")} title={call.screenOn ? tr("Stop sharing") : tr("Share screen")}><MonitorUp size={19} /></button>
       {/if}
       {#if canRing}
         <button onclick={() => ((call.ringPanel = true), (call.minimized = false))} aria-label={tr("Ring someone")} title={tr("Ring someone")}><PhoneCall size={19} /></button>

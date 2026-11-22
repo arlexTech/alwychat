@@ -61,6 +61,7 @@
     onForward,
     onSelect,
     onProfile,
+    onPersonMenu,
     onSeen,
     album = null,
     wide = false,
@@ -75,6 +76,8 @@
     onReact: (key: string) => void;
     /** Their photo or name tapped (groups): open their profile. */
     onProfile?: (userId: string) => void;
+    /** Right-click on the sender's photo or name. */
+    onPersonMenu?: (event: MouseEvent, userId: string, name: string, isOwn: boolean) => void;
     /** The read avatars under it were tapped: who read this message. */
     onSeen?: () => void;
     onReply: () => void;
@@ -248,6 +251,11 @@
   );
   const remote = $derived(msg.item_id.startsWith("$"));
   const canReact = $derived(!muted && remote);
+  /** While going up: 0–1 (photos/videos get a ring over them, other kinds a bar). */
+  const uploading = (m: MessageEntry) => (m.send_state === "sending" && m.upload_progress != null ? m.upload_progress : null);
+  const progress = $derived(uploading(msg));
+  /** An album's photos each upload on their own. */
+  const albumProgress = $derived(new Map((album ?? []).flatMap((m) => (m.content.kind === "image" && uploading(m) != null ? [[m.content.media, uploading(m)!] as const] : []))));
   const albumSize = $derived(album && album.length > 1 ? album.length : 0);
   const canSaveToGallery = $derived(albumSize > 0 || ((c.kind === "image" || c.kind === "video") && !muted));
   const hasMenu = $derived(
@@ -434,11 +442,22 @@
   const changedNames = $derived(msg.identity_changed.map((id) => id.slice(1).split(":")[0]).join(", "));
 </script>
 
+{#snippet uploadRing(p: number)}
+  <span class="up-ring" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p * 100)} aria-label={tr("Uploading {pct}%", { pct: Math.round(p * 100) })}>
+    <svg viewBox="0 0 44 44" aria-hidden="true">
+      <circle cx="22" cy="22" r="19" />
+      <circle class="done" cx="22" cy="22" r="19" style:stroke-dashoffset={119.38 * (1 - p)} />
+    </svg>
+    <small>{p >= 0.995 ? tr("Finishing…") : `${Math.round(p * 100)}%`}</small>
+  </span>
+{/snippet}
+
+
 <div class="row" class:own class:wide class:mine={msg.is_own} class:first class:last>
   {#if wide}
     <div class="avatar-slot">
       {#if first}
-        <button class="who" onclick={() => onProfile?.(msg.sender)} aria-label={tr("{name}'s profile", { name: msg.sender_name })}>
+        <button class="who" onclick={() => onProfile?.(msg.sender)} oncontextmenu={(e) => onPersonMenu?.(e, msg.sender, msg.sender_name, msg.is_own)} aria-label={tr("{name}'s profile", { name: msg.sender_name })}>
           <Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={36} />
         </button>
       {:else}
@@ -454,16 +473,16 @@
   <div class="stack">
     {#if wide && first}
       <div class="head">
-        <button class="who name" onclick={() => onProfile?.(msg.sender)}><strong>{msg.sender_name}</strong></button>
+        <button class="who name" onclick={() => onProfile?.(msg.sender)} oncontextmenu={(e) => onPersonMenu?.(e, msg.sender, msg.sender_name, msg.is_own)}><strong>{msg.sender_name}</strong></button>
         <time title={messageStamp(msg.timestamp)}>{messageStamp(msg.timestamp)}</time>
       </div>
     {:else if showSender && !msg.is_own && first}
-      <button class="who sender" onclick={() => onProfile?.(msg.sender)}>{msg.sender_name}</button>
+      <button class="who sender" onclick={() => onProfile?.(msg.sender)} oncontextmenu={(e) => onPersonMenu?.(e, msg.sender, msg.sender_name, msg.is_own)}>{msg.sender_name}</button>
     {/if}
 
     <div class="line">
       {#if !wide && showSender && !msg.is_own && last}
-        <button class="who side-avatar" onclick={() => onProfile?.(msg.sender)} aria-label={tr("{name}'s profile", { name: msg.sender_name })}>
+        <button class="who side-avatar" onclick={() => onProfile?.(msg.sender)} oncontextmenu={(e) => onPersonMenu?.(e, msg.sender, msg.sender_name, msg.is_own)} aria-label={tr("{name}'s profile", { name: msg.sender_name })}>
           <Avatar name={msg.sender_name} mxc={msg.sender_avatar} size={28} />
         </button>
       {/if}
@@ -506,6 +525,7 @@
             {#each albumMedia.slice(0, ALBUM_CELLS) as media, i (media)}
               <button class="cell" onclick={() => afterTap(() => onOpenMedia(i))} aria-label={tr("Open photo {value} of {length}", { value: i + 1, length: albumMedia.length })}>
                 <MediaImage src={eventMediaUrl(media, true)} blurhash={albumBlur.get(media)} lazy />
+                {#if albumProgress.has(media)}{@render uploadRing(albumProgress.get(media)!)}{/if}
                 {#if i === ALBUM_CELLS - 1 && albumMedia.length > ALBUM_CELLS}
                   <span class="album-more">+{albumMedia.length - ALBUM_CELLS}</span>
                 {/if}
@@ -547,7 +567,9 @@
                 onload={(w, h) => ((mediaLoaded = true), (natural = { w, h }))}
               />
             {/if}
-            {#if c.kind === "video"}
+            {#if progress != null}
+              {@render uploadRing(progress)}
+            {:else if c.kind === "video"}
               <span class="play">▶</span>
               {#if c.duration_ms}<span class="duration">{formatDuration(c.duration_ms)}</span>{/if}
             {/if}
@@ -584,12 +606,17 @@
           <PollView {roomId} pollId={msg.item_id} poll={c} />
         {:else if c.kind === "audio"}
           <VoicePlayer media={c.media} durationMs={c.duration_ms} waveform={c.waveform} own={msg.is_own} name={c.is_voice ? null : c.filename} />
+          {#if progress != null}<span class="up-bar audio"><span style:width="{Math.round(progress * 100)}%"></span></span>{/if}
         {:else if c.kind === "file"}
           <button class="file" onclick={() => afterTap(onSaveFile)} title={tr("Open or save")}>
             <span class="file-icon"><FileText size={26} /></span>
             <span class="file-meta">
               <strong>{c.filename}</strong>
-              <small>{tr("{value}Tap to open or save", { value: c.size != null ? `${formatSize(c.size)} · ` : "" })}</small>
+              <small>
+                {#if progress != null}{#if progress >= 0.995}{tr("Finishing…")}{:else}{tr("Uploading")}&#32;<span class="pct">{Math.round(progress * 100)}%</span>{/if}{c.size != null ? ` · ${formatSize(c.size)}` : ""}
+                {:else}{tr("{value}Tap to open or save", { value: c.size != null ? `${formatSize(c.size)} · ` : "" })}{/if}
+              </small>
+              {#if progress != null}<span class="up-bar" class:finishing={progress >= 0.995}><span style:width="{Math.round(progress * 100)}%"></span></span>{/if}
             </span>
           </button>
         {/if}
@@ -839,6 +866,81 @@
   }
   .bubble.sending {
     opacity: 0.6;
+  }
+  /* Going up: the picture itself carries the progress, no need to dim it. */
+  .bubble.sending:has(.up-ring),
+  .bubble.sending:has(.up-bar) {
+    opacity: 1;
+  }
+  .up-ring {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 4px;
+    background: rgb(0 0 0 / 0.38);
+    color: #fff;
+    pointer-events: none;
+  }
+  .up-ring svg {
+    width: 44px;
+    height: 44px;
+    padding: 4px;
+    border-radius: 50%;
+    background: rgb(0 0 0 / 0.45);
+    transform: rotate(-90deg);
+    box-sizing: content-box;
+  }
+  .up-ring circle {
+    fill: none;
+    stroke: rgb(255 255 255 / 0.25);
+    stroke-width: 3;
+  }
+  .up-ring circle.done {
+    stroke: #fff;
+    stroke-dasharray: 119.38;
+    stroke-linecap: round;
+  }
+  .up-ring small {
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 0.6);
+  }
+  /* Under the file's details (or the player), in the flow: never over the text. */
+  .up-bar {
+    display: block;
+    width: 100%;
+    min-width: 120px;
+    height: 4px;
+    margin-top: 6px;
+    border-radius: 2px;
+    background: color-mix(in srgb, currentColor 18%, transparent);
+    overflow: hidden;
+  }
+  .up-bar.finishing > span {
+    animation: up-pulse 1s ease-in-out infinite alternate;
+  }
+  @keyframes up-pulse {
+    to {
+      opacity: 0.45;
+    }
+  }
+  /* Exactly the number shown (no easing: it lagged behind the text). */
+  .up-bar > span {
+    display: block;
+    height: 100%;
+    background: currentColor;
+  }
+  .pct {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Wide enough for "Uploading 100% · 999.9 MB": the bar's line keeps its width as the
+   * number grows. */
+  .file-meta:has(.up-bar) {
+    min-width: 13.5rem;
   }
   .bubble.failed {
     outline: 1px solid var(--danger);

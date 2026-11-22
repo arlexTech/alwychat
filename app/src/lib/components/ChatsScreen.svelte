@@ -2,6 +2,13 @@
   import { coreTexts } from "$lib/coreText";
   import { tr, trc } from "$lib/i18n/index.svelte";
   import Settings from "@lucide/svelte/icons/settings";
+  import Smile from "@lucide/svelte/icons/smile";
+  import Bookmark from "@lucide/svelte/icons/bookmark";
+  import Headphones from "@lucide/svelte/icons/headphones";
+  import Copy from "@lucide/svelte/icons/copy";
+  import UserRound from "@lucide/svelte/icons/user-round";
+  import ContextMenu from "./ContextMenu.svelte";
+  import { contextMenu } from "$lib/stores/menu.svelte";
   import MessageCircle from "@lucide/svelte/icons/message-circle";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import { inFolder, isUnread, spaces } from "$lib/stores/spaces.svelte";
@@ -166,7 +173,7 @@
     if (newChatOpen) return onBack(() => (newChatOpen = false));
   });
   /** Right-click menu on a chat row. */
-  let rowMenu = $state<{ room: RoomSummary; x: number; y: number } | null>(null);
+  let rowMenu = $state<{ room: RoomSummary; x: number; y: number; settings?: () => void } | null>(null);
   /** "Mute for…" open for this chat. */
   let muting = $state<RoomSummary | null>(null);
   let actionError = $state<string | null>(null);
@@ -241,10 +248,35 @@
     spaces.setInFolder(folderId, roomId, inside).catch((e) => (actionError = String(e)));
   }
 
-  function openRowMenu(event: MouseEvent, room: RoomSummary) {
+  /** `settings`: opened from the chat's header, which adds "Chat settings" (and the person). */
+  function openRowMenu(event: MouseEvent, room: RoomSummary, settings?: () => void) {
     event.preventDefault();
-    rowMenu = { room, x: Math.min(event.clientX, innerWidth - 220), y: Math.min(event.clientY, innerHeight - 200 - 40 * spaces.prefs.folders.length) };
+    const extra = settings ? (room.is_dm && room.dm_user ? 3 : 1) : 0;
+    rowMenu = {
+      room,
+      settings,
+      x: Math.min(event.clientX, innerWidth - 220),
+      y: Math.max(8, Math.min(event.clientY, innerHeight - 200 - 40 * (spaces.prefs.folders.length + extra))),
+    };
   }
+
+  /** Right-click on our own photo (top left). */
+  function meMenu(event: MouseEvent) {
+    contextMenu.show(
+      event,
+      [
+        { label: tr("Set a status"), icon: Smile, run: () => ((settingsStart = "status"), (settingsOpen = true)) },
+        { label: tr("Saved messages"), icon: Bookmark, run: async () => showChat(await saved.open()) },
+        "-",
+        { label: tr("Settings"), icon: Settings, run: () => ((settingsStart = null), (settingsOpen = true)) },
+        { label: tr("Voice & video"), icon: Headphones, run: () => ((settingsStart = "voice"), (settingsOpen = true)) },
+        "-",
+        { label: tr("Copy my user ID"), icon: Copy, run: () => contextMenu.copy(account.user_id) },
+      ],
+      myName,
+    );
+  }
+  let settingsStart = $state<"status" | "voice" | null>(null);
 
   async function rowAction(
     action: (room: RoomSummary) => Promise<void>,
@@ -288,6 +320,8 @@
       showChat,
       () => ((tab = "spaces"), (selectedId = null), (newChatOpen = false)),
     );
+    nav.attachChatMenu(openRowMenu);
+    nav.attachMute((r) => (muting = r));
     encryption.start().catch((e) => console.warn("encryption status unavailable", e));
     updates.start();
     mutes.start();
@@ -346,6 +380,12 @@
   /** Open a chat from anywhere (a share, a notification, a profile's "Message"): pages that
    * would cover it close first (they're drawn above the chat). */
   function showChat(id: string) {
+    // From the Spaces tab, a chat that lives in Chats (a 1:1 just opened by "Message", saved
+    // messages…) switches to Chats; a chat of the space stays where it is.
+    if (tab === "spaces") {
+      const room = chatList.rooms.find((r) => r.id === id);
+      if (!room || spaces.inChats(room)) tab = "chats";
+    }
     selectedId = id;
     newChatOpen = settingsOpen = securityOpen = false;
     folderEdit = null;
@@ -382,7 +422,7 @@
 <div class="shell" class:has-selection={selected} class:call-side={call.sideChat} class:side-panel={sidePanels.open > 0}>
   <aside class="list-pane">
     <header data-tauri-drag-region="deep">
-      <button class="me" onclick={() => (settingsOpen = true)} aria-label={tr("Settings")} title={tr("Settings")}>
+      <button class="me" onclick={() => ((settingsStart = null), (settingsOpen = true))} oncontextmenu={meMenu} aria-label={tr("Settings")} title={tr("Settings")}>
         <Avatar name={myName} mxc={me.profile?.avatar ?? null} size={36} />
       </button>
       <h1>{tab === "chats" ? tr("Chats") : tr("Spaces")}</h1>
@@ -598,7 +638,7 @@
 {/if}
 
 {#if settingsOpen}
-  <SettingsPage userId={account.user_id} onClose={() => (settingsOpen = false)} {onSignOut} />
+  <SettingsPage userId={account.user_id} start={settingsStart} onClose={() => (settingsOpen = false)} {onSignOut} />
 {/if}
 
 {#if muting}
@@ -618,6 +658,16 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="menu-catcher" onclick={() => (rowMenu = null)} oncontextmenu={(e) => (e.preventDefault(), (rowMenu = null))}></div>
   <div class="row-menu" style:left="{rowMenu.x}px" style:top="{rowMenu.y}px" transition:fade={{ duration: 100 }}>
+    {#if rowMenu.settings}
+      {@const open = rowMenu.settings}
+      <button onclick={() => ((rowMenu = null), open())}><Settings size={16} />{tr("Chat settings")}</button>
+      {#if r.is_dm && r.dm_user}
+        {@const user = r.dm_user}
+        <button onclick={() => ((rowMenu = null), (call.profile = user))}><UserRound size={16} />{tr("Profile")}</button>
+        <button onclick={() => ((rowMenu = null), void contextMenu.copy(user).then((m) => contextMenu.flash(m)))}><Copy size={16} />{tr("Copy user ID")}</button>
+      {/if}
+      <hr />
+    {/if}
     <button onclick={() => rowAction((c) => setPinned(c.id, !c.is_favourite), (c) => ({ is_favourite: !c.is_favourite, is_archived: false }))}>
       {#if r.is_favourite}<PinOff size={16} />{tr("Unpin")}{:else}<Pin size={16} />{tr("Pin")}{/if}
     </button>
@@ -669,6 +719,7 @@
   />
 {/if}
 <IncomingCall />
+<ContextMenu />
 
 <style>
   /* Above every other page, whatever is open when the share arrives (pages stack in order). */
@@ -1165,6 +1216,12 @@
   }
   .row-menu button:hover {
     background: var(--surface-hover);
+  }
+  .row-menu hr {
+    width: 100%;
+    margin: 4px 0;
+    border: none;
+    border-top: 1px solid var(--border);
   }
   /* Tap anywhere else to close the open menu. */
 </style>

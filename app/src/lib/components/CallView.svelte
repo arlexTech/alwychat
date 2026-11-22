@@ -13,12 +13,14 @@
   import MessageSquare from "@lucide/svelte/icons/message-square";
   import VolumeX from "@lucide/svelte/icons/volume-x";
   import { fade, fly } from "svelte/transition";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import type { Track } from "livekit-client";
-  import { isAndroid, pipShape, type AudioRoute } from "$lib/backend";
+  import { fullScreen, isAndroid, isTauri, pipShape, type AudioRoute, type NativeScreenSound, type SoundChoice } from "$lib/backend";
+  import Gauge from "@lucide/svelte/icons/gauge";
+  import AppWindow from "@lucide/svelte/icons/app-window";
   import Volume2 from "@lucide/svelte/icons/volume-2";
   import SwitchCamera from "@lucide/svelte/icons/switch-camera";
-  import { call } from "$lib/stores/call.svelte";
+  import { call, SCREEN_CHOICES } from "$lib/stores/call.svelte";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
   import X from "@lucide/svelte/icons/x";
@@ -39,6 +41,7 @@
   import Avatar from "./Avatar.svelte";
   import { keyName } from "$lib/keys";
   import NativeVideo from "./NativeVideo.svelte";
+  import ScreenPicker from "./ScreenPicker.svelte";
 
   /** Show a LiveKit video track in a <video> element. */
   function video(el: HTMLVideoElement, track: Track) {
@@ -74,20 +77,26 @@
   const canRing = $derived(!!call.roomId && !call.isDm);
   type Tile = (typeof call.tiles)[number];
   type Spot = "screen" | "camera" | "person";
-  const hasScreen = (t: Tile) => !!(t.screen || t.screenFrames);
+  const hasScreen = (t: Tile) => !!(t.screen || t.screenFrames || t.sharing);
+  /** A share we see the picture of (not ours hidden, not one we stopped watching). */
+  const watched = (t: Tile) => (t.isMe ? call.showMyScreen && !call.screenPending && !call.screenStarting : !call.unwatched.has(t.id));
   const hasCamera = (t: Tile) => !!(t.camera || t.cameraFrames);
   /** What can be shown: each person (camera, else avatar) and, apart, each shared screen, so
    * someone sharing can have either their screen or their face in the big spot. */
   type Item = { key: string; tile: Tile; what: Spot };
   const personItem = (t: Tile): Item => ({ key: t.id, tile: t, what: hasCamera(t) ? "camera" : "person" });
   const items = $derived(
-    call.tiles.flatMap((t): Item[] => (hasScreen(t) ? [personItem(t), { key: `${t.id}:screen`, tile: t, what: "screen" }] : [personItem(t)])),
+    // Our own screen is a card with the share's controls (its picture only when asked for).
+    call.tiles.flatMap((t): Item[] =>
+      hasScreen(t) || (t.isMe && call.screenOn) ? [personItem(t), { key: `${t.id}:screen`, tile: t, what: "screen" }] : [personItem(t)],
+    ),
   );
   /** Clicked item key (Discord: click something to focus it); null = automatic. */
   let focus = $state<string | null>(null);
   /** The big spot: the focused item, or the first screen share. */
   const featured = $derived.by((): Item | null => {
-    return (focus ? items.find((i) => i.key === focus) : undefined) ?? items.find((i) => i.what === "screen") ?? null;
+    // Automatically: someone else's screen we watch (our own card stays in the grid).
+    return (focus ? items.find((i) => i.key === focus) : undefined) ?? items.find((i) => i.what === "screen" && !i.tile.isMe && watched(i.tile)) ?? null;
   });
 
   // ── Layout (Discord / Teams): others share the stage in a grid sized for the window and
@@ -101,6 +110,8 @@
   const waiting = $derived(call.waiting);
   const floatMe = $derived(!!me && (others.length > 0 || waiting.length > 0) && !featured);
   const gridTiles = $derived(floatMe ? others : call.tiles);
+  /** The grid without a big spot: people, then the screen cards (ours, ones not watched). */
+  const gridItems = $derived([...gridTiles.map(personItem), ...items.filter((i) => i.what === "screen")]);
   let stageW = $state(0);
   let stageH = $state(0);
   /** Width / height of each tile's video, once known. */
@@ -139,7 +150,7 @@
   );
   /** Columns × rows that show the most of everyone (video area, avatars as squares). */
   const layout = $derived.by(() => {
-    const n = gridTiles.length + (featured ? 0 : waiting.length);
+    const n = gridItems.length + (featured ? 0 : waiting.length);
     const fallback = { cols: Math.ceil(Math.sqrt(n || 1)), w: 0, h: 0 };
     if (!n || !stageW || !stageH) return fallback;
     let best = { ...fallback, score: -1 };
@@ -149,9 +160,9 @@
       const h = (stageH - GAP * (rows - 1)) / rows;
       if (w < 90 || h < 90) continue;
       let score = 0;
-      for (const t of gridTiles) {
-        const r = ratios[t.id];
-        if (r && (t.camera || t.cameraFrames)) {
+      for (const { tile: t, what } of gridItems) {
+        const r = what === "screen" ? (ratios[`${t.id}:screen`] ?? 16 / 9) : ratios[t.id];
+        if (r && (what === "screen" || t.camera || t.cameraFrames)) {
           const vw = Math.min(w, h * r);
           score += vw * (vw / r);
         } else {
@@ -239,7 +250,7 @@
     focus = focus === key ? null : key;
   }
   /** Small tiles: with a big spot, everything else (screens too); otherwise the grid's people. */
-  const stripItems = $derived(featured ? items.filter((i) => i.key !== featured.key) : gridTiles.map(personItem));
+  const stripItems = $derived(featured ? items.filter((i) => i.key !== featured.key) : gridItems);
 
   // Touch: tap focuses, long-press opens the person menu (as a sheet).
   let pressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -264,6 +275,9 @@
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
       return;
     }
+    // The apps fill the window and make it full screen themselves (Android's webview has no
+    // element full screen; WebKitGTK's left no way out of it).
+    if (isTauri) return void (immersive = true);
     try {
       if (!spot?.requestFullscreen) throw new Error("no fullscreen");
       await spot.requestFullscreen();
@@ -273,6 +287,82 @@
   }
   $effect(() => {
     if (immersive) return onBack(() => (immersive = false));
+  });
+  // The big picture went away (share stopped, person left) or the call shrank to its pill:
+  // leave full screen with it.
+  $effect(() => {
+    if ((!featured || call.minimized) && immersive) immersive = false;
+  });
+  // Apps: the window goes full screen (Android: system bars hidden, the picture turns with the
+  // phone). Esc leaves it on a keyboard.
+  let systemFull = false;
+  // The window's own buttons (TitleBar) step aside: they'd cover the call's top controls.
+  $effect(() => {
+    document.documentElement.toggleAttribute("data-call-fullscreen", immersive);
+    return () => document.documentElement.removeAttribute("data-call-fullscreen");
+  });
+  $effect(() => {
+    if (!isTauri || immersive === systemFull) return;
+    systemFull = immersive;
+    void fullScreen(immersive).catch(() => {});
+  });
+  $effect(() => {
+    if (!immersive) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && (immersive = false);
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  });
+  // Full screen: the call's controls float over the picture while wanted: on a computer when
+  // the mouse moves (gone after 3 s still, the pointer with them), on a phone a tap shows or
+  // hides them (gone after 3 s too). Kept while the pointer rests on them or a menu is open.
+  let chrome = $state(true);
+  let chromeTimer: ReturnType<typeof setTimeout> | undefined;
+  let overControls = false;
+  function showChrome() {
+    chrome = true;
+    clearTimeout(chromeTimer);
+    chromeTimer = setTimeout(() => {
+      if (!overControls && !audioMenu) chrome = false;
+      else showChrome();
+    }, 3000);
+  }
+  $effect(() => {
+    if (immersive) untrack(showChrome);
+    else {
+      clearTimeout(chromeTimer);
+      chrome = true;
+    }
+  });
+  function immersiveMove(e: PointerEvent) {
+    if (immersive && e.pointerType === "mouse") showChrome();
+  }
+  function immersiveTap(e: MouseEvent) {
+    if (!immersive || (e.target as Element).closest("button, [role=menu]")) return;
+    if (chrome && lastPointer !== "mouse") {
+      clearTimeout(chromeTimer);
+      chrome = false;
+    } else showChrome();
+  }
+  let lastPointer = "mouse";
+  onDestroy(() => clearTimeout(chromeTimer));
+  onDestroy(() => {
+    if (systemFull) void fullScreen(false).catch(() => {});
+  });
+
+  const screenChoice = $derived(SCREEN_CHOICES.find((c) => c.id === call.prefs.screenQuality) ?? SCREEN_CHOICES[2]);
+
+  /** The screen sound menu: "all", "none", "app:<id>" (an app picked earlier that stopped
+   * playing stays listed). */
+  const soundValue = (c: SoundChoice) => (c.kind === "app" ? `app:${c.app}` : c.kind);
+  const soundChoice = (v: string): SoundChoice => (v.startsWith("app:") ? { kind: "app", app: v.slice(4) } : { kind: v === "none" ? "none" : "all" });
+  const soundApps = (s: NativeScreenSound) =>
+    s.choice.kind === "app" && !s.apps.some((a) => a.id === (s.choice as { app: string }).app) ? [...s.apps, { id: s.choice.app, name: s.choice.app }] : s.apps;
+  // The apps playing change while sharing (a game starts its sound…).
+  $effect(() => {
+    if (!call.screenOn || call.screenPending || call.screenStarting || !call.native) return;
+    void call.refreshScreenSound();
+    const timer = setInterval(() => void call.refreshScreenSound(), 2000);
+    return () => clearInterval(timer);
   });
 
   const person = (t: (typeof call.tiles)[number]) => ({
@@ -287,11 +377,20 @@
   function closePanels(e: PointerEvent) {
     const target = e.target as Element | null;
     if (audioMenu && !target?.closest(".audio-out")) audioMenu = false;
+    if (cardMenu && !target?.closest(".pick-wrap")) cardMenu = null;
+    if (screenVolFor && !target?.closest(".screen-vol")) screenVolFor = null;
     if (!soundsOpen && !optionsOpen && !reactOpen && !call.ringPanel) return;
     if (target?.closest(".panel, .options-panel, .icon.sounds, .icon.ring, .icon.options, .icon.react, [role=dialog]")) return;
     soundsOpen = optionsOpen = reactOpen = call.ringPanel = false;
   }
   let optionsOpen = $state(false);
+  /** The share card's quality / sound menu. */
+  let cardMenu = $state<"quality" | "sound" | null>(null);
+  /** Whose screen's volume slider is open. */
+  let screenVolFor = $state<string | null>(null);
+  $effect(() => {
+    if (!call.screenOn) cardMenu = null;
+  });
   let soundsOpen = $state(false);
   /** The audio output menu (phone with a headset connected). */
   let audioMenu = $state(false);
@@ -323,6 +422,9 @@
 
 <svelte:window onkeydown={(e) => onKey(e, true)} onkeyup={(e) => onKey(e, false)} onblur={() => call.talk(false)} onpointerdown={closePanels} />
 
+{#if call.screenPicker}
+  <ScreenPicker />
+{/if}
 {#if call.notice && !call.active}
   <div class="notice" transition:fly={{ y: -16, duration: 180 }}>{call.notice}</div>
 {/if}
@@ -362,7 +464,17 @@
     {/if}
   </div>
 {:else if call.active}
-  <div class="call" class:side={call.sideChat} transition:fade={{ duration: 160 }}>
+  <div
+    class="call"
+    class:side={call.sideChat}
+    class:full={immersive}
+    class:bare={immersive && !chrome}
+    transition:fade={{ duration: 160 }}
+    onpointermove={immersiveMove}
+    onpointerdown={(e) => (lastPointer = e.pointerType)}
+    onclick={immersiveTap}
+    role="presentation"
+  >
     <div class="head">
     <header data-tauri-drag-region="deep">
       <button class="icon" onclick={() => (call.minimized = true)} aria-label={tr("Back to chats")}><ChevronDown size={24} /></button>
@@ -421,18 +533,7 @@
       <div class="featured" class:immersive class:shaped={!sideStrip && spotRatio} style:--spot-ratio={spotRatio} bind:this={spot} ondblclick={toggleFullscreen}>
         <!-- svelte-ignore a11y_media_has_caption -->
         {#if featured.what === "screen"}
-          {#if f.screen}
-            <video
-              use:video={f.screen}
-              autoplay
-              playsinline
-              muted
-              onresize={(e) => noteRatio(`${f.id}:screen`, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
-              onloadedmetadata={(e) => noteRatio(`${f.id}:screen`, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
-            ></video>
-          {:else if f.screenFrames}
-            <NativeVideo frames={f.screenFrames} contain onsize={(w, h) => noteRatio(`${f.id}:screen`, w, h)} />
-          {/if}
+          {@render screenCard(f, true)}
         {:else if featured.what === "camera"}
           {#if f.camera}
             <video class="backdrop" aria-hidden="true" use:video={f.camera} autoplay playsinline muted class:mirror={mirrored(f)}></video>
@@ -450,6 +551,9 @@
           {featured.what === "screen" ? (f.isMe ? tr("Your screen") : tr("{name}'s screen", { name: f.name })) : f.isMe ? tr("You") : f.name}
         </span>
         <div class="spot-actions">
+          {#if featured.what === "screen" && !f.isMe && watched(f)}
+            {@render remoteScreenButtons(f)}
+          {/if}
           {#if f.isMe && featured.what === "camera" && call.canFlip}
             <button onclick={() => call.flipCamera()} aria-label={tr("Switch camera")} title={tr("Switch camera")}><SwitchCamera size={18} /></button>
           {/if}
@@ -462,6 +566,126 @@
         </div>
       </div>
     {/if}
+
+    {#snippet screenCard(t: Tile, big: boolean)}
+      {#if watched(t) && t.screen}
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video
+          class="contain"
+          use:video={t.screen}
+          autoplay
+          playsinline
+          muted
+          onresize={(e) => noteRatio(`${t.id}:screen`, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
+          onloadedmetadata={(e) => noteRatio(`${t.id}:screen`, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
+        ></video>
+      {:else if watched(t) && t.screenFrames}
+        <NativeVideo frames={t.screenFrames} contain onsize={(w, h) => noteRatio(`${t.id}:screen`, w, h)} />
+      {:else if t.isMe}
+        <div class="screen-card">
+          <MonitorUp size={big ? 36 : 26} />
+          {#if big || !featured}<strong>{call.screenPending ? tr("Choose what to share…") : call.screenStarting ? tr("Starting your share…") : tr("You're sharing your screen")}</strong>{/if}
+          {#if call.screenPending}<small>{tr("Nothing is sent until you pick a screen or a window.")}</small>{:else if call.screenNote}<small>{call.screenNote}</small>{/if}
+          {#if call.screenStats && (big || !featured)}
+            {@const st = call.screenStats}
+            <small class="send-stats" class:held={st.limit === "cpu" || st.limit === "bandwidth"}>
+              {[st.encoder, `${Math.round(st.fps)} fps`, `${st.width}×${st.height}`, `${st.mbps.toFixed(1)} Mbit/s`].filter(Boolean).join(" · ")}
+              {#if st.limit === "cpu"}<br />{tr("Held back by the processor: try another codec or a lighter quality")}{:else if st.limit === "bandwidth"}<br />{tr("Held back by the connection: try less data use")}{/if}
+            </small>
+          {/if}
+        </div>
+      {:else}
+        <div class="screen-card">
+          <Avatar name={t.name} mxc={t.avatar} size={big ? 56 : 36} />
+          <strong>{tr("{name} is sharing their screen", { name: t.name })}</strong>
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="card-controls" onclick={(e) => e.stopPropagation()} onpointerdown={(e) => e.stopPropagation()}>
+            <button class="primary" onclick={() => call.watchScreen(t.id, true)}><Eye size={16} />{tr("Watch")}</button>
+          </div>
+        </div>
+      {/if}
+      {#if t.isMe && !call.screenPending && !call.screenStarting && (big || !featured)}
+        <!-- The share's controls stay on the card, its picture shown or not (not on a small
+             strip tile: a tap brings it to the big spot, with them). -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="card-controls own" class:over={watched(t)} class:open={cardMenu} onclick={(e) => e.stopPropagation()} onpointerdown={(e) => e.stopPropagation()}>
+          <button onclick={() => call.setShowMyScreen(!call.showMyScreen)} title={call.showMyScreen ? tr("Hide it") : tr("Show it")}>
+            {#if call.showMyScreen}<EyeOff size={16} />{:else}<Eye size={16} />{/if}<span>{call.showMyScreen ? tr("Hide it") : tr("Show it")}</span>
+          </button>
+          <div class="pick-wrap">
+            <button class="pick" class:open={cardMenu === "quality"} aria-haspopup="menu" aria-expanded={cardMenu === "quality"} title={tr("Quality")} onclick={() => (cardMenu = cardMenu === "quality" ? null : "quality")}>
+              <Gauge size={16} /><span>{screenChoice.label()}</span><ChevronDown size={14} class="chev" />
+            </button>
+            {#if cardMenu === "quality"}
+              <div class="card-menu" role="menu" transition:fly={{ y: 6, duration: 120 }}>
+                {#each SCREEN_CHOICES as c (c.id)}
+                  <button role="menuitemradio" aria-checked={c.id === screenChoice.id} class:current={c.id === screenChoice.id} onclick={() => ((cardMenu = null), call.setScreenQuality(c.id))}>
+                    <span class="item"><strong>{c.label()}</strong><small>{c.hint()}</small></span>
+                    {#if c.id === screenChoice.id}<Check size={16} />{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          {#if call.screenSound}
+            {@const sound = call.screenSound}
+            {@const current = soundValue(sound.choice)}
+            {@const options = [
+              { value: "all", label: tr("All apps' sound") },
+              { value: "none", label: tr("No sound") },
+              ...soundApps(sound).map((a) => ({ value: `app:${a.id}`, label: a.name })),
+            ]}
+            <div class="pick-wrap">
+              <button
+                class="pick"
+                class:open={cardMenu === "sound"}
+                class:hint={sound.choice.kind === "none" && sound.apps.length > 0}
+                aria-haspopup="menu"
+                aria-expanded={cardMenu === "sound"}
+                title={tr("Which sound goes with your screen (never the call's voices)")}
+                onclick={() => (cardMenu === "sound" ? (cardMenu = null) : ((cardMenu = "sound"), call.refreshScreenSound()))}
+              >
+                {#if sound.choice.kind === "none"}<VolumeX size={16} />{:else}<Volume2 size={16} />{/if}
+                <span>{options.find((o) => o.value === current)?.label ?? tr("Sound")}</span><ChevronDown size={14} class="chev" />
+              </button>
+              {#if cardMenu === "sound"}
+                <div class="card-menu" role="menu" transition:fly={{ y: 6, duration: 120 }}>
+                  <p class="menu-title">{tr("Sound sent with your screen")}</p>
+                  {#each options as o (o.value)}
+                    <button role="menuitemradio" aria-checked={o.value === current} class:current={o.value === current} onclick={() => ((cardMenu = null), call.setScreenSound(soundChoice(o.value)))}>
+                      {#if o.value === "none"}<VolumeX size={16} />{:else if o.value === "all"}<Volume2 size={16} />{:else}<AppWindow size={16} />{/if}
+                      <span class="item"><strong>{o.label}</strong></span>
+                      {#if o.value === current}<Check size={16} />{/if}
+                    </button>
+                  {/each}
+                  {#if !sound.apps.length}<p class="menu-note">{tr("No other app is playing sound right now.")}</p>{/if}
+                </div>
+              {/if}
+            </div>
+          {/if}
+          <button class="stop" onclick={() => call.toggleScreen()} title={tr("Stop sharing")}><X size={16} /><span>{tr("Stop")}</span></button>
+        </div>
+      {/if}
+    {/snippet}
+
+    {#snippet remoteScreenButtons(t: Tile)}
+      {@const off = call.screenSoundOff.has(t.id)}
+      <div class="screen-vol" role="presentation" onclick={(e) => e.stopPropagation()} onpointerdown={(e) => e.stopPropagation()}>
+        <button class:open={screenVolFor === t.id} aria-haspopup="dialog" aria-expanded={screenVolFor === t.id} onclick={() => (screenVolFor = screenVolFor === t.id ? null : t.id)} aria-label={tr("Screen volume")} title={tr("Screen volume")}>
+          {#if off}<VolumeX size={18} />{:else}<Volume2 size={18} />{/if}
+        </button>
+        {#if screenVolFor === t.id}
+          <div class="vol-pop" transition:fly={{ y: -6, duration: 120 }}>
+            <button class="mute" onclick={() => call.setScreenSoundOff(t.id, !off)} aria-label={off ? tr("Hear their screen") : tr("Mute their screen")} title={off ? tr("Hear their screen") : tr("Mute their screen")}>
+              {#if off}<VolumeX size={18} />{:else}<Volume2 size={18} />{/if}
+            </button>
+            <input type="range" min="0" max="100" step="1" aria-label={tr("Screen volume")} value={off ? 0 : Math.round(call.screenVolumeOf(t.id) * 100)} oninput={(e) => call.setScreenVolume(t.id, Number(e.currentTarget.value) / 100)} />
+            <span>{off ? 0 : Math.round(call.screenVolumeOf(t.id) * 100)}%</span>
+          </div>
+        {/if}
+      </div>
+      <button onclick={(e) => (e.stopPropagation(), focus === `${t.id}:screen` && (focus = null), call.watchScreen(t.id, false))} aria-label={tr("Stop watching")} title={tr("Stop watching")}><EyeOff size={18} /></button>
+    {/snippet}
 
     {#snippet picture(t: Tile, small: boolean)}
       {#if t.cameraFrames}
@@ -526,13 +750,13 @@
             transition:fade={{ duration: 150 }}
           >
             {#if item.what === "screen"}
-              {#if t.screen}
-                <!-- svelte-ignore a11y_media_has_caption -->
-                <video class="contain" use:video={t.screen} autoplay playsinline muted></video>
-              {:else if t.screenFrames}
-                <NativeVideo frames={t.screenFrames} contain />
+              {@render screenCard(t, false)}
+              {#if !t.isMe && watched(t)}
+                <div class="tile-actions">{@render remoteScreenButtons(t)}</div>
               {/if}
-              <span class="name"><MonitorUp size={13} />{t.isMe ? tr("Your screen") : tr("{name}'s screen", { name: t.name })}</span>
+              {#if watched(t)}
+                <span class="name"><MonitorUp size={13} />{t.isMe ? tr("Your screen") : tr("{name}'s screen", { name: t.name })}</span>
+              {/if}
             {:else}
             {@render picture(t, false)}
             {#if t.lost}
@@ -540,7 +764,7 @@
             {/if}
             <span class="name">
               {#if t.isMe && call.deafened}<HeadphoneOff size={13} />{:else if !t.micOn}<MicOff size={13} />{/if}{t.isMe ? tr("You") : t.name}
-              {#if !t.isMe && call.isMutedForMe(t.userId)}<small><VolumeX size={13} /></small>{:else if !t.isMe && call.volumeOf(t.userId) !== 1}<small>{Math.round(call.volumeOf(t.userId) * 100)}%</small>{/if}
+              {#if !t.isMe && call.isMutedForMe(t.userId)}<small><VolumeX size={13} /></small>{/if}
             </span>
             {/if}
           </div>
@@ -609,7 +833,7 @@
     {/if}
 
     </div>
-    <div class="controls">
+    <div class="controls" role="toolbar" tabindex="-1" onpointerenter={() => (overControls = true)} onpointerleave={() => (overControls = false)}>
       <button class="ctl" class:off={!call.micOn} onclick={() => call.toggleMic()} aria-label={call.micOn ? tr("Mute") : tr("Unmute")}>
         {#if call.micOn}<Mic size={24} />{:else}<MicOff size={24} />{/if}
       </button>
@@ -646,7 +870,7 @@
         {#if call.camOn}<Video size={24} />{:else}<VideoOff size={24} />{/if}
       </button>
       {#if call.canShareScreen}
-        <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label={tr("Share screen")}><MonitorUp size={24} /></button>
+        <button class="ctl" class:on={call.screenOn} onclick={() => call.toggleScreen()} aria-label={call.screenOn ? tr("Stop sharing") : tr("Share screen")} title={call.screenOn ? tr("Stop sharing") : tr("Share screen")}><MonitorUp size={24} /></button>
       {/if}
       <button class="ctl hangup" onclick={() => call.leave()} aria-label={tr("Leave call")}><PhoneOff size={24} /></button>
     </div>
@@ -736,6 +960,15 @@
     object-fit: cover;
   }
   /* The call's chat docked on the right (ChatsScreen), same width. */
+  .send-stats {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+    text-align: center;
+  }
+  .send-stats.held {
+    color: var(--warning, #f5a524);
+    opacity: 1;
+  }
   .call.side {
     right: var(--side-chat);
   }
@@ -854,6 +1087,34 @@
   .featured:focus-within .spot-actions,
   .featured.immersive .spot-actions {
     opacity: 1;
+  }
+  /* Full screen: the controls float over the picture, and leave with the pointer when idle. */
+  .call.full .controls {
+    position: fixed;
+    left: 50%;
+    bottom: max(24px, env(safe-area-inset-bottom));
+    z-index: 81;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgb(10 12 16 / 0.6);
+    backdrop-filter: blur(12px);
+    transform: translateX(-50%);
+    transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+  }
+  .call.full .featured :is(.spot-actions, .label) {
+    transition: opacity 0.2s var(--ease);
+  }
+  .call.bare .controls {
+    opacity: 0;
+    transform: translate(-50%, 16px);
+    pointer-events: none;
+  }
+  .call.bare .featured :is(.spot-actions, .label) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .call.bare {
+    cursor: none;
   }
   @media (pointer: coarse) {
     .spot-actions {
@@ -1185,6 +1446,252 @@
   }
   .audio-out {
     position: relative;
+  }
+  /* Our share's card (and someone's we don't watch): what it is, and its controls. */
+  .screen-card {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 12px 56px;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 26%, var(--surface)), var(--surface));
+    text-align: center;
+  }
+  .screen-card strong {
+    font-size: 0.92rem;
+  }
+  .screen-card small {
+    max-width: 280px;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+  .screen-card .card-controls {
+    position: static;
+    margin-top: 4px;
+  }
+  .card-controls {
+    position: absolute;
+    left: 50%;
+    bottom: 10px;
+    z-index: 3;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    width: max-content;
+    max-width: calc(100% - 16px);
+    transform: translateX(-50%);
+    cursor: default;
+  }
+  /* Over the picture: on a dark pill, shown when the pointer is on the card (always on touch). */
+  .card-controls.over {
+    padding: 4px;
+    border-radius: 999px;
+    background: rgb(0 0 0 / 0.55);
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .tile:hover .card-controls.over,
+  .featured:hover .card-controls.over,
+  .card-controls.over:focus-within {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .card-controls.over {
+      opacity: 1;
+    }
+  }
+  .card-controls button,
+  .card-controls .pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.14);
+    color: #fff;
+    font: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .card-controls button:hover,
+  .card-controls .pick:hover {
+    background: rgb(255 255 255 / 0.24);
+  }
+  .card-controls button.primary {
+    background: var(--accent);
+  }
+  .card-controls button.stop {
+    background: #e5484d;
+  }
+  .card-controls .pick.hint {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .card-controls .pick.open {
+    background: rgb(255 255 255 / 0.28);
+  }
+  .card-controls .pick span {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-controls :global(.chev) {
+    margin-left: -2px;
+    opacity: 0.7;
+  }
+  .card-controls.open {
+    opacity: 1;
+  }
+  .pick-wrap {
+    position: relative;
+  }
+  /* Opens upwards from its pill, like the call's other menus. */
+  .card-menu {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    z-index: 9;
+    display: grid;
+    gap: 2px;
+    width: max-content;
+    min-width: 200px;
+    max-width: min(300px, calc(100vw - 32px));
+    padding: 6px;
+    border-radius: 14px;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.45);
+    transform: translateX(-50%);
+  }
+  .card-controls .card-menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: auto;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: none;
+    color: inherit;
+    text-align: left;
+  }
+  .card-controls .card-menu button:hover {
+    background: var(--surface-hover);
+  }
+  .card-controls .card-menu button.current {
+    color: var(--accent);
+  }
+  .card-menu .item {
+    display: grid;
+    flex: 1;
+    gap: 1px;
+    min-width: 0;
+  }
+  .card-menu .item strong {
+    overflow: hidden;
+    font-size: 0.86rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-menu .item small {
+    color: var(--muted);
+    font-size: 0.75rem;
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .menu-title,
+  .menu-note {
+    margin: 4px 10px 6px;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .menu-note {
+    margin: 6px 10px 4px;
+  }
+  /* Small strip tiles: icons only. */
+  .grid.strip .card-controls button span {
+    display: none;
+  }
+  .grid.strip .card-controls button,
+  .grid.strip .card-controls .pick {
+    padding: 0 9px;
+  }
+  .grid.strip .screen-card small {
+    display: none;
+  }
+  .screen-vol {
+    position: relative;
+  }
+  .tile-actions:has(.vol-pop),
+  .spot-actions:has(.vol-pop) {
+    opacity: 1;
+  }
+  .vol-pop {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 9;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 200px;
+    padding: 6px 10px 6px 6px;
+    border-radius: 14px;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.45);
+  }
+  .vol-pop .mute {
+    flex: none;
+    background: var(--surface-2) !important;
+    color: inherit !important;
+  }
+  .vol-pop input {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--accent);
+  }
+  .vol-pop span {
+    min-width: 3ch;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .tile-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 3;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .tile:hover .tile-actions {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .tile-actions {
+      opacity: 1;
+    }
+  }
+  .tile-actions button {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: rgb(0 0 0 / 0.55);
+    color: #fff;
+    cursor: pointer;
   }
   .audio-menu {
     position: absolute;

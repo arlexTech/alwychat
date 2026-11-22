@@ -117,8 +117,14 @@ export const callNotification = (
 /** Desktop: AlwyChat opens (in the tray) when the computer starts. */
 export const autostartGet = () => invoke<boolean>("autostart_get");
 export const autostartSet = (on: boolean) => invoke<void>("autostart_set", { on });
+/** The call's big picture in the system's full screen (Android: turns with the phone). */
+export const fullScreen = (on: boolean) => invoke<void>("full_screen", { on });
 /** Android: the call's picture-in-picture window wide (screen share) or tall. */
 export const pipShape = (wide: boolean) => invoke<void>("pip_shape", { wide });
+/** Android: going home during a call opens picture-in-picture. */
+export const pipAllowed = (on: boolean) => invoke<void>("pip_allowed", { on });
+/** Android: the call's camera opened natively while the app is hidden (false = not possible). */
+export const backgroundCamera = (on: boolean, front: boolean) => invoke<boolean>("background_camera", { on, front });
 /** Where an Android call's audio can go. */
 export type AudioRoute = { id: number; kind: "earpiece" | "speaker" | "bluetooth" | "wired" | "usb"; name: string };
 export type AudioRoutes = { devices: AudioRoute[]; current?: number };
@@ -218,6 +224,8 @@ export interface RoomSummary {
   /** Low-priority tag: shown under "Archived". */
   is_archived: boolean;
   is_muted: boolean;
+  /** Notifies only for mentions/keywords: plain messages don't make it unread in badges. */
+  mentions_only?: boolean;
   is_encrypted: boolean;
   unread_messages: number;
   unread_mentions: number;
@@ -362,6 +370,8 @@ export interface MessageEntry {
   reply_to: ReplyPreview | null;
   reactions: Reaction[];
   send_state: "sending" | "failed" | null;
+  /** While a photo/video/file goes up: 0–1. */
+  upload_progress: number | null;
   /** Not sent: these people (verified before) reset their encryption since. */
   identity_changed: string[];
   /** Others whose latest read receipt is this message. */
@@ -452,6 +462,8 @@ export interface NativeCallMember {
   /** Frame keys (see `nativeCallJoin`'s `onFrame`) of their camera / shared screen. */
   camera: string | null;
   screen: string | null;
+  /** They share their screen, watched or not (older engines: absent). */
+  sharing?: boolean;
   /** Their connection is lost (back soon, or gone after a timeout). */
   lost: boolean;
 }
@@ -497,6 +509,64 @@ export function nativeCallJoin(
   return invoke<void>("native_call_join", { roomId, url, token, encrypted, micOn, setup, onEvent: channel, onFrame: frameChannel(onFrame) });
 }
 
+// ── Windows screen sharing (app-side capture that follows an app; see win_share.rs) ──
+
+export const isWindows = isTauri && /Windows/.test(navigator.userAgent);
+export interface WinSource {
+  /** "screen:<device>" or "window:<handle>". */
+  id: string;
+  kind: "screen" | "window";
+  title: string;
+  /** The program ("League of Legends"), for windows. */
+  app: string;
+  width: number;
+  height: number;
+}
+export type WinSound = "all" | "none" | "app";
+export interface WinFrameNote {
+  generation: number;
+  slot: number;
+  width: number;
+  height: number;
+  stride: number;
+  seq: number;
+}
+export type WinShareEvent =
+  | { kind: "source"; title: string; app: string }
+  | { kind: "waiting" }
+  | { kind: "buffer"; generation: number; slot: number }
+  | { kind: "ended"; reason: string };
+export const winScreenSources = () => invoke<WinSource[]>("win_screen_sources");
+export function winScreenStart(
+  source: string,
+  q: { fps: number; width: number; height: number },
+  sound: WinSound,
+  onFrame: (note: WinFrameNote) => void,
+  onAudio: (pcm: ArrayBuffer) => void,
+  onEvent: (e: WinShareEvent) => void,
+) {
+  const frames = new Channel<WinFrameNote>();
+  frames.onmessage = onFrame;
+  const audio = new Channel<ArrayBuffer>();
+  audio.onmessage = onAudio;
+  const events = new Channel<WinShareEvent>();
+  events.onmessage = onEvent;
+  return invoke<void>("win_screen_start", {
+    source,
+    fps: q.fps,
+    maxWidth: q.width,
+    maxHeight: q.height,
+    sound,
+    onFrame: frames,
+    onAudio: audio,
+    onEvent: events,
+  });
+}
+export const winScreenStop = () => invoke<void>("win_screen_stop");
+export const winScreenQuality = (q: { fps: number; width: number; height: number }) =>
+  invoke<void>("win_screen_quality", { fps: q.fps, maxWidth: q.width, maxHeight: q.height });
+export const winScreenSound = (sound: WinSound) => invoke<void>("win_screen_sound", { sound });
+
 /** Video frames from the native engine: raw bytes [key length][key][JPEG]. */
 function frameChannel(onFrame: (key: string, jpeg: Uint8Array) => void) {
   const frames = new Channel<ArrayBuffer>();
@@ -512,7 +582,35 @@ function frameChannel(onFrame: (key: string, jpeg: Uint8Array) => void) {
 export const nativeCameraPreview = (on: boolean, camera: string | null, onFrame: (key: string, jpeg: Uint8Array) => void) =>
   invoke<void>("native_camera_preview", { on, camera, onFrame: frameChannel(onFrame) });
 export const nativeCallSetCamera = (on: boolean) => invoke<void>("native_call_set_camera", { on });
-export const nativeCallSetScreen = (on: boolean) => invoke<void>("native_call_set_screen", { on });
+export const nativeCallSetScreen = (on: boolean, q?: { fps: number; maxBitrate: number; width: number; height: number }, codec?: string) =>
+  invoke<void>("native_call_set_screen", {
+    on,
+    fps: q?.fps ?? null,
+    maxBitrate: q?.maxBitrate ?? null,
+    maxWidth: q?.width ?? null,
+    maxHeight: q?.height ?? null,
+    codec: codec ?? null,
+  });
+/** Linux calls: what our screen share sends right now. */
+export const nativeCallScreenStats = () =>
+  invoke<{ encoder: string; fps: number; width: number; height: number; limit: string; mbps: number } | null>("native_call_screen_stats");
+/** Linux calls: change the screen share's quality while sharing. */
+export const nativeCallScreenQuality = (q: { fps: number; maxBitrate: number; width: number; height: number }) =>
+  invoke<void>("native_call_screen_quality", { fps: q.fps, maxBitrate: q.maxBitrate, maxWidth: q.width, maxHeight: q.height });
+/** Linux calls: draw our own screen share's preview or not. */
+/** Linux calls: which sound goes with our shared screen (every app, none, or one app). */
+export type SoundChoice = { kind: "all" } | { kind: "none" } | { kind: "app"; app: string };
+export interface NativeScreenSound {
+  choice: SoundChoice;
+  /** Apps playing sound now (never AlwyChat itself). */
+  apps: { id: string; name: string }[];
+}
+export const nativeCallScreenSound = () => invoke<NativeScreenSound | null>("native_call_screen_sound");
+export const nativeCallSetScreenSound = (choice: SoundChoice) => invoke<void>("native_call_set_screen_sound", { choice });
+/** Linux calls: watch someone's shared screen or not, hear its sound or not. */
+export const nativeCallWatchScreen = (identity: string, watch: boolean, sound: boolean, volume: number) =>
+  invoke<void>("native_call_watch_screen", { identity, watch, sound, volume });
+export const nativeCallScreenPreview = (on: boolean) => invoke<void>("native_call_screen_preview", { on });
 export const nativeCallLeave = () => invoke<void>("native_call_leave");
 export const nativeCallSetMic = (on: boolean) => invoke<void>("native_call_set_mic", { on });
 export const nativeCallSetDeafened = (deafened: boolean) => invoke<void>("native_call_set_deafened", { deafened });
@@ -843,6 +941,8 @@ export interface PollAnswer {
   text: string;
   votes: number;
   mine: boolean;
+  /** Who chose it, once results are visible (open poll, or ended). */
+  voters: Reader[];
 }
 
 export const createPoll = (roomId: string, question: string, answers: string[], disclosed: boolean, multiple: boolean) =>

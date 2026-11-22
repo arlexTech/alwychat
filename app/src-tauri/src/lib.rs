@@ -24,6 +24,10 @@ use tauri_plugin_opener::OpenerExt;
 
 mod native_call;
 mod updates;
+// Windows APIs (window list, WebView2 shared buffers) are FFI.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod win_share;
 
 #[tauri::command]
 async fn discover_server(server: String) -> alwy_core::Result<ServerInfo> {
@@ -1090,6 +1094,63 @@ async fn location_notification(
     }
     #[cfg(not(target_os = "android"))]
     let _ = (app, active, texts, room_id, ends_at);
+    Ok(())
+}
+
+/// Android: whether going home during a call opens picture-in-picture.
+#[tauri::command]
+async fn pip_allowed(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>("pipAllowed", serde_json::json!({ "on": on }))
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, on);
+    Ok(())
+}
+
+/// Android: the call's camera opened natively while the app is out of sight (the WebView stops
+/// its own camera there); frames reach the page over a message port. False = not possible.
+#[tauri::command]
+async fn background_camera(app: tauri::AppHandle, on: bool, front: bool) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        let answer = app
+            .state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>(
+                "backgroundCamera",
+                serde_json::json!({ "on": on, "front": front }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(answer.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, on, front);
+        Ok(false)
+    }
+}
+
+/// The call's big picture in the system's full screen: Android hides the bars (and turns with
+/// the phone), computers make the window full screen.
+#[tauri::command]
+async fn full_screen(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    app.state::<android::System>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>("fullScreen", serde_json::json!({ "on": on }))
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_fullscreen(on).map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(any(target_os = "android", desktop)))]
+    let _ = (app, on);
     Ok(())
 }
 
@@ -3056,6 +3117,22 @@ pub fn run() {
             native_call::native_camera_preview,
             native_call::native_call_set_camera,
             native_call::native_call_set_screen,
+            native_call::native_call_screen_preview,
+            native_call::native_call_screen_stats,
+            native_call::native_call_screen_quality,
+            native_call::native_call_screen_sound,
+            native_call::native_call_set_screen_sound,
+            native_call::native_call_watch_screen,
+            #[cfg(windows)]
+            win_share::win_screen_sources,
+            #[cfg(windows)]
+            win_share::win_screen_start,
+            #[cfg(windows)]
+            win_share::win_screen_stop,
+            #[cfg(windows)]
+            win_share::win_screen_quality,
+            #[cfg(windows)]
+            win_share::win_screen_sound,
             native_call::native_call_play_sound,
             room_sounds,
             set_room_sounds,
@@ -3070,6 +3147,9 @@ pub fn run() {
             system_clock,
             call_notification,
             pip_shape,
+            full_screen,
+            pip_allowed,
+            background_camera,
             autostart_get,
             autostart_set,
             emote_packs,

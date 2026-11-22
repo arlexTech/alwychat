@@ -10,7 +10,7 @@
   import { nativeVideo } from "$lib/stores/nativeVideo.svelte";
   import NativeVideo from "./NativeVideo.svelte";
   import { keyName } from "$lib/keys";
-  import { call, type CallPrefs } from "$lib/stores/call.svelte";
+  import { call, SCREEN_CHOICES, type CallPrefs, type ScreenCodec, type ScreenData, type ScreenQuality } from "$lib/stores/call.svelte";
 
   let inputs = $state<NativeDevice[]>([]);
   let outputs = $state<NativeDevice[]>([]);
@@ -261,6 +261,14 @@
 {/if}
 
 {#if isAndroid}
+  <label class="m-row toggle">
+    <span class="m-text">
+      <strong>{tr("Picture-in-picture")}</strong>
+      <small>{tr("Going home during a call shrinks it into a small window over your other apps. Off: the call keeps going in the background, your camera too.")}</small>
+    </span>
+    <input type="checkbox" role="switch" checked={call.prefs.pip} onchange={(e) => call.setPip(e.currentTarget.checked)} />
+  </label>
+
   <h3 class="m-section">{tr("Bluetooth headsets")}</h3>
   <label class="m-row toggle">
     <span class="m-text">
@@ -277,6 +285,38 @@
       <small class="warn">{btNamesNote ?? tr("Downside: Android asks for the “Nearby devices” permission, which would also let the app find Bluetooth devices around you. AlwyChat only reads your headset's name.")}</small>
     </span>
     <input type="checkbox" role="switch" checked={call.prefs.btNames} onchange={(e) => toggleBtNames(e.currentTarget)} />
+  </label>
+{/if}
+
+{#if call.canShareScreen}
+  <label class="field">
+    <span>{tr("Screen sharing starts with")}</span>
+    <select class="m-input" value={call.prefs.screenDefault} onchange={(e) => call.setScreenDefault(e.currentTarget.value as ScreenQuality | "last")}>
+      <option value="last">{tr("The quality I used last")}</option>
+      {#each SCREEN_CHOICES as c (c.id)}<option value={c.id}>{c.label()} · {c.hint()}</option>{/each}
+    </select>
+  </label>
+  <label class="field">
+    <span>{tr("Screen sharing codec")}</span>
+    <select class="m-input" value={call.prefs.screenCodec} onchange={(e) => call.setScreenEncoding({ screenCodec: e.currentTarget.value as ScreenCodec })}>
+      <option value="auto">{tr("Automatic · H.264 on the graphics card when it can")}</option>
+      <!-- Linux's engine can't send a backup VP8 copy for viewers without AV1 (iPhones before
+           the 15 Pro): AV1 only where LiveKit adds that copy by itself. -->
+      {#if !call.native}<option value="av1">{tr("AV1 · about 40% less data for the same picture")}</option>{/if}
+      <option value="h264">{tr("H.264 · graphics card when possible")}</option>
+      <option value="vp8">{tr("VP8 · processor")}</option>
+    </select>
+  </label>
+  {#if call.prefs.screenCodec === "av1" && !call.native}
+    <p class="m-hint">{tr("Every viewer can watch AV1. Only recent graphics cards make it (NVIDIA RTX 40, AMD RX 7000, Intel Arc); otherwise the processor does, which can make a 60 fps game choppy. Your share's card shows what is really used.")}</p>
+  {/if}
+  <label class="field">
+    <span>{tr("Screen sharing data use")}</span>
+    <select class="m-input" value={call.prefs.screenData} onchange={(e) => call.setScreenEncoding({ screenData: e.currentTarget.value as ScreenData })}>
+      <option value="low">{tr("Low · for slow connections (softer picture)")}</option>
+      <option value="normal">{tr("Normal")}</option>
+      <option value="high">{tr("High · sharper, needs a fast connection")}</option>
+    </select>
   </label>
 {/if}
 

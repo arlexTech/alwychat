@@ -319,3 +319,8 @@ textarea.m-input {
   font-size: 0.9rem;
   cursor: pointer;
 }
+
+/* A call in full screen hides the window buttons (TitleBar): nothing to keep clear of. */
+html[data-call-fullscreen] {
+  --window-controls: 0px !important;
+}

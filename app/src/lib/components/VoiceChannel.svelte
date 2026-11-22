@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tr } from "$lib/i18n/index.svelte";
+  import { tr, trc } from "$lib/i18n/index.svelte";
   import MessageSquare from "@lucide/svelte/icons/message-square";
   import MicOff from "@lucide/svelte/icons/mic-off";
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
@@ -8,6 +8,13 @@
   import type { RoomSummary } from "$lib/backend";
   import { call } from "$lib/stores/call.svelte";
   import Avatar from "./Avatar.svelte";
+  import { contextMenu } from "$lib/stores/menu.svelte";
+  import { mutes } from "$lib/stores/mutes.svelte";
+  import { nav } from "$lib/stores/nav.svelte";
+  import PhoneOff from "@lucide/svelte/icons/phone-off";
+  import Bell from "@lucide/svelte/icons/bell";
+  import BellOff from "@lucide/svelte/icons/bell-off";
+  import LinkIcon from "@lucide/svelte/icons/link";
 
   /**
    * A voice channel in a space (Discord style): tapping it joins the call, the people in it are
@@ -53,6 +60,29 @@
     }
     return room.in_call.map((m) => ({ id: m.user_id, userId: m.user_id, isMe: false, name: m.name, avatar: m.avatar, speaking: false, muted: false }));
   });
+  /** Right-click on the channel itself. */
+  function channelMenu(e: MouseEvent) {
+    const r = room;
+    contextMenu.show(
+      e,
+      [
+        connected
+          ? { label: tr("Leave"), icon: PhoneOff, danger: true, run: () => call.leave() }
+          : { label: tr("Join"), icon: Volume2, run: onJoin },
+        onChat && { label: tr("Open the channel's chat"), icon: MessageSquare, run: onChat },
+        "-",
+        r && (r.is_muted
+          ? { label: trc("chat", "Unmute"), icon: Bell, run: () => mutes.unmuteRoom(r.id) }
+          : { label: `${trc("chat", "Mute")}…`, icon: BellOff, run: () => nav.mute(r) }),
+        r && {
+          label: tr("Copy link"),
+          icon: LinkIcon,
+          run: () => contextMenu.copy(`https://matrix.to/#/${encodeURIComponent(r.id)}?via=${r.id.split(":")[1]}`),
+        },
+      ],
+      room?.name ?? name,
+    );
+  }
   const menuPerson = (p: Person) => ({
     userId: p.userId,
     name: p.name.replace(/ \(you\)$/, ""),
@@ -64,7 +94,7 @@
 
 <div class="channel" class:connected data-room={room?.id}>
   <div class="head">
-    <button class="join" onclick={onJoin} disabled={busy} aria-label={tr("Join voice channel {value}", { value: room?.name ?? name })}>
+    <button class="join" onclick={onJoin} oncontextmenu={channelMenu} disabled={busy} aria-label={tr("Join voice channel {value}", { value: room?.name ?? name })}>
       <span class="kind"><Volume2 size={18} /></span>
       <span class="name">{room?.name ?? name}</span>
       {#if busy}<small>{tr("Joining…")}</small>{:else if connected}<small class="live">{call.status === "connected" ? tr("Connected") : tr("Connecting…")}</small>{/if}
@@ -88,7 +118,7 @@
           >
             <span class="avatar"><Avatar name={p.name} mxc={p.avatar} size={24} /></span>
             <span class="who">{p.name}</span>
-            {#if connected && !p.isMe && call.isMutedForMe(p.userId)}<VolumeX size={13} />{:else if connected && !p.isMe && call.volumeOf(p.userId) !== 1}<small>{Math.round(call.volumeOf(p.userId) * 100)}%</small>{/if}
+            {#if connected && !p.isMe && call.isMutedForMe(p.userId)}<VolumeX size={13} />{/if}
             {#if p.isMe && call.deafened}<HeadphoneOff size={13} />{:else if p.muted}<MicOff size={13} />{/if}
           </button>
         </li>
@@ -204,9 +234,6 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
-  }
-  .person small {
-    font-size: 0.75rem;
   }
   li :global(svg) {
     flex: none;

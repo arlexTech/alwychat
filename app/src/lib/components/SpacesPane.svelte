@@ -42,7 +42,7 @@
   import { call } from "$lib/stores/call.svelte";
   import { chatList } from "$lib/stores/chatList.svelte";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
-  import { spaces } from "$lib/stores/spaces.svelte";
+  import { isUnread, spaces } from "$lib/stores/spaces.svelte";
   import Avatar from "./Avatar.svelte";
   import { spaceBanner } from "$lib/backend";
   import { mediaUrl } from "$lib/media";
@@ -255,7 +255,8 @@
   const unreadIn = (ids: string[]) =>
     ids.filter((id) => {
       const r = roomsById.get(id);
-      return r && (r.unread_messages > 0 || r.marked_unread);
+      // Same rule as the Spaces tab's badge (muted chats don't count).
+      return r && isUnread(r);
     }).length;
 
   // Joined chats in the space's own order (set in its settings, shared with other apps).

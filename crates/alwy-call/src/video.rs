@@ -4,7 +4,7 @@
 
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -14,9 +14,12 @@ use std::{
 use futures_util::StreamExt;
 use livekit::{
     options::TrackPublishOptions,
+    options::{VideoCodec, VideoEncoderBackend},
     prelude::*,
     webrtc::{
-        desktop_capturer::{DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions},
+        desktop_capturer::{
+            CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
+        },
         native::yuv_helper,
         prelude::{
             I420Buffer, RtcVideoSource, VideoBuffer, VideoFrame, VideoResolution, VideoRotation,
@@ -34,29 +37,95 @@ pub type FrameSink = Arc<dyn Fn(&str, Vec<u8>) + Send + Sync>;
 pub const LOCAL_CAMERA: &str = "local:camera";
 pub const LOCAL_SCREEN: &str = "local:screen";
 
+/// Our own screen share's preview is drawn only when the UI shows it (hidden by default: no
+/// one wants to see their screen twice, and each preview frame is a JPEG to make).
+static SCREEN_PREVIEW: AtomicBool = AtomicBool::new(false);
+
+pub fn set_screen_preview(on: bool) {
+    SCREEN_PREVIEW.store(on, Ordering::Relaxed);
+}
+
 /// Turns frames into JPEGs for the UI, at most `fps` a second and no larger than `max`.
+/// With `workers` > 1 the JPEGs are made on that many threads (a 1080p one takes ~20 ms: one
+/// thread alone can't keep up with a 60 fps screen share); a frame finished after a newer one
+/// is dropped, and frames arriving while every thread is busy are skipped.
 struct Preview {
-    key: String,
+    key: Arc<str>,
     sink: FrameSink,
     every: Duration,
     last: Option<Instant>,
     max: (u32, u32),
+    pool: Option<Pool>,
+}
+
+struct Pool {
+    jobs: std::sync::mpsc::SyncSender<(u64, I420Buffer)>,
+    busy: Arc<std::sync::atomic::AtomicUsize>,
+    workers: usize,
+    seq: u64,
 }
 
 impl Preview {
     fn new(key: &str, sink: FrameSink, fps: u32, max: (u32, u32)) -> Self {
+        Self::with_workers(key, sink, fps, max, 1)
+    }
+
+    fn with_workers(key: &str, sink: FrameSink, fps: u32, max: (u32, u32), workers: usize) -> Self {
+        let key: Arc<str> = key.into();
+        let pool = (workers > 1).then(|| {
+            let (jobs, rx) = std::sync::mpsc::sync_channel::<(u64, I420Buffer)>(workers);
+            let rx = Arc::new(Mutex::new(rx));
+            let busy = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let newest = Arc::new(Mutex::new(0u64));
+            for i in 0..workers {
+                let (rx, busy, newest) = (rx.clone(), busy.clone(), newest.clone());
+                let (key, sink) = (key.clone(), sink.clone());
+                let _ = thread::Builder::new()
+                    .name(format!("video-jpeg-{i}"))
+                    .spawn(move || {
+                        loop {
+                            let job = rx.lock().unwrap().recv();
+                            let Ok((seq, i420)) = job else { return };
+                            let jpeg = to_jpeg(&i420);
+                            busy.fetch_sub(1, Ordering::Relaxed);
+                            let Some(jpeg) = jpeg else { continue };
+                            let mut newest = newest.lock().unwrap();
+                            if seq > *newest {
+                                *newest = seq;
+                                sink(&key, jpeg);
+                            }
+                        }
+                    });
+            }
+            Pool {
+                jobs,
+                busy,
+                workers,
+                seq: 0,
+            }
+        });
         Self {
-            key: key.to_owned(),
+            key,
             sink,
-            every: Duration::from_millis(1000 / u64::from(fps.max(1))),
+            every: Duration::from_micros(1_000_000 / u64::from(fps.max(1))),
             last: None,
             max,
+            pool,
         }
     }
 
     fn offer(&mut self, buffer: &dyn VideoBuffer) {
         let now = Instant::now();
-        if self.last.is_some_and(|last| now - last < self.every) {
+        // 2 ms of slack: frames arriving exactly at the rate aren't skipped for jitter.
+        if self
+            .last
+            .is_some_and(|last| now - last + Duration::from_millis(2) < self.every)
+        {
+            return;
+        }
+        if let Some(pool) = &self.pool
+            && pool.busy.load(Ordering::Relaxed) >= pool.workers
+        {
             return;
         }
         self.last = Some(now);
@@ -75,19 +144,38 @@ impl Preview {
         if (tw, th) != (w, h) {
             i420 = i420.scale(tw as i32, th as i32);
         }
-        let mut rgba = vec![0u8; (tw * th * 4) as usize];
-        let (sy, su, sv) = i420.strides();
-        let (y, u, v) = i420.data();
-        // libyuv's "ABGR" is R, G, B, A in memory.
-        yuv_helper::i420_to_abgr(y, sy, u, su, v, sv, &mut rgba, tw * 4, tw as i32, th as i32);
-        let mut jpeg = Vec::with_capacity(rgba.len() / 10);
-        let encoder = jpeg_encoder::Encoder::new(&mut jpeg, 85);
-        if let Err(e) = encoder.encode(&rgba, tw as u16, th as u16, jpeg_encoder::ColorType::Rgba) {
-            warn!("video preview: {e}");
-            return;
+        match &mut self.pool {
+            Some(pool) => {
+                pool.seq += 1;
+                pool.busy.fetch_add(1, Ordering::Relaxed);
+                if pool.jobs.try_send((pool.seq, i420)).is_err() {
+                    pool.busy.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+            None => {
+                if let Some(jpeg) = to_jpeg(&i420) {
+                    (self.sink)(&self.key, jpeg);
+                }
+            }
         }
-        (self.sink)(&self.key, jpeg);
     }
+}
+
+/// A frame (already at the size to show) as a JPEG.
+fn to_jpeg(i420: &I420Buffer) -> Option<Vec<u8>> {
+    let (tw, th) = (i420.width(), i420.height());
+    let mut rgba = vec![0u8; (tw * th * 4) as usize];
+    let (sy, su, sv) = i420.strides();
+    let (y, u, v) = i420.data();
+    // libyuv's "ABGR" is R, G, B, A in memory.
+    yuv_helper::i420_to_abgr(y, sy, u, su, v, sv, &mut rgba, tw * 4, tw as i32, th as i32);
+    let mut jpeg = Vec::with_capacity(rgba.len() / 10);
+    let encoder = jpeg_encoder::Encoder::new(&mut jpeg, 85);
+    if let Err(e) = encoder.encode(&rgba, tw as u16, th as u16, jpeg_encoder::ColorType::Rgba) {
+        warn!("video preview: {e}");
+        return None;
+    }
+    Some(jpeg)
 }
 
 /// Follow a remote camera or screen and send it to the UI until aborted.
@@ -100,7 +188,7 @@ pub(crate) fn watch_remote(
     tokio::spawn(async move {
         let mut stream = NativeVideoStream::new(track.rtc_track());
         let mut preview = if screen {
-            Preview::new(&key, sink, 12, (1920, 1080))
+            Preview::with_workers(&key, sink, 60, (1920, 1080), 4)
         } else {
             Preview::new(&key, sink, 24, (1280, 720))
         };
@@ -132,11 +220,23 @@ fn send(source: &NativeVideoSource, buffer: I420Buffer) -> I420Buffer {
 pub(crate) struct Capture {
     pub track: LocalVideoTrack,
     stop: Arc<AtomicBool>,
+    /// A screen share's quality, changeable while sharing (the capture follows it).
+    quality: Arc<Mutex<ScreenQuality>>,
+    /// Size of the first frame (a screen share: tells a whole monitor from a window).
+    pub size: (u32, u32),
 }
+
+/// The screen picker was closed without choosing anything.
+pub const CANCELLED: &str = "cancelled";
 
 impl Capture {
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// A screen share's frame rate and size from the next frame on.
+    pub fn set_quality(&self, quality: ScreenQuality) {
+        *self.quality.lock().unwrap() = quality;
     }
 }
 
@@ -146,17 +246,97 @@ impl Drop for Capture {
     }
 }
 
+/// NVENC can encode for us: an NVIDIA GPU with its driver, and a build compiled with NVIDIA's
+/// codec support (needs the CUDA headers at build time; CI builds don't have them).
+fn nvidia_gpu() -> bool {
+    std::path::Path::new("/dev/nvidiactl").exists()
+        && VideoEncoderBackend::list_available()
+            .into_iter()
+            .any(|b| b == VideoEncoderBackend::Nvenc)
+}
+
+/// The codec a screen share is sent with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScreenEncoder {
+    /// H.264 on an NVIDIA card (NVENC), else VP8 on the processor.
+    #[default]
+    Auto,
+    /// AV1: the lightest stream for the same picture, and every viewer can decode it (Chromium,
+    /// Android, libwebrtc here); made by the graphics card on NVIDIA RTX 40 or newer, else by
+    /// the processor (heavy at 1080p 60 fps).
+    Av1,
+    /// H.264 on the graphics card where possible (NVENC, VA-API), else in software.
+    H264,
+    /// VP8 on the processor.
+    Vp8,
+}
+
+/// What the screen share being sent really does (its biggest layer), from its stats.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ScreenSendStats {
+    /// "NVENC", "libvpx"…
+    pub encoder: String,
+    pub fps: f64,
+    pub width: u32,
+    pub height: u32,
+    /// What holds it back: "none", "cpu", "bandwidth", "other".
+    pub limit: String,
+    pub mbps: f64,
+}
+
+static SCREEN_STATS: Mutex<Option<ScreenSendStats>> = Mutex::new(None);
+
+pub fn screen_send_stats() -> Option<ScreenSendStats> {
+    SCREEN_STATS.lock().unwrap().clone()
+}
+
+/// How a screen share trades fluidity for detail: frames a second and the bitrate allowed.
+#[derive(Debug, Clone, Copy)]
+pub struct ScreenQuality {
+    pub fps: u32,
+    pub max_bitrate: u64,
+    /// Frames are shrunk to fit this before encoding: the encoder runs on the CPU, and a
+    /// 2560×1440 screen at 30–60 fps was more than it could do (it fell to ~5 fps).
+    pub max_width: u32,
+    pub max_height: u32,
+    /// Only read when publishing.
+    pub encoder: ScreenEncoder,
+}
+
+impl Default for ScreenQuality {
+    fn default() -> Self {
+        Self {
+            fps: 30,
+            max_bitrate: 5_000_000,
+            max_width: 1920,
+            max_height: 1080,
+            encoder: ScreenEncoder::Auto,
+        }
+    }
+}
+
 async fn publish(
     room: &Room,
     name: &str,
     source: TrackSource,
     video: NativeVideoSource,
+    screen: ScreenQuality,
 ) -> Result<LocalVideoTrack, String> {
-    // Enough for a sharp picture (LiveKit's defaults are cautious); screens favour detail.
+    // Enough for a sharp picture (LiveKit's defaults are cautious). A screen's quality can change
+    // while it's shared, but not the published encoding: room for the most demanding choice
+    // (the capture's frame rate and size set what's actually sent).
+    // Smooth choices (30 fps and up) keep their frame rate when the encoder or the connection
+    // can't keep up (the SDK's default for screens drops frames to keep the size: choppy games).
+    let degradation = (source == TrackSource::Screenshare).then_some(if screen.fps >= 30 {
+        livekit::options::DegradationPreference::MaintainFramerate
+    } else {
+        livekit::options::DegradationPreference::MaintainResolution
+    });
+    let screen = ScreenQuality { fps: 60, ..screen };
     let encoding = if source == TrackSource::Screenshare {
         livekit::options::VideoEncoding {
-            max_bitrate: 3_000_000,
-            max_framerate: 15.0,
+            max_bitrate: screen.max_bitrate,
+            max_framerate: f64::from(screen.fps),
         }
     } else {
         livekit::options::VideoEncoding {
@@ -164,6 +344,31 @@ async fn publish(
             max_framerate: 30.0,
         }
     };
+    // A screen share's backup layer (for small tiles and slow connections) is half the size at
+    // the same frame rate: LiveKit's default runs it at 3 fps, so viewers on it saw a slideshow.
+    // (Half of the source's announced 1920×1080: the ratio holds for any captured size.)
+    let simulcast_layers = (source == TrackSource::Screenshare).then(|| {
+        vec![livekit::options::VideoPreset::new(
+            960,
+            540,
+            (screen.max_bitrate / 3).max(300_000),
+            f64::from(screen.fps),
+        )]
+    });
+    // An NVIDIA card encodes a screen share itself (NVENC does H.264, not VP8): a game at 60 fps
+    // was more than the CPU encoder could keep up with. Without one: VP8 on the CPU as before.
+    let (video_codec, video_encoder) = match (source == TrackSource::Screenshare, screen.encoder) {
+        (false, _) | (true, ScreenEncoder::Vp8) => (VideoCodec::VP8, VideoEncoderBackend::Auto),
+        // The SDK falls back to software when the asked backend can't do it.
+        (true, ScreenEncoder::Av1) if nvidia_gpu() => (VideoCodec::AV1, VideoEncoderBackend::Nvenc),
+        (true, ScreenEncoder::Av1) => (VideoCodec::AV1, VideoEncoderBackend::Auto),
+        (true, _) if nvidia_gpu() => (VideoCodec::H264, VideoEncoderBackend::Nvenc),
+        (true, ScreenEncoder::H264) => (VideoCodec::H264, VideoEncoderBackend::Hardware),
+        (true, ScreenEncoder::Auto) => (VideoCodec::VP8, VideoEncoderBackend::Auto),
+    };
+    if source == TrackSource::Screenshare {
+        *SCREEN_STATS.lock().unwrap() = None;
+    }
     let track = LocalVideoTrack::create_video_track(name, RtcVideoSource::Native(video));
     room.local_participant()
         .publish_track(
@@ -171,6 +376,10 @@ async fn publish(
             TrackPublishOptions {
                 source,
                 video_encoding: Some(encoding),
+                simulcast_layers,
+                video_codec,
+                video_encoder,
+                degradation_preference: degradation,
                 ..Default::default()
             },
         )
@@ -180,11 +389,12 @@ async fn publish(
 }
 
 /// Share the screen: the desktop portal asks which screen or window (Wayland), then frames
-/// are captured ~15 times a second. `on_end` runs if the capture stops by itself (refused,
-/// window closed).
+/// are captured `quality.fps` times a second. `on_end` runs if the capture stops by itself
+/// (refused, window closed).
 pub(crate) async fn share_screen(
     room: &Room,
     sink: FrameSink,
+    quality: ScreenQuality,
     on_end: impl Fn() + Send + 'static,
 ) -> Result<Capture, String> {
     let video = NativeVideoSource::new(
@@ -195,34 +405,59 @@ pub(crate) async fn share_screen(
         true,
     );
     let stop = Arc::new(AtomicBool::new(false));
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let live = Arc::new(Mutex::new(quality));
+    // Answered at the first frame (its size), so nothing is published (picture or sound)
+    // while the desktop's picker is still open, or with an error / "cancelled".
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(u32, u32), String>>();
+    let ready_tx = Arc::new(Mutex::new(Some(ready_tx)));
+    let answer = move |ready: &Mutex<Option<_>>, result: Result<(u32, u32), String>| {
+        if let Some(tx) = ready.lock().unwrap().take() {
+            let _: Result<(), _> = tokio::sync::oneshot::Sender::send(tx, result).map_err(|_| ());
+            true
+        } else {
+            false
+        }
+    };
     {
         let video = video.clone();
         let stop = stop.clone();
+        let live = live.clone();
+        let ready_tx = ready_tx.clone();
         thread::Builder::new()
             .name("screen-capture".into())
             .spawn(move || {
                 let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Generic);
                 options.set_include_cursor(true);
                 let Some(mut capturer) = DesktopCapturer::new(options) else {
-                    let _ = ready_tx.send(Err("screen capture isn't available here".into()));
+                    answer(&ready_tx, Err("screen capture isn't available here".into()));
                     return;
                 };
-                let _ = ready_tx.send(Ok(()));
-                let mut preview = Preview::new(LOCAL_SCREEN, sink, 5, (960, 540));
+                let mut preview = Preview::new(LOCAL_SCREEN, sink, 15, (960, 540));
+                // Frames captured and time spent per frame, logged every 5 s.
+                let mut count = 0u32;
+                let mut busy = Duration::ZERO;
+                let mut since = Instant::now();
                 let failures = Arc::new(std::sync::atomic::AtomicU32::new(0));
                 let seen_frame = Arc::new(AtomicBool::new(false));
+                // The picker was closed without a choice (or refused).
+                let cancelled = Arc::new(AtomicBool::new(false));
                 {
                     let failures = failures.clone();
                     let seen_frame = seen_frame.clone();
+                    let cancelled = cancelled.clone();
+                    let live = live.clone();
+                    let ready_tx = ready_tx.clone();
                     capturer.start_capture(None, move |result| match result {
                         Ok(frame) => {
                             failures.store(0, Ordering::Relaxed);
-                            seen_frame.store(true, Ordering::Relaxed);
                             let (w, h) = (frame.width(), frame.height());
                             if w <= 0 || h <= 0 {
                                 return;
                             }
+                            if !seen_frame.swap(true, Ordering::Relaxed) {
+                                answer(&ready_tx, Ok((w as u32, h as u32)));
+                            }
+                            let t0 = Instant::now();
                             let mut buffer = I420Buffer::new(w as u32, h as u32);
                             let (sy, su, sv) = buffer.strides();
                             let (y, u, v) = buffer.data_mut();
@@ -239,44 +474,178 @@ pub(crate) async fn share_screen(
                                 w,
                                 h,
                             );
+                            // Larger than the chosen size: shrunk (even sizes, shape kept).
+                            let quality = *live.lock().unwrap();
+                            let scale = (f64::from(quality.max_width) / f64::from(w))
+                                .min(f64::from(quality.max_height) / f64::from(h));
+                            if scale < 1.0 {
+                                let sw = ((f64::from(w) * scale) as i32) & !1;
+                                let sh = ((f64::from(h) * scale) as i32) & !1;
+                                buffer = buffer.scale(sw, sh);
+                            }
                             let buffer = send(&video, buffer);
-                            preview.offer(&buffer);
+                            if SCREEN_PREVIEW.load(Ordering::Relaxed) {
+                                preview.offer(&buffer);
+                            }
+                            count += 1;
+                            busy += t0.elapsed();
+                            if since.elapsed() >= Duration::from_secs(5) {
+                                let secs = since.elapsed().as_secs_f64();
+                                tracing::info!(
+                                    "screen share: {:.1} fps captured ({w}x{h} → {}x{}), {:.1} ms per frame",
+                                    f64::from(count) / secs,
+                                    buffer.width(),
+                                    buffer.height(),
+                                    busy.as_secs_f64() * 1000.0 / f64::from(count.max(1)),
+                                );
+                                count = 0;
+                                busy = Duration::ZERO;
+                                since = Instant::now();
+                            }
                         }
-                        Err(_) => {
+                        Err(e) => {
                             failures.fetch_add(1, Ordering::Relaxed);
+                            if matches!(e, CaptureError::Permanent)
+                                && !seen_frame.load(Ordering::Relaxed)
+                            {
+                                cancelled.store(true, Ordering::Relaxed);
+                            }
                         }
                     });
                 }
                 // The portal dialog may stay open a while: only give up on errors after a
                 // frame came, or after a minute without any.
                 let started = Instant::now();
+                // A steady pace: the next frame is due one interval after the previous one was
+                // due, however long capturing took (sleeping a fixed time after each capture
+                // gave fewer frames than asked, and an uneven rhythm).
+                let mut due = Instant::now();
                 while !stop.load(Ordering::Relaxed) {
+                    let fps = live.lock().unwrap().fps.clamp(1, 60);
+                    let every = Duration::from_micros(1_000_000 / u64::from(fps));
                     capturer.capture_frame();
                     let failing = failures.load(Ordering::Relaxed);
                     let seen = seen_frame.load(Ordering::Relaxed);
-                    if (seen && failing > 45)
-                        || (!seen && started.elapsed() > Duration::from_secs(60))
-                    {
-                        warn!("screen capture stopped (failures: {failing}, frames: {seen})");
+                    if cancelled.load(Ordering::Relaxed) {
+                        answer(&ready_tx, Err(CANCELLED.into()));
+                        break;
+                    }
+                    if !seen && started.elapsed() > Duration::from_secs(60) {
+                        answer(&ready_tx, Err("no picture from the screen".into()));
+                        break;
+                    }
+                    if seen && failing > 45 {
+                        warn!("screen capture stopped (failures: {failing})");
                         on_end();
                         break;
                     }
-                    thread::sleep(Duration::from_millis(66));
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    due += every;
+                    let now = Instant::now();
+                    if due > now {
+                        thread::sleep(due - now);
+                    } else {
+                        // Late (a slow capture): start again from now rather than rush.
+                        due = now;
+                    }
                 }
             })
             .map_err(|e| format!("screen capture: {e}"))?;
     }
-    ready_rx
-        .await
-        .map_err(|_| "screen capture stopped".to_owned())??;
-    let track = match publish(room, "screen", TrackSource::Screenshare, video).await {
+    let size = match ready_rx.await {
+        Ok(Ok(size)) => size,
+        Ok(Err(e)) => {
+            stop.store(true, Ordering::Relaxed);
+            return Err(e);
+        }
+        Err(_) => return Err("screen capture stopped".to_owned()),
+    };
+    let track = match publish(room, "screen", TrackSource::Screenshare, video, quality).await {
         Ok(track) => track,
         Err(e) => {
             stop.store(true, Ordering::Relaxed);
             return Err(e);
         }
     };
-    Ok(Capture { track, stop })
+    watch_screen_stats(track.clone(), stop.clone());
+    Ok(Capture {
+        track,
+        stop,
+        quality: live,
+        size,
+    })
+}
+
+/// Every 5 s while sharing, what each sent layer did: encoder, size, rate, and what viewers
+/// asked back (keyframe requests = a viewer couldn't decode, resends = lost packets). Torn or
+/// broken pictures at the other end are explained by these.
+fn watch_screen_stats(track: LocalVideoTrack, stop: Arc<AtomicBool>) {
+    use livekit::webrtc::stats::RtcStats;
+    tokio::spawn(async move {
+        let mut last: std::collections::HashMap<String, (u32, u32, u32, u64)> = Default::default();
+        while !stop.load(Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let stats = track.get_stats().await.unwrap_or_default();
+            let mut lost = Vec::new();
+            for stat in &stats {
+                if let RtcStats::RemoteInboundRtp(r) = stat {
+                    lost.push(format!(
+                        "{:.1}% lost, rtt {:.0} ms",
+                        r.remote_inbound.fraction_lost * 100.0,
+                        r.remote_inbound.round_trip_time * 1000.0
+                    ));
+                }
+            }
+            let mut best: Option<ScreenSendStats> = None;
+            for stat in stats {
+                let RtcStats::OutboundRtp(r) = stat else {
+                    continue;
+                };
+                let o = &r.outbound;
+                let now = (
+                    o.key_frames_encoded,
+                    o.pli_count + o.fir_count,
+                    o.nack_count,
+                    r.sent.packets_sent,
+                );
+                let before = last.insert(o.rid.clone(), now).unwrap_or_default();
+                {
+                    if best.as_ref().is_none_or(|k| o.frame_width >= k.width) {
+                        best = Some(ScreenSendStats {
+                            encoder: o.encoder_implementation.clone(),
+                            fps: o.frames_per_second,
+                            width: o.frame_width,
+                            height: o.frame_height,
+                            limit: format!("{:?}", o.quality_limitation_reason).to_lowercase(),
+                            mbps: o.target_bitrate / 1e6,
+                        });
+                    }
+                }
+                tracing::info!(
+                    "screen share layer {:?}: {} {}x{} {:.0} fps, target {:.1} Mbit/s, limit {:?}, \
+                     +{} keyframes, +{} keyframe requests, +{} resend requests, +{} packets {}",
+                    o.rid,
+                    o.encoder_implementation,
+                    o.frame_width,
+                    o.frame_height,
+                    o.frames_per_second,
+                    o.target_bitrate / 1e6,
+                    o.quality_limitation_reason,
+                    now.0.saturating_sub(before.0),
+                    now.1.saturating_sub(before.1),
+                    now.2.saturating_sub(before.2),
+                    now.3.saturating_sub(before.3),
+                    lost.join("; "),
+                );
+            }
+            if best.is_some() {
+                *SCREEN_STATS.lock().unwrap() = best;
+            }
+        }
+        *SCREEN_STATS.lock().unwrap() = None;
+    });
 }
 
 /// Turn the camera on (V4L2 device `index`): 640×480 YUYV (every webcam offers it, at full
@@ -318,8 +687,21 @@ pub(crate) async fn start_camera(
     ready_rx
         .await
         .map_err(|_| "the camera stopped".to_owned())??;
-    match publish(room, "camera", TrackSource::Camera, video).await {
-        Ok(track) => Ok(Capture { track, stop }),
+    match publish(
+        room,
+        "camera",
+        TrackSource::Camera,
+        video,
+        ScreenQuality::default(),
+    )
+    .await
+    {
+        Ok(track) => Ok(Capture {
+            track,
+            stop,
+            quality: Arc::default(),
+            size: (0, 0),
+        }),
         Err(e) => {
             stop.store(true, Ordering::Relaxed);
             Err(e)

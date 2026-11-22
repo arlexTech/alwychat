@@ -627,6 +627,8 @@ impl Core {
     async fn activate(&self, client: Client, passphrase: String, store_dir: String) -> Result<()> {
         let path = self.data_dir.join(SESSION_FILE);
         persist(&path, &client, &passphrase, &store_dir)?;
+        // Photos/files going up show how far they got (MessageEntry.upload_progress).
+        client.send_queue().enable_upload_progress(true);
         let saved_dir = store_dir.clone();
         let may_persist = Arc::new(AtomicBool::new(true));
         let allowed = may_persist.clone();

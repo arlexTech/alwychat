@@ -5,7 +5,7 @@
   import { emojiStyle } from "$lib/stores/emojiStyle.svelte";
   import ReportPage from "./ReportPage.svelte";
   import { LANGUAGES, chooseLanguage, languageChoice, languageName, locale, tr } from "$lib/i18n/index.svelte";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { profiles, ourZone } from "$lib/stores/profiles.svelte";
   import { isAndroid, touchKeyboard, setStatus, setTimeZone, setupPush, systemStatus, type AppTheme, type Settings, type SystemStatus, isTauri, type MessageLayout } from "$lib/backend";
@@ -66,7 +66,13 @@
   import DevicesPage from "./DevicesPage.svelte";
   import SecurityPage from "./SecurityPage.svelte";
 
-  let { userId, onClose, onSignOut }: { userId: string; onClose: () => void; onSignOut: () => void } = $props();
+  type Section = "status" | "notifications" | "voice" | "privacy" | "appearance" | "chats" | "about";
+  let {
+    userId,
+    onClose,
+    onSignOut,
+    start = null,
+  }: { userId: string; onClose: () => void; onSignOut: () => void; /** Open on this section. */ start?: Section | null } = $props();
 
   // ── Profile ──
   let nameDraft = $state<string | null>(null);
@@ -92,7 +98,7 @@
   // ── Account pages ──
   let sub = $state<"devices" | "security" | "blocked" | "emotes" | null>(null);
   /** The settings page open on top of the main list. */
-  let section = $state<"status" | "notifications" | "voice" | "privacy" | "appearance" | "chats" | "about" | null>(null);
+  let section = $state<Section | null>(untrack(() => start));
   // Wide screens show the list and a section side by side (Discord): one is always open.
   const wide = new MediaQuery("min-width: 900px");
   $effect(() => {

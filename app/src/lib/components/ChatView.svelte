@@ -51,6 +51,9 @@
   import CountdownStrip from "./CountdownStrip.svelte";
   import { emotes } from "$lib/stores/emotes.svelte";
   import Pencil from "@lucide/svelte/icons/pencil";
+  import { contextMenu } from "$lib/stores/menu.svelte";
+  import { personMenu } from "$lib/menus";
+  import Eye from "@lucide/svelte/icons/eye";
   import EmojiPicker from "./EmojiPicker.svelte";
   import { geoUri, liveLocation, untilTime } from "$lib/stores/liveLocation.svelte";
   import { tick, untrack } from "svelte";
@@ -255,7 +258,7 @@
   let beforeEdit = "";
   let sendError = $state<string | null>(null);
   let toast = $state<string | null>(null);
-  type ViewerItem = { media: string; kind: "image" | "video"; caption: string | null };
+  type ViewerItem = { media: string; kind: "image" | "video"; caption: string | null; event_id?: string };
   let viewer = $state<{ items: ViewerItem[]; index: number } | null>(null);
   /** Files picked, dropped or pasted, waiting for Send. */
   /** Attachments waiting in the composer: a browser File (desktop) or a picked file (Android). */
@@ -530,8 +533,11 @@
   let limit = $state(FIRST_PAINT);
   let widen = $state(true);
   const shown = $derived(rows.length > limit ? rows.slice(-limit) : rows);
+  // The id alone: `room` is a new object whenever the chat's list row changes (a vote, a
+  // message), which reset the window and pulled the view to the bottom.
+  const roomKey = $derived(room.id);
   $effect(() => {
-    void room.id;
+    void roomKey;
     void tl.focused;
     atBottom = true;
     limit = FIRST_PAINT;
@@ -784,6 +790,30 @@
     if (p?.picked) void discardPicked(p.picked);
   }
 
+  /** Right-click on a photo/file waiting to be sent. */
+  function pendingMenu(e: MouseEvent, i: number) {
+    const p = pending[i];
+    if (!p) return;
+    contextMenu.show(e, [
+      editable(p) && { label: tr("Edit photo"), icon: Pencil, run: () => (editingPhoto = i) },
+      canViewOnce(p) && {
+        label: p.viewOnce ? tr("View once: turn off") : tr("View once: turn on"),
+        icon: Eye,
+        run: () => (pending[i] = { ...p, viewOnce: !p.viewOnce }),
+      },
+      "-",
+      { label: tr("Remove"), icon: X, danger: true, run: () => removePending(i) },
+      pending.length > 1 && {
+        label: tr("Remove all ({n})", { n: pending.length }),
+        icon: Trash2,
+        danger: true,
+        run: () => {
+          for (let j = pending.length - 1; j >= 0; j--) removePending(j);
+        },
+      },
+    ], p.name);
+  }
+
   function clearPending() {
     for (const p of pending) if (p.file && p.url) URL.revokeObjectURL(p.url);
     pending = [];
@@ -989,7 +1019,7 @@
     const items: ViewerItem[] = [];
     for (const m of msgs) {
       const c = m.content;
-      if (c.kind === "image" || c.kind === "video") items.push({ media: c.media, kind: c.kind, caption: c.caption });
+      if (c.kind === "image" || c.kind === "video") items.push({ media: c.media, kind: c.kind, caption: c.caption, event_id: m.item_id });
     }
     if (items.length) viewer = { items, index: Math.min(index, items.length - 1) };
   }
@@ -1045,6 +1075,19 @@
     } catch (e) {
       flash(tr("Couldn't {value}: {e}", { value: action === "open" ? "open" : "save", e: e }));
     }
+  }
+
+  /** "Mention" from someone's right-click menu: their name typed at the caret (sent as a mention). */
+  function insertMention(name: string) {
+    const at = input?.selectionStart ?? draft.length;
+    const before = draft.slice(0, at);
+    const piece = `${before && !/\s$/.test(before) ? " " : ""}@${name} `;
+    draft = before + piece + draft.slice(at);
+    tick().then(() => {
+      input.focus();
+      input.setSelectionRange(at + piece.length, at + piece.length);
+      autosize();
+    });
   }
 
   function pickMention(s?: Parameters<MentionAutocomplete["pick"]>[1]) {
@@ -1586,7 +1629,7 @@
     <span class="sub">{title}</span>
   </span>
   {:else}
-  <button class="who" class:fit={hasTitlebar} onclick={() => (chatMenuOpen = true)} aria-label={tr("Chat settings")}>
+  <button class="who" class:fit={hasTitlebar} onclick={() => (chatMenuOpen = true)} oncontextmenu={(e) => nav.chatMenu(e, room, () => (chatMenuOpen = true))} aria-label={tr("Chat settings")}>
     <Avatar name={room.name} mxc={room.avatar} size={40} saved={saved.is(room.id)} />
     <span class="title">
       <strong>{title}</strong>
@@ -1767,6 +1810,7 @@
             onCopy={messageText(row.msg) ? () => copyText(messageText(row.msg)!) : undefined}
             onCopyLink={copyText}
             onProfile={room.is_dm ? undefined : (user) => (call.profile = user)}
+            onPersonMenu={(e, userId, name, isMe) => personMenu(e, { userId, name }, { isMe, onMention: isMe ? undefined : () => insertMention(name) })}
             onSeen={() => (readersOf = row.album?.at(-1) ?? row.msg)}
           />
           {#if editing?.item_id === row.msg.item_id}<span class="edit-tag"><Pencil size={12} />{tr("Editing")}</span>{/if}
@@ -1838,7 +1882,7 @@
   {#if pending.length}
     <div class="pending" transition:fly={{ y: 8, duration: 160 }}>
       {#each pending as p, i (p)}
-        <div class="pending-item">
+        <div class="pending-item" role="group" oncontextmenu={(e) => pendingMenu(e, i)}>
           {#if p.url}<img src={p.url} alt="" />{:else}<span class="pending-file">{p.mime.startsWith("video/") ? "🎬" : "📄"}<small>{p.name}</small></span>{/if}
           <button type="button" onclick={() => removePending(i)} aria-label={tr("Remove {name}", { name: p.name })}>×</button>
           {#if editable(p)}
@@ -1997,7 +2041,7 @@
 {#if toast}<div class="toast" transition:fly={{ y: 12, duration: 180 }}>{toast}</div>{/if}
 
 {#if viewer}
-  <MediaViewer items={viewer.items} index={viewer.index} onClose={() => ((viewer = null), (onceOpen = false))} />
+  <MediaViewer items={viewer.items} index={viewer.index} roomId={target} locked={onceOpen} onClose={() => ((viewer = null), (onceOpen = false))} />
 {/if}
 {#if searchOpen}
   <ChatSearchPage roomId={room.id} onPick={showMessage} onClose={() => (searchOpen = false)} />

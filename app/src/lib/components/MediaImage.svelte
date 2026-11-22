@@ -1,3 +1,9 @@
+<script lang="ts" module>
+  // One observer for every photo: which ones are on (or near) the screen.
+  const seen = new WeakMap<Element, (near: boolean) => void>();
+  const observer = new IntersectionObserver((entries) => entries.forEach((e) => seen.get(e.target)?.(e.isIntersecting)), { rootMargin: "300px" });
+</script>
+
 <script lang="ts">
   // A message's photo (or a video's thumbnail): its blurry preview (blurhash) right away, a
   // loading ring if it takes a while, quiet retries when it fails (network hiccups), then a
@@ -31,6 +37,18 @@
   let slow = $state(false);
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** On or near the screen. A photo further away isn't even asked for yet (`lazy`), so its
+   *  "loading" animations would run unseen for as long as the chat stays open. */
+  let box = $state<HTMLElement>();
+  let near = $state(false);
+  $effect(() => {
+    const el = box;
+    if (!el) return;
+    seen.set(el, (n) => (near = n));
+    observer.observe(el);
+    return () => observer.unobserve(el);
+  });
 
   const placeholder = $derived(blurhashUrl(blurhash));
   // A new address per attempt, so the WebView asks again instead of reusing the failure.
@@ -72,13 +90,13 @@
   });
 </script>
 
-<span class="mi" class:shimmer={!placeholder && !loaded && !failed} style:background-image={placeholder && !loaded ? `url(${placeholder})` : undefined}>
+<span class="mi" bind:this={box} class:shimmer={near && !placeholder && !loaded && !failed} style:background-image={placeholder && !loaded ? `url(${placeholder})` : undefined}>
   {#if !failed}
     {#key url}
       <img src={url} {alt} decoding="async" loading={lazy ? "lazy" : undefined} class:shown={loaded} onload={done} onerror={error} />
     {/key}
   {/if}
-  {#if slow && !loaded && !failed}
+  {#if near && slow && !loaded && !failed}
     <!-- Something always moves while a photo loads: a light sweeping over its blurry preview,
          and a ring. -->
     <span class="sweep"></span>

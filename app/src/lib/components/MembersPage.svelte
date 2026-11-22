@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { personMenu } from "$lib/menus";
+  import Shield from "@lucide/svelte/icons/shield";
   import { peek, remember } from "$lib/cache";
   import { tr } from "$lib/i18n/index.svelte";
   import Link from "@lucide/svelte/icons/link";
@@ -119,7 +121,12 @@
       {#if g.people.length}
         <h3 class="m-section">{g.title} · {g.people.length}</h3>
         {#each g.people as m (m.user_id)}
-          <button class="m-row" onclick={() => (open = m)}>
+          <button
+            class="m-row"
+            onclick={() => (open = m)}
+            oncontextmenu={(e) =>
+              personMenu(e, { userId: m.user_id, name: m.name }, { isMe: m.is_me, extra: [{ label: tr("Role and moderation"), icon: Shield, run: () => (open = m) }] })}
+          >
             <span class="av">
               <Avatar name={m.name} mxc={m.avatar} size={40} />
               {#if presence.online(m.user_id)}<span class="dot"></span>{/if}

@@ -8,17 +8,30 @@
   import { eventMediaUrl, playableUrl } from "$lib/media";
   import { saveToGallery } from "$lib/save";
   import { onBack } from "$lib/back.svelte";
+  import { contextMenu } from "$lib/stores/menu.svelte";
+  import { copyImage } from "$lib/menus";
+  import Download from "@lucide/svelte/icons/download";
+  import Images from "@lucide/svelte/icons/images";
+  import ImageIcon from "@lucide/svelte/icons/image";
+  import Forward from "@lucide/svelte/icons/forward";
+  import MessageSquare from "@lucide/svelte/icons/message-square";
 
-  type Item = { media: string; kind: "image" | "video"; caption: string | null };
+  type Item = { media: string; kind: "image" | "video"; caption: string | null; event_id?: string };
   let {
     items,
     index: start = 0,
     onClose,
     onShow,
+    roomId,
+    locked = false,
   }: {
     items: Item[];
     index?: number;
     onClose: () => void;
+    /** The chat the items come from (Forward). */
+    roomId?: string;
+    /** A view-once photo: no menu (nothing to keep or pass on). */
+    locked?: boolean;
     /** "Show in chat" for the photo on screen (shared media: jump to its message). */
     onShow?: (index: number) => void;
   } = $props();
@@ -93,6 +106,19 @@
 
   let status = $state<string | null>(null);
   let saving = $state(false);
+
+  function openMenu(e: MouseEvent) {
+    if (locked) return void e.preventDefault();
+    const it = item;
+    contextMenu.show(e, [
+      { label: tr("Save"), icon: Download, run: () => saveToGallery([it.media]) },
+      items.length > 1 && { label: tr("Save all ({length})", { length: items.length }), icon: Images, run: () => saveToGallery(items.map((i) => i.media)) },
+      it.kind === "image" && { label: tr("Copy photo"), icon: ImageIcon, run: () => copyImage(it.media) },
+      "-",
+      roomId && it.event_id && { label: tr("Forward"), icon: Forward, run: () => (onClose(), contextMenu.forward(roomId, [it.event_id!])) },
+      onShow && { label: tr("Show in chat"), icon: MessageSquare, run: () => onShow(index) },
+    ]);
+  }
 
   async function save(all: boolean) {
     saving = true;
@@ -260,6 +286,7 @@
                 class:zooming
                 style:transform={i === index && zoom > 1 ? `translate(${panX}px, ${panY}px) scale(${zoom})` : undefined}
                 onclick={(e) => e.stopPropagation()}
+                oncontextmenu={openMenu}
                 ondblclick={toggleZoom}
               />
             {:else if i === index}
@@ -275,6 +302,7 @@
                   class:zooming
                   style:transform={zoom > 1 ? `translate(${panX}px, ${panY}px) scale(${zoom})` : undefined}
                   onclick={(e) => e.stopPropagation()}
+                  oncontextmenu={openMenu}
                   ondblclick={toggleZoom}
                 ></video>
               {:catch}

@@ -266,14 +266,160 @@ pub async fn native_call_set_camera(on: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn native_call_set_screen(on: bool) -> Result<(), String> {
+pub async fn native_call_set_screen(
+    app: tauri::AppHandle,
+    on: bool,
+    fps: Option<u32>,
+    max_bitrate: Option<u64>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+    codec: Option<String>,
+) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    return with_call_async(|c| async move { c.set_screen(on).await }).await;
+    {
+        let mut quality = screen_quality(fps, max_bitrate, max_width, max_height);
+        quality.encoder = match codec.as_deref() {
+            Some("av1") => alwy_call::ScreenEncoder::Av1,
+            Some("h264") => alwy_call::ScreenEncoder::H264,
+            Some("vp8") => alwy_call::ScreenEncoder::Vp8,
+            _ => alwy_call::ScreenEncoder::Auto,
+        };
+        // Monitor sizes (device pixels, and the scaled size for fractional scaling) tell a
+        // whole screen from a window.
+        let monitors: Vec<(u32, u32)> = app
+            .available_monitors()
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|m| {
+                let size = m.size();
+                let scale = m.scale_factor().max(0.1);
+                [
+                    (size.width, size.height),
+                    (
+                        (f64::from(size.width) / scale).round() as u32,
+                        (f64::from(size.height) / scale).round() as u32,
+                    ),
+                ]
+            })
+            .collect();
+        return with_call_async(|c| async move { c.set_screen(on, quality, &monitors).await })
+            .await;
+    }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = on;
+        let _ = (app, on, fps, max_bitrate, max_width, max_height, codec);
         unsupported()
     }
+}
+
+/// What our screen share really sends (encoder, frame rate, size, what limits it), or null.
+#[tauri::command]
+pub fn native_call_screen_stats() -> Option<serde_json::Value> {
+    #[cfg(target_os = "linux")]
+    return alwy_call::screen_send_stats().and_then(|s| serde_json::to_value(s).ok());
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+/// The shared screen's sound: `{choice: {kind: all|none|app, app?}, apps: [{id, name}]}`, or
+/// null when it has none.
+#[tauri::command]
+pub fn native_call_screen_sound() -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let call = CALL.lock().unwrap().clone().ok_or("not in a call")?;
+        Ok(match call.screen_sound() {
+            Some((choice, apps)) => serde_json::json!({ "choice": choice, "apps": apps }),
+            None => serde_json::Value::Null,
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    unsupported()
+}
+
+#[tauri::command]
+pub fn native_call_set_screen_sound(choice: serde_json::Value) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let choice: alwy_call::SoundChoice =
+            serde_json::from_value(choice).map_err(|e| e.to_string())?;
+        with_call(|c| c.set_screen_sound(choice))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = choice;
+        unsupported()
+    }
+}
+
+/// Watch someone's shared screen or not; hear its sound or not, and how loud (gain).
+#[tauri::command]
+pub fn native_call_watch_screen(
+    identity: String,
+    watch: bool,
+    sound: bool,
+    volume: f32,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    return with_call(|c| {
+        c.set_watching_screen(&identity, watch);
+        c.set_screen_sound_off(&identity, !sound, volume);
+    });
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (identity, watch, sound, volume);
+        unsupported()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn screen_quality(
+    fps: Option<u32>,
+    max_bitrate: Option<u64>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+) -> alwy_call::ScreenQuality {
+    let mut quality = alwy_call::ScreenQuality::default();
+    if let Some(fps) = fps {
+        quality.fps = fps.clamp(1, 60);
+    }
+    if let Some(b) = max_bitrate {
+        quality.max_bitrate = b;
+    }
+    if let (Some(w), Some(h)) = (max_width, max_height) {
+        quality.max_width = w.max(320);
+        quality.max_height = h.max(180);
+    }
+    quality
+}
+
+/// Change a screen share's quality while sharing.
+#[tauri::command]
+pub fn native_call_screen_quality(
+    fps: Option<u32>,
+    max_bitrate: Option<u64>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let quality = screen_quality(fps, max_bitrate, max_width, max_height);
+        with_call(|c| c.set_screen_quality(quality))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (fps, max_bitrate, max_width, max_height);
+        unsupported()
+    }
+}
+
+/// Draw our own screen share's preview (hidden by default).
+#[tauri::command]
+pub fn native_call_screen_preview(on: bool) {
+    #[cfg(target_os = "linux")]
+    alwy_call::set_screen_preview(on);
+    #[cfg(not(target_os = "linux"))]
+    let _ = on;
 }
 
 #[cfg(target_os = "linux")]

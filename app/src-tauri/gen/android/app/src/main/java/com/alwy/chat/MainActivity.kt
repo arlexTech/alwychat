@@ -35,6 +35,9 @@ class MainActivity : TauriActivity() {
     @Volatile var hangUpLabel = "Hang up"
     /** The picture-in-picture window is wide (someone's screen) instead of tall (cameras). */
     @Volatile var pipWide = false
+    /** Going home during a call shrinks it into picture-in-picture (a setting, off by default:
+     * the camera keeps running in the background without it). */
+    @Volatile var pipEnabled = false
   }
 
   /** The picture-in-picture window of a call: tall (wide for a screen), with mute and hang-up buttons. */
@@ -57,7 +60,7 @@ class MainActivity : TauriActivity() {
       .setAspectRatio(if (pipWide) Rational(16, 9) else Rational(3, 4))
       .setActions(actions)
     // Android 12+: entered smoothly by the home gesture itself.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(inCall).setSeamlessResizeEnabled(false)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(inCall && pipEnabled).setSeamlessResizeEnabled(false)
     return builder.build()
   }
 
@@ -78,7 +81,7 @@ class MainActivity : TauriActivity() {
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
     // Before Android 12 (no auto-enter): going home during a call shrinks the app.
-    if (inCall && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+    if (inCall && pipEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
       pipParams()?.let { runCatching { enterPictureInPictureMode(it) } }
     }
   }
@@ -104,13 +107,14 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  // Out of sight in a call without picture-in-picture, Android stops our camera: the page
-  // pauses it (the others then see our photo, not a frozen picture) and starts it again here.
+  // Out of sight in a call, Android stops our camera: the page pauses it (the others then see
+  // our photo, not a frozen picture) and starts it again here. A picture-in-picture window
+  // keeps the activity started; closing that window stops it (still in PiP mode then).
   private var hiddenInCall = false
 
   override fun onStop() {
     super.onStop()
-    if (inCall && !isInPictureInPictureMode) {
+    if (inCall) {
       hiddenInCall = true
       try { NativeCall.action("app_hidden") } catch (_: Throwable) {}
     }
@@ -118,6 +122,8 @@ class MainActivity : TauriActivity() {
 
   override fun onStart() {
     super.onStart()
+    // Back on screen: the WebView's own camera takes over again.
+    BackgroundCamera.stop()
     if (hiddenInCall) {
       hiddenInCall = false
       try { NativeCall.action("app_shown") } catch (_: Throwable) {}
@@ -138,6 +144,16 @@ class MainActivity : TauriActivity() {
     // in-picture or in the background) it must keep drawing and running the call.
     // Same while sharing a live location (the page follows the position).
     if (inCall || sharingLocation) webView(window.decorView)?.onResume()
+  }
+
+  /** The page's WebView. */
+  fun pageView(): android.webkit.WebView? = webView(window.decorView)
+
+  /** The screen's rotation in degrees (the background camera turns its picture upright). */
+  fun screenRotation(): Int {
+    @Suppress("DEPRECATION")
+    val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display?.rotation else windowManager.defaultDisplay.rotation
+    return when (r) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_180 -> 180; android.view.Surface.ROTATION_270 -> 270; else -> 0 }
   }
 
   private fun webView(view: View): android.webkit.WebView? {

@@ -673,4 +673,8 @@
       animation: none !important;
     }
   }
+  /* Nobody is looking (lib/away.ts): the scene waits where it is. */
+  :global(html[data-away]) .scene * {
+    animation-play-state: paused !important;
+  }
 </style>

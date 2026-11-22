@@ -31,6 +31,10 @@
 </div>
 
 <style>
+  :global(html[data-call-fullscreen]) .buttons,
+  :global(html[data-call-fullscreen]) .edge {
+    display: none;
+  }
   .edge {
     position: fixed;
     top: 0;
