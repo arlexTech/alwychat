@@ -1,10 +1,13 @@
 import { saveMedia } from "$lib/backend";
 import { tr, trn } from "$lib/i18n/index.svelte";
 
-const home = (path: string) => path.replace(/^\/home\/[^/]+/, "~");
-const folder = (path: string) => home(path.slice(0, path.lastIndexOf("/")));
+// The iPhone app answers "Photos" / "Files" instead of a path.
+const home = (path: string) => (path === "Photos" ? tr("Photos") : path === "Files" ? tr("Files") : path.replace(/^\/home\/[^/]+/, "~"));
+const folder = (path: string) => home(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path);
 
 /** Save photos/videos to the gallery folder, one after the other; returns a message for a toast. */
+export { home as savedWhere };
+
 export async function saveToGallery(media: string[]): Promise<string> {
   let lastPath = "";
   let failed = 0;

@@ -166,7 +166,7 @@
     display: grid;
     place-items: center;
     overflow-y: auto;
-    padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+    padding: 24px 16px calc(24px + var(--safe-bottom));
     background:
       radial-gradient(50rem 24rem at 50% -6rem, rgb(123 92 255 / 0.2), transparent 70%),
       var(--bg);

@@ -40,7 +40,7 @@
     z-index: 1000;
     display: grid;
     place-items: center;
-    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    padding: var(--safe-top) 0 var(--safe-bottom);
     background: var(--bg);
   }
 </style>

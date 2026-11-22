@@ -315,7 +315,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: max(12px, env(safe-area-inset-top)) calc(12px + var(--window-controls)) 12px 12px;
+    padding: max(12px, var(--safe-top)) calc(12px + var(--window-controls)) 12px 12px;
   }
   .rec {
     padding: 4px 10px;
@@ -332,7 +332,7 @@
     display: flex;
     align-items: center;
     justify-content: space-around;
-    padding: 24px 24px max(32px, env(safe-area-inset-bottom));
+    padding: 24px 24px max(32px, var(--safe-bottom));
   }
   .spacer {
     width: 48px;
@@ -385,7 +385,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: calc(max(32px, env(safe-area-inset-bottom)) + 100px);
+    bottom: calc(max(32px, var(--safe-bottom)) + 100px);
     margin: 0;
     text-align: center;
     font-size: 0.85rem;

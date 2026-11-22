@@ -60,6 +60,41 @@ html[data-emoji="twitter"] body {
   font-family: "Inter", "Twemoji", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+/* Notch and home bar. On iPhones the whole app sits inside the safe area (below), so pieces
+   that used to add these themselves get 0 there; Android's insets are applied natively. */
+:root {
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+  --safe-right: env(safe-area-inset-right);
+}
+html.ios {
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+  --safe-left: 0px;
+  --safe-right: 0px;
+  /* The strips around the safe area (status bar, home bar) in the app's colour, not black. */
+  background: var(--bg);
+}
+/* iPhone: the page covers the whole screen (viewport-fit=cover) and the body is the safe area.
+   Its transform makes it the box that fixed layers (pages, viewer, call) fill, so they stay
+   clear of the notch and the home bar too. */
+html.ios body {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  right: env(safe-area-inset-right);
+  bottom: env(safe-area-inset-bottom);
+  left: env(safe-area-inset-left);
+  height: auto;
+  overflow: hidden;
+  transform: translateZ(0);
+}
+/* iOS text is 17 pt by default (15 px looked small next to other apps). */
+html.ios,
+html.ios body {
+  font-size: 17px;
+}
+
 html,
 body {
   margin: 0;

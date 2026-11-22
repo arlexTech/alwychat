@@ -345,7 +345,7 @@
     margin: 6px 0;
   }
   .actions {
-    padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+    padding: 12px 14px calc(14px + var(--safe-bottom));
   }
   .emoji-opt {
     display: flex;

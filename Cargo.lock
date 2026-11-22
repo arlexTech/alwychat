@@ -183,6 +183,7 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tauri-plugin-photos",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tracing",
@@ -7594,6 +7595,15 @@ dependencies = [
  "url",
  "windows",
  "zbus 5.19.0",
+]
+
+[[package]]
+name = "tauri-plugin-photos"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

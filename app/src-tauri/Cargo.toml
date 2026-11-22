@@ -64,5 +64,9 @@ rustls-platform-verifier = "0.7"
 jni = { version = "0.22", default-features = false }
 ndk-context = "0.1"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+# Saving into the Photos library (Swift, PHPhotoLibrary).
+tauri-plugin-photos = { path = "../../crates/tauri-plugin-photos" }
+
 [lints]
 workspace = true

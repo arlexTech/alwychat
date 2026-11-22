@@ -86,7 +86,7 @@
     display: flex;
     flex-direction: column;
     width: min(520px, 100%);
-    padding: 8px 12px calc(16px + env(safe-area-inset-bottom));
+    padding: 8px 12px calc(16px + var(--safe-bottom));
     border-radius: 22px 22px 0 0;
     background: var(--surface);
     box-shadow: 0 -12px 40px rgb(0 0 0 / 0.4);

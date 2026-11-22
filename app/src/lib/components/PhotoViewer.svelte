@@ -39,7 +39,7 @@
   }
   .close {
     position: absolute;
-    top: calc(12px + env(safe-area-inset-top));
+    top: calc(12px + var(--safe-top));
     right: 12px;
     display: grid;
     place-items: center;

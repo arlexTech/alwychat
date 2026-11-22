@@ -120,7 +120,7 @@
   }
   .toast {
     position: fixed;
-    bottom: calc(24px + env(safe-area-inset-bottom));
+    bottom: calc(24px + var(--safe-bottom));
     left: 50%;
     z-index: 192;
     max-width: calc(100vw - 32px);

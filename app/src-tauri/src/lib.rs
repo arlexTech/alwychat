@@ -1637,7 +1637,36 @@ async fn save_media(
             .map_err(|e| e.to_string())?;
         return Ok(saved.path);
     }
-    #[cfg(not(target_os = "android"))]
+    // iPhone: photos and videos go straight into Photos (like Messenger); files into the app's
+    // Documents folder, shown in the Files app under "On My iPhone › AlwyChat".
+    #[cfg(target_os = "ios")]
+    {
+        if !to_gallery {
+            let dir = app.path().document_dir().map_err(|e| e.to_string())?;
+            core.save_event_media(&media, &dir)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok("Files".into());
+        }
+        let dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| e.to_string())?
+            .join("saving");
+        let path = core
+            .save_event_media(&media, &dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let video = matches!(ext.as_str(), "mp4" | "mov" | "m4v" | "3gp" | "webm" | "mkv");
+        tauri_plugin_photos::save(&app, &path, video).await?;
+        return Ok("Photos".into());
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     save_to_folder(&app, &core, &media, to_gallery).await
 }
 
@@ -1734,7 +1763,7 @@ fn opened_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .join("opened"))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn save_to_folder(
     app: &tauri::AppHandle,
     core: &Core,
@@ -2864,6 +2893,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_biometric::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_photos::init());
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(android::gallery_plugin())

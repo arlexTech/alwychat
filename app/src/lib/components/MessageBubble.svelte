@@ -846,6 +846,11 @@
     background-attachment: fixed;
     color: white;
   }
+  /* iOS WebKit doesn't support fixed backgrounds: bubbles were drawn without their colour at
+   * times. Each bubble carries the whole gradient there instead. */
+  :global(html.ios) .own .bubble {
+    background-attachment: scroll;
+  }
   .own.first .bubble {
     border-top-right-radius: var(--r);
   }

@@ -1092,7 +1092,7 @@
   .call.full .controls {
     position: fixed;
     left: 50%;
-    bottom: max(24px, env(safe-area-inset-bottom));
+    bottom: max(24px, var(--safe-bottom));
     z-index: 81;
     padding: 10px 14px;
     border-radius: 999px;

@@ -122,7 +122,7 @@
   import ChatSettingsPage from "./ChatSettingsPage.svelte";
   import CustomizePage from "./CustomizePage.svelte";
   import TimelineStrip from "./TimelineStrip.svelte";
-  import { saveToGallery } from "$lib/save";
+  import { saveToGallery, savedWhere } from "$lib/save";
   import { onBack as closeOnBack } from "$lib/back.svelte";
   import MessageBubble from "./MessageBubble.svelte";
   import ReadersSheet from "./ReadersSheet.svelte";
@@ -1037,7 +1037,7 @@
     if (c.kind !== "file") return;
     try {
       const path = await saveMedia(c.media, false);
-      flash(tr("Saved to {value}", { value: path.replace(/^\/home\/[^/]+/, "~") }));
+      flash(tr("Saved to {value}", { value: savedWhere(path) }));
     } catch (e) {
       flash(tr("Couldn't save: {e}", { e: e }));
     }
@@ -2991,7 +2991,7 @@
     flex-direction: column;
     max-width: 560px;
     margin: 0 auto;
-    padding: 8px 12px calc(14px + env(safe-area-inset-bottom));
+    padding: 8px 12px calc(14px + var(--safe-bottom));
     border-radius: 22px 22px 0 0;
     background: var(--surface);
     box-shadow: 0 -12px 40px rgb(0 0 0 / 0.35);
@@ -3162,7 +3162,7 @@
     flex-direction: column;
     align-items: center;
     gap: 10px;
-    padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+    padding: 14px 16px calc(14px + var(--safe-bottom));
     border-top: 1px solid var(--border);
     color: var(--muted);
     text-align: center;

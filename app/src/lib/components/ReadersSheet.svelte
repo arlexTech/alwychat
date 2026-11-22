@@ -115,7 +115,7 @@
     flex-direction: column;
     width: min(480px, 100%);
     max-height: 70vh;
-    padding: 8px 12px calc(14px + env(safe-area-inset-bottom));
+    padding: 8px 12px calc(14px + var(--safe-bottom));
     border-radius: 22px 22px 0 0;
     background: var(--surface);
     box-shadow: 0 -12px 40px rgb(0 0 0 / 0.4);

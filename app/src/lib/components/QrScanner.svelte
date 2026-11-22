@@ -122,7 +122,7 @@
     position: absolute;
     top: 0;
     left: 0;
-    padding: max(12px, env(safe-area-inset-top)) calc(12px + var(--window-controls)) 12px 12px;
+    padding: max(12px, var(--safe-top)) calc(12px + var(--window-controls)) 12px 12px;
   }
   .round {
     width: 48px;
@@ -139,7 +139,7 @@
     position: absolute;
     left: 24px;
     right: 24px;
-    bottom: max(48px, calc(env(safe-area-inset-bottom) + 32px));
+    bottom: max(48px, calc(var(--safe-bottom) + 32px));
     margin: 0;
     text-align: center;
     text-shadow: 0 1px 3px #000;

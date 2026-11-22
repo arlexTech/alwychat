@@ -18,7 +18,7 @@ Find your device in the table and click the file next to it.
 | 🐧 **Linux**, Fedora / openSUSE | [.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64.rpm) | [.rpm](https://github.com/arlexTech/alwychat/releases/latest/download/AlwyChat-linux-x86_64-autoupdate.rpm) | [.rpm](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64.rpm) | [.rpm](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-linux-x86_64-autoupdate.rpm) |
 | 🪟 **Windows** 10 / 11 | Not yet | Not yet | [.exe](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-windows-x64-setup.exe) | [.exe](https://github.com/arlexTech/alwychat/releases/download/beta/AlwyChat-windows-x64-autoupdate-setup.exe) |
 | 🍏 **macOS** | Not yet | Not yet | Not yet | Not yet |
-| 🍎 **iPhone / iPad** | Not yet | Not yet | Not yet | Not yet |
+| 🍎 **iPhone / iPad** | Not yet | Not yet | [.ipa](https://github.com/arlexTech/alwychat/releases/download/ios/AlwyChat-ios-unsigned.ipa) ¹ | Not yet |
 
 🌐 **Web browser**: AlwyChat also runs in a browser, hosted on your own server. See [how to host it](#web-version).
 
@@ -28,6 +28,8 @@ Find your device in the table and click the file next to it.
 - **Updates itself:** AlwyChat checks a few times a day and offers each new version of its column (a banner in the chat list, one tap). Without it, you download new versions yourself, like from an app store.
 
 Not sure which Linux file to pick? Take the **AppImage**, it works on every distribution.
+
+¹ **iPhone:** not on the App Store yet. Install the .ipa with [Plume Impactor](https://github.com/claration/impactor) or [SideStore](https://sidestore.io) and a free Apple ID (with a free Apple ID it must be refreshed every 7 days). Notifications only arrive while the app is open for now.
 
 Older versions are on the [releases page](https://github.com/arlexTech/alwychat/releases).
 

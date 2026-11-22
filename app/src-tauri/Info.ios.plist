@@ -15,5 +15,10 @@
 	<string>AlwyChat sends your location to a chat only when you choose to share it.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>AlwyChat can use Face ID to unlock the app if you turn on the app lock.</string>
+	<!-- Saved files show in the Files app under On My iPhone › AlwyChat. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

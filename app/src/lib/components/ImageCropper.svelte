@@ -183,7 +183,7 @@
     flex-direction: column;
     background: #000;
     color: #fff;
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--safe-bottom);
   }
   header {
     display: flex;

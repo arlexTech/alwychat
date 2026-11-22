@@ -4,8 +4,7 @@
 
 name: iOS
 
-# Started by hand (Actions → iOS → Run workflow), or by a push to `beta` whose commit message
-# contains "[ios]": it needs a macOS runner, the costly kind, so not on every push.
+# Every push to `beta` (like the other platforms), or by hand (Actions → iOS → Run workflow).
 on:
   workflow_dispatch:
   push:
@@ -18,7 +17,6 @@ concurrency:
 jobs:
   ios:
     name: iOS (unsigned)
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ios]')
     runs-on: macos-latest
     permissions:
       contents: write
