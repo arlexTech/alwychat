@@ -1,13 +1,14 @@
 // Android back gesture: closes the most recently opened layer (viewer, sheet, menu, chat…).
 // With nothing open we let go of it, so Android's default runs: on Android 12+ the app moves
 // to the background (still alive) instead of being closed.
-import { hasBackend, interceptBack, isAndroid } from "$lib/backend";
+import { hasBackend, interceptBack, isAndroid, isBubble } from "$lib/backend";
 
 const layers: (() => void)[] = [];
 let release: Promise<() => Promise<void>> | null = null;
 
 function sync() {
-  if (!hasBackend || !isAndroid) return;
+  // A chat bubble's activity asks the page itself (BubbleActivity: no layer open = fold it).
+  if (!hasBackend || !isAndroid || isBubble) return;
   if (layers.length && !release) {
     release = interceptBack(() => layers.at(-1)?.());
   } else if (!layers.length && release) {
@@ -27,3 +28,10 @@ export function onBack(close: () => void): () => void {
     sync();
   };
 }
+
+if (isBubble)
+  (globalThis as { __alwyBack?: () => boolean }).__alwyBack = () => {
+    const close = layers.at(-1);
+    close?.();
+    return !!close;
+  };

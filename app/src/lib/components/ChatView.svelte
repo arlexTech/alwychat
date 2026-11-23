@@ -17,6 +17,7 @@
   import Lock from "@lucide/svelte/icons/lock";
   import Phone from "@lucide/svelte/icons/phone";
   import Video from "@lucide/svelte/icons/video";
+  import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import SendHorizontal from "@lucide/svelte/icons/send-horizontal";
@@ -68,6 +69,8 @@
     type Emote,
     editHistory,
     isAndroid,
+    isBubble,
+    leaveBubble,
     touchKeyboard,
     setSecureScreen,
     takeKeyboardContent,
@@ -1622,7 +1625,7 @@
   <button class="chat-menu-button" disabled={!a.save} onclick={() => selectionDo(a.save)} aria-label={tr("Save to gallery")} title={tr("Save to gallery")}><Download size={20} /></button>
   <button class="chat-menu-button danger" disabled={!a.delete} onclick={() => selectionDo(a.delete)} aria-label={tr("Delete")} title={tr("Delete")}><Trash2 size={20} /></button>
   {:else}
-  <button class="back" onclick={onBack} aria-label={tr("Back")}><ChevronLeft size={26} /></button>
+  {#if !isBubble || thread}<button class="back" onclick={onBack} aria-label={tr("Back")}><ChevronLeft size={26} /></button>{/if}
   {#if thread}
   <span class="title thread-title">
     <strong>{tr("Thread")}</strong>
@@ -1642,8 +1645,13 @@
       {/if}
     </span>
   </button>
+  {#if isBubble}
+  <!-- Calls run in the app: a bubble offers to open the chat there instead. -->
+  <button class="chat-menu-button" onclick={() => void leaveBubble({ roomId: room.id })} aria-label={tr("Open in AlwyChat")} title={tr("Open in AlwyChat")}><Maximize2 size={20} /></button>
+  {:else}
   <button class="chat-menu-button" onclick={() => call.join(room, false)} aria-label={tr("Voice call")}><Phone size={20} /></button>
   <button class="chat-menu-button" onclick={() => call.join(room, true)} aria-label={tr("Video call")}><Video size={22} /></button>
+  {/if}
   {/if}
   {/if}
 </header>
@@ -1968,9 +1976,9 @@
         <CirclePlus size={26} />
       </button>
       {#if isAndroid}
-        <button type="button" class="attach" onclick={() => (cameraOpen = true)} aria-label={tr("Take a photo")}><Camera size={24} /></button>
+        <button type="button" class="attach spare" onclick={() => (cameraOpen = true)} aria-label={tr("Take a photo")}><Camera size={24} /></button>
       {/if}
-      <button type="button" class="attach" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
+      <button type="button" class="attach spare" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
       <button type="button" class="attach mic" onclick={startVoice} aria-label={tr("Record a voice message")}><Mic size={24} /></button>
     {/if}
     <input
@@ -2458,6 +2466,11 @@
   .composer {
     padding: 8px 12px 12px;
     border-top: 1px solid var(--border);
+  }
+  /* A chat bubble's narrow window: camera and gallery stay in the ⊕ sheet, so the field keeps
+     room to type. */
+  :global(html.bubble) .attach.spare {
+    display: none;
   }
   .replying {
     display: flex;

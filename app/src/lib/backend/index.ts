@@ -22,6 +22,15 @@ export const touchKeyboard =
   /iPhone|iPad|iPod/.test(navigator.userAgent) ||
   (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) ||
   (matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches);
+/** Android: this window shows one chat inside a notification bubble (src-tauri/src/bubbles.rs
+ *  sets it), not the whole app. */
+export const bubbleRoom: string | null = (globalThis as { __alwyBubble?: string }).__alwyBubble ?? null;
+export const isBubble = bubbleRoom !== null;
+if (isBubble) document.documentElement.classList.add("bubble");
+/** This window's name ("main", "bubble-…"). */
+export const windowLabel: string =
+  (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata
+    ?.currentWindow?.label ?? "main";
 /** Computer apps draw their own window buttons (TitleBar.svelte, decorations are off). */
 export const hasTitlebar = isTauri && !isAndroid && !/iPhone|iPad/.test(navigator.userAgent);
 export const windowMinimize = () => invoke<void>("plugin:window|minimize", { label: "main" });
@@ -197,6 +206,35 @@ export const launchRoom = () => invoke<string | null>("launch_room");
 /** Push on/off for this device (Android); resolves to whether push is in use. */
 export const setupPush = (enabled: boolean) => invoke<boolean>("setup_push", { enabled });
 export const clearNotifications = (roomId: string) => invoke<void>("clear_notifications", { roomId });
+
+// ── Chat bubbles (Android 11+, Bubbles.kt) ──
+export interface BubbleStatus {
+  supported: boolean;
+  /** The phone threw our last bubble away (ColorOS lets only a fixed list of apps bubble). */
+  blocked: boolean;
+  /** Our switch (Settings → Notifications). */
+  on: boolean;
+  /** What Android allows for the app. */
+  system: "all" | "selected" | "none";
+  /** "All chats can bubble"; off: only `rooms` (picked one by one). */
+  all: boolean;
+  rooms: string[];
+}
+const bubble = <T>(action: string, args: object = {}) => invoke<T>("bubble", { action, args });
+export const bubbleStatus = () => bubble<BubbleStatus>("bubbleStatus");
+/** Turning bubbles on first checks that the phone lets AlwyChat bubble (`blocked` → stays off). */
+export const setBubbles = (change: { on?: boolean; all?: boolean }) => bubble<BubbleStatus>("setBubbles", change);
+/** Chat settings → "Bubble this chat" (when not all chats bubble). */
+export const setChatBubble = (roomId: string, on: boolean) => bubble<void>("setChatBubble", { roomId, on });
+export const openBubbleSettings = () => bubble<void>("openBubbleSettings");
+/** Float a chat open as a bubble; `opened` false: Android doesn't allow bubbles (its settings opened). */
+export const openBubble = (chat: { roomId: string; name: string; avatar: string | null; group: boolean; text: string; sender: string }) =>
+  bubble<{ opened: boolean; blocked?: boolean }>("openBubble", chat);
+/** From a bubble: fold it, then open `url`, or open the chat in the app (`roomId`). */
+export const leaveBubble = (to: { url?: string; roomId?: string }) => bubble<void>("leaveBubble", to);
+/** Another window (the app or a bubble) opened or closed a chat: the core's single open chat
+ *  is theirs now (payload: that window's label). */
+export const onChatTaken = (handler: (label: string) => void) => listen<string>("chat-taken", (e) => handler(e.payload));
 /** Android: notification texts in the app's language (keys in PushService.kt / NotificationAnswer.kt). */
 export const notificationLabels = (labels: Record<string, string>) => invoke<void>("notification_labels", { labels });
 
@@ -674,6 +712,8 @@ export type UpdateProgress =
   | { kind: "downloading"; done: number; total: number | null }
   | { kind: "installing" }
   | { kind: "needs_permission" };
+/** False for store builds (Google Play updates them) and local builds. */
+export const updatesItself = () => (isTauri ? invoke<boolean>("updates_itself") : Promise.resolve(false));
 export const updateCheck = () => (isTauri ? invoke<UpdateInfo | null>("update_check") : Promise.resolve(null));
 export function updateInstall(onProgress: (progress: UpdateProgress) => void) {
   const channel = new Channel<UpdateProgress>();
@@ -1238,7 +1278,8 @@ export const markRead = (roomId: string) => invoke<void>("mark_read", { roomId }
 /** A line in the app's log (target "ui"), for diagnosing. */
 export const logUi = (message: string) => invoke<void>("log_ui_error", { message }).catch(() => {});
 /** Open a link from a message in the system browser (never inside the app's webview). */
-export const openExternal = (url: string) => openUrl(url);
+// In a bubble, the bubble folds first so the browser opens in front of it.
+export const openExternal = (url: string) => (isBubble ? leaveBubble({ url }) : openUrl(url));
 
 // ── Encryption ───────────────────────────────────────────────────────────────
 

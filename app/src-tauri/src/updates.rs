@@ -57,6 +57,12 @@ fn newer(remote: &str, local: &str) -> bool {
     parts(remote) > parts(local)
 }
 
+/// Whether this build updates itself. Store builds (Google Play…) don't: the store does it.
+#[tauri::command]
+pub fn updates_itself() -> bool {
+    FEED.is_some_and(|f| !f.is_empty())
+}
+
 /// A newer version on this build's channel, if any.
 #[tauri::command]
 pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> {

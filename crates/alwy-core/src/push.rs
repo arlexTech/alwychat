@@ -105,6 +105,9 @@ pub struct PushNotification {
     pub noisy: bool,
     /// Someone is calling: shown as an incoming call (rings until answered) instead.
     pub call: Option<PushCall>,
+    /// The chat's photo (a small JPEG/PNG, base64) for its conversation shortcut and bubble:
+    /// the room's own, else the sender's in a 1:1 chat.
+    pub avatar: Option<String>,
 }
 
 /// An incoming call delivered by push (the app may not be running).
@@ -363,6 +366,7 @@ impl crate::Core {
                     video,
                     expires_at,
                 }),
+                avatar: None,
             }));
         }
         let body = match &item.event {
@@ -409,8 +413,16 @@ impl crate::Core {
         } else {
             CHAT_READY_MAX
         };
-        self.ready_for(room_id.as_str(), event_id.as_str(), wait)
-            .await;
+        let avatar_url = item.room_avatar_url.clone().or_else(|| {
+            item.is_direct_message_room
+                .then(|| item.sender_avatar_url.clone())
+                .flatten()
+        });
+        let ((), avatar) = futures_util::future::join(
+            self.ready_for(room_id.as_str(), event_id.as_str(), wait),
+            self.notification_avatar(avatar_url),
+        )
+        .await;
         Ok(Some(PushNotification {
             room_id: room_id.to_string(),
             event_id: event_id.to_string(),
@@ -421,7 +433,22 @@ impl crate::Core {
             body,
             noisy: item.is_noisy.unwrap_or(true),
             call: None,
+            avatar,
         }))
+    }
+
+    /// A chat photo for a notification, if it comes quickly (cached after the first time).
+    async fn notification_avatar(&self, mxc: Option<String>) -> Option<String> {
+        use base64::Engine;
+        let mxc = mxc?;
+        let fetch = std::pin::pin!(self.thumbnail(&mxc, 128));
+        let late = std::pin::pin!(crate::rt::sleep(std::time::Duration::from_secs(3)));
+        let futures_util::future::Either::Left((Ok(bytes), _)) =
+            futures_util::future::select(fetch, late).await
+        else {
+            return None;
+        };
+        Some(base64::engine::general_purpose::STANDARD.encode(bytes))
     }
 }
 
@@ -545,6 +572,7 @@ impl crate::Core {
                 video,
                 expires_at,
             }),
+            avatar: None,
         })
     }
 }

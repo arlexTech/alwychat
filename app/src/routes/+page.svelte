@@ -8,6 +8,7 @@
     discoverServer,
     endSession,
     hasBackend,
+    isBubble,
     isWeb,
     login,
     logout,
@@ -24,7 +25,9 @@
   } from "$lib/backend";
   // The app itself (most of the code) loads only once someone is signed in: the sign-in and
   // invite screens show without waiting for it.
-  const loadApp = () => import("$lib/components/ChatsScreen.svelte");
+  // An Android chat bubble's window shows just its chat.
+  const loadApp = (): Promise<typeof import("$lib/components/ChatsScreen.svelte")> =>
+    isBubble ? import("$lib/components/BubbleScreen.svelte") : import("$lib/components/ChatsScreen.svelte");
   let appModule = $state<Awaited<ReturnType<typeof loadApp>> | null>(null);
   $effect(() => {
     if (view === "signed-in" && !appModule) loadApp().then((m) => (appModule = m));

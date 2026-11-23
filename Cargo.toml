@@ -62,3 +62,5 @@ opt-level = 3
 # webrtc-sys with one addition (per-track playback volume), see vendor/webrtc-sys/ALWYCHAT-PATCH.md.
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }
+# Android chat bubbles: attach a window to an activity Android started (vendor/tao/ALWYCHAT-PATCH.md).
+tao = { path = "vendor/tao" }

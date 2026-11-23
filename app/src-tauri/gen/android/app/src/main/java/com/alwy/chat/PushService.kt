@@ -38,6 +38,9 @@ class PushService : FirebaseMessagingService() {
     Log.i("AlwyChat", "new push token")
   }
 
+  /** A chat's name and photo (base64), for its conversation shortcut. */
+  data class Chat(val name: String, val avatar: String?, val group: Boolean)
+
   companion object {
     const val CHANNEL = "messages"
 
@@ -57,7 +60,7 @@ class PushService : FirebaseMessagingService() {
         Log.w("AlwyChat", "push: read chats: $e")
         emptyList()
       }
-      for (roomId in read) manager.cancel(roomId, 1)
+      for (roomId in read) Bubbles.clear(context, roomId)
     }
 
     /** A pushed "event X in room Y" (from FCM or UnifiedPush): fetched, decrypted, shown. */
@@ -131,7 +134,12 @@ class PushService : FirebaseMessagingService() {
       val sentAt = n.optLong("sent_at", System.currentTimeMillis())
       val style = conversation(context, roomId, roomName)
       style.addMessage(body, sentAt, Person.Builder().setName(sender).setKey(sender).build())
-      post(context, roomId, eventId, style, silent = !n.optBoolean("noisy", true), onlyAlertOnce = false)
+      // Its bubble is open on screen: the message is right there, no sound.
+      if (BubbleActivity.onScreen == roomId) n.put("noisy", false)
+      // The chat's conversation shortcut: its name and photo for the bubble (and Android's
+      // conversation section).
+      val chat = Chat(roomName ?: sender, n.optString("avatar").ifEmpty { null }, roomName != null)
+      post(context, roomId, eventId, style, silent = !n.optBoolean("noisy", true), onlyAlertOnce = false, chat = chat)
     }
 
     /** The messages a chat's notification on screen already shows (their event IDs). */
@@ -160,7 +168,7 @@ class PushService : FirebaseMessagingService() {
     /** Show (or update) a chat's notification. `eventId`: what Reply / Mark as read answer. */
     fun post(
       context: Context, roomId: String, eventId: String, style: NotificationCompat.MessagingStyle,
-      silent: Boolean, onlyAlertOnce: Boolean,
+      silent: Boolean, onlyAlertOnce: Boolean, chat: Chat? = null, openBubble: Boolean = false,
     ) {
       val manager = NotificationManagerCompat.from(context)
       // Tapping opens the chat (deep link handled in lib.rs).
@@ -182,6 +190,21 @@ class PushService : FirebaseMessagingService() {
         .setContentIntent(pending)
         // No suggested replies / emoji added by Android: our own Reply is enough.
         .setAllowSystemGeneratedContextualActions(false)
+      // A bubble needs the chat's shortcut. Re-posts without the chat's details (after a Reply)
+      // keep the shortcut and bubble state the notification had.
+      val shown = context.getSystemService(NotificationManager::class.java).activeNotifications
+        .firstOrNull { it.tag == roomId && it.id == 1 }?.notification
+      val shortcut = chat?.let { Bubbles.shortcut(context, roomId, it.name, it.avatar, it.group) }
+        ?: (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) shown?.shortcutId else null)
+      if (shortcut != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        builder
+          .setShortcutId(shortcut)
+          .setLocusId(androidx.core.content.LocusIdCompat(roomId))
+        if (openBubble || Bubbles.allowed(context, roomId)) {
+          val kept = shown?.let { NotificationCompat.getBubbleMetadata(it) }?.takeIf { !openBubble && chat == null }
+          builder.setBubbleMetadata(kept ?: Bubbles.metadata(shortcut, openBubble))
+        }
+      }
       // Remember what it shows (the latest 20), so the same message isn't added again.
       if (eventId.isNotEmpty()) {
         val events = ArrayList((shownEvents(context, roomId) - eventId + eventId).takeLast(20))

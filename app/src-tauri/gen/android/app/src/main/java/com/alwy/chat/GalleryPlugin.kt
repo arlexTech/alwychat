@@ -74,7 +74,10 @@ class CaptureArgs {
   // The manifest declares CAMERA (video calls), so Android requires it for camera intents too.
   permissions = [Permission(strings = [Manifest.permission.CAMERA], alias = "camera")],
 )
-class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
+class GalleryPlugin(private val first: Activity) : Plugin(first) {
+  /** The activity in front, the app itself or a chat bubble ([Front]): pickers and windows act there. */
+  private val activity: Activity get() = Front.activity ?: first
+
   private var pickDir: File? = null
 
   private var captureFile: File? = null

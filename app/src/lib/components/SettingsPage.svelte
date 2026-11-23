@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { BLOCKED } from "$lib/bubble";
   import { messageStamp } from "$lib/format";
   import { peek, remember } from "$lib/cache";
   import Bug from "@lucide/svelte/icons/bug";
@@ -55,6 +56,10 @@
     type NotificationRules,
     testPush,
     unifiedPush,
+    bubbleStatus,
+    setBubbles,
+    openBubbleSettings,
+    type BubbleStatus,
     useUnifiedPush,
     type UnifiedPushStatus,
     type PushTestResult,
@@ -141,6 +146,34 @@
       if (add) keyword = "";
     } catch (e) {
       error = String(e);
+    }
+  }
+
+  // ── Chat bubbles (Android 11+) ──
+  let bubbles = $state<BubbleStatus | null>(null);
+  const loadBubbles = () => void bubbleStatus().then((s) => (bubbles = s)).catch(() => {});
+  $effect(() => {
+    if (section !== "notifications" || !isAndroid) return;
+    loadBubbles();
+    // Back from Android's settings.
+    const again = () => document.visibilityState === "visible" && loadBubbles();
+    document.addEventListener("visibilitychange", again);
+    return () => document.removeEventListener("visibilitychange", again);
+  });
+  let bubblesChecking = $state(false);
+  async function toggleBubbles(input: HTMLInputElement) {
+    const on = input.checked;
+    bubblesChecking = on;
+    try {
+      // Turning on checks that the phone lets AlwyChat bubble (a blocked phone stays off).
+      bubbles = await setBubbles({ on });
+      input.checked = bubbles.on;
+      if (on && bubbles.on && bubbles.system === "none") await openBubbleSettings();
+    } catch (e) {
+      input.checked = !on;
+      error = String(e);
+    } finally {
+      bubblesChecking = false;
     }
   }
 
@@ -607,6 +640,50 @@
       </div>
     {/if}
 
+    {#if bubbles?.supported && notificationsOn}
+      <label class="toggle">
+        <span>
+          <strong>{tr("Chat bubbles")}</strong>
+          <small>
+            {bubblesChecking
+              ? tr("Checking that this phone allows bubbles…")
+              : bubbles.blocked && !bubbles.on
+                ? BLOCKED()
+                : tr("Chats can float over other apps as round heads, like Messenger.")}
+          </small>
+        </span>
+        <input type="checkbox" role="switch" checked={bubbles.on} disabled={bubblesChecking} onchange={(e) => toggleBubbles(e.currentTarget)} />
+      </label>
+      {#if bubbles.on}
+        <label class="toggle">
+          <span>
+            <strong>{tr("All chats can bubble")}</strong>
+            <small>{tr("Off: only the chats you pick (chat settings → Bubble this chat).")}</small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={bubbles.all}
+            onchange={(e) => void setBubbles({ all: e.currentTarget.checked }).then((s) => (bubbles = s), (err) => (error = String(err)))}
+          />
+        </label>
+        <div class="check">
+          <span class="mark" class:ok={bubbles.system !== "none"}>{bubbles.system === "none" ? "!" : "✓"}</span>
+          <span>
+            <strong>{tr("Android's bubble setting")}</strong>
+            <small>
+              {bubbles.system === "all"
+                ? tr("Every chat can bubble.")
+                : bubbles.system === "selected"
+                  ? tr("Only the chats you pick bubble (the bubble button on their notification).")
+                  : tr("Android doesn't show AlwyChat's bubbles.")}
+            </small>
+          </span>
+          <button onclick={() => void openBubbleSettings()}>{bubbles.system === "none" ? tr("Allow") : tr("Change")}</button>
+        </div>
+      {/if}
+    {/if}
+
     {#if rules}
       <label class="toggle">
         <span><strong>{tr("@room mentions")}</strong><small>{tr("Notify when someone alerts a whole group.")}</small></span>
@@ -846,7 +923,7 @@
       <img class="about-logo" src={logo} alt="" width="64" height="64" />
       <p><strong>{tr("AlwyChat")}</strong> {version}</p>
       <p>{tr("Server: {server}", { server: server })}</p>
-      <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button></p>
+      <p>{tr("Free software (AGPL-3.0-or-later).")} <button class="link" onclick={() => openExternal("https://github.com/arlexTech/alwychat")}>{tr("Source code")}</button> · <button class="link" onclick={() => openExternal("https://arlextech.github.io/alwychat/privacy")}>{tr("Privacy policy")}</button></p>
     </div>
     <button class="m-btn" onclick={() => (reporting = true)}><Bug size={18} />{tr("Report a problem")}</button>
     <p class="m-hint">{tr("Something doesn't work? Send what happened and the app's technical log to someone who can help.")}</p>
@@ -861,7 +938,7 @@
         <button class="link" onclick={() => openExternal(ALL_DOWNLOADS)}>{tr("All downloads")}</button>
       </p>
     {/if}
-    {#if isTauri}
+    {#if isTauri && updates.enabled}
       <h3 class="section">{tr("Updates")}</h3>
       {#if updates.available}
         <button class="m-btn" disabled={updates.stage === "downloading" || updates.stage === "installing"} onclick={() => updates.install()}>

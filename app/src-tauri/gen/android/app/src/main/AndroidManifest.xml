@@ -79,6 +79,28 @@
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
+        <!-- A chat inside a notification bubble (Bubbles.kt). Bubbles can only embed an activity
+             that is embeddable, resizeable and not singleTask (MainActivity is). -->
+        <activity
+            android:name=".BubbleActivity"
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
+            android:documentLaunchMode="always"
+            android:taskAffinity=".bubble"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- Folds an open bubble back into its chat head (it takes the focus for a moment). -->
+        <activity
+            android:name=".MinimizeBubbleActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:noHistory="true" />
+
         <!-- FCM pushes from AlwyChat's gateway (PushService.kt). -->
         <receiver
             android:name=".CallDeclineReceiver"

@@ -1,7 +1,7 @@
 // AlwyChat updating itself (desktop and Android apps built by CI, see src-tauri/src/updates.rs):
 // checked a little after start and every few hours; the chat list shows a banner, Settings →
 // About has "Check for updates".
-import { updateCheck, updateInstall, type UpdateInfo } from "$lib/backend";
+import { updateCheck, updateInstall, updatesItself, type UpdateInfo } from "$lib/backend";
 
 type Stage = "idle" | "checking" | "downloading" | "installing" | "needs-permission";
 
@@ -15,8 +15,20 @@ class Updates {
   upToDate = $state(false);
   #timer: ReturnType<typeof setInterval> | undefined;
 
+  /** This build updates itself (not a store build, which the store updates). */
+  enabled = $state(false);
+  #started = false;
+
   start() {
-    if (this.#timer) return;
+    if (this.#started) return;
+    this.#started = true;
+    void updatesItself().then((on) => {
+      this.enabled = on;
+      if (on) this.#watch();
+    });
+  }
+
+  #watch() {
     // Back from Android's "install unknown apps" setting: carry on (the APK is already there).
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && this.stage === "needs-permission" && !this.#resumed) {

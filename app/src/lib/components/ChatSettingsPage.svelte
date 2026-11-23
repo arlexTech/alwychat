@@ -15,6 +15,7 @@
     isAndroid,
   } from "$lib/backend";
   import RoomManage from "./RoomManage.svelte";
+  import ChatBubbleRows from "./ChatBubbleRows.svelte";
   import UserPage from "./UserPage.svelte";
   import UserRound from "@lucide/svelte/icons/user-round";
   import Users from "@lucide/svelte/icons/users";
@@ -256,6 +257,7 @@
   {#if details}
     <h3 class="m-section">{tr("Notifications")}</h3>
     <RoomManage room={details} part="notify" reload={loadDetails} />
+    {#if summary}<ChatBubbleRows room={summary} />{/if}
 
     <h3 class="m-section">{tr("Privacy & support")}</h3>
     <div class="m-row">

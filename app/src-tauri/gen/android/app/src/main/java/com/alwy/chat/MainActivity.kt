@@ -132,6 +132,7 @@ class MainActivity : TauriActivity() {
 
   override fun onResume() {
     super.onResume()
+    Front.resumed(this)
     visible = true
     // On screen, the app shows incoming calls itself.
     IncomingCall.cancelAll(this)
@@ -200,6 +201,9 @@ class MainActivity : TauriActivity() {
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
     )
     super.onCreate(savedInstanceState)
+    // Our webview window (bubbles.rs makes one per activity).
+    NativeBubble.window("MainActivity", id, "")
+    Front.created(this)
     keepShare(intent)
     // Same colour as the app background (--bg in app.css), seen behind the system bars.
     window.decorView.setBackgroundColor(Color.parseColor("#0e1014"))

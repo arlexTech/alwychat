@@ -6,6 +6,7 @@
 # /usr/local/bin/build-sign; your account may run it as buildsign through sudo, nothing else.
 #
 #   sudo -n -u buildsign /usr/local/bin/build-sign PROJECT apk < unsigned.apk > signed.apk
+#   sudo -n -u buildsign /usr/local/bin/build-sign PROJECT aab < unsigned.aab > signed.aab
 #   sudo -n -u buildsign /usr/local/bin/build-sign PROJECT tauri-update NAME < file > file.sig
 #
 # Data goes through stdin/stdout: this account can't read your files, you can't read its.
@@ -22,7 +23,7 @@ log=$home/sign.log
 max=$((1024 * 1024 * 1024))
 
 fail() { echo "build-sign: $*" >&2; exit 1; }
-usage="usage: PROJECT apk < in.apk > out.apk | PROJECT tauri-update NAME < file > file.sig"
+usage="usage: PROJECT apk|aab < in > out | PROJECT tauri-update NAME < file > file.sig"
 [ "$(id -un)" = buildsign ] || fail "run it as buildsign: sudo -u buildsign $0 …"
 
 project=${1:-}
@@ -32,7 +33,7 @@ keys=/etc/build-sign/$project
 [ -d "$keys" ] || fail "no keys for project \"$project\" (add them: sudo scripts/signing/setup.sh $project)"
 name=-
 case "$what" in
-  apk)
+  apk | aab)
     [ $# -eq 2 ] || fail "$usage"
     [ -f "$keys/android.jks" ] || fail "$project has no Android key"
     ;;
@@ -65,6 +66,15 @@ case "$what" in
       --in "$work/in.apk" --out "$work/out" >&2
     java -jar "$lib/apksigner.jar" verify "$work/out" >&2
     signed=$work/in.apk
+    ;;
+  aab)
+    # An app bundle for Google Play: signed like a jar (Play re-signs the apps it makes from it).
+    alias=$(cat "$keys/android.alias")
+    mv "$work/in" "$work/in.aab"
+    jarsigner -keystore "$keys/android.jks" -storepass:file "$keys/android.pass" \
+      -keypass:file "$keys/android.pass" -signedjar "$work/out" "$work/in.aab" "$alias" >&2
+    jarsigner -verify "$work/out" >&2
+    signed=$work/in.aab
     ;;
   tauri-update)
     "$lib/tauri-update-sign" sign "$keys/tauri-update.key" "$keys/tauri-update.pass" "$name" < "$work/in" > "$work/out"

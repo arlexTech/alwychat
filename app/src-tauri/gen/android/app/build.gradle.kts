@@ -38,8 +38,11 @@ android {
     namespace = "com.alwy.chat"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
+        // The app's id on phones (its owner's domain, alwyapps.be). The code keeps its own package
+        // (`namespace` above, which the Rust side's JNI names follow) and the push gateway keeps
+        // knowing the app as com.alwy.chat (alwy_core::names::APP_ID): neither is tied to this id.
         // ALWY_ANDROID_ID: builds published outside GitHub can keep another id (release-local.sh).
-        applicationId = providers.environmentVariable("ALWY_ANDROID_ID").getOrElse("com.alwy.chat")
+        applicationId = providers.environmentVariable("ALWY_ANDROID_ID").getOrElse("be.alwyapps.chat")
         minSdk = 24
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -83,6 +86,12 @@ android {
     buildFeatures {
         buildConfig = true
     }
+}
+
+// Google Play builds (ALWY_PLAY=1, scripts/play-build.sh): the store updates the app, so the
+// permission to install updates is left out (Play refuses apps that ask for it).
+if (providers.environmentVariable("ALWY_PLAY").isPresent) {
+    android.sourceSets.getByName("release").manifest.srcFile("src/play/AndroidManifest.xml")
 }
 
 kotlin {

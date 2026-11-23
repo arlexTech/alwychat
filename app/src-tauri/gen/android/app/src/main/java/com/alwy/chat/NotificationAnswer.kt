@@ -37,7 +37,7 @@ class NotificationAnswer : BroadcastReceiver() {
       RemoteInput.getResultsFromIntent(intent)?.getCharSequence(PushService.REPLY_KEY)?.toString()?.trim()
         ?: return
     } else ""
-    if (intent.action == READ) NotificationManagerCompat.from(app).cancel(roomId, 1)
+    if (intent.action == READ) Bubbles.clear(app, roomId)
     val pending = goAsync()
     Thread {
       try {

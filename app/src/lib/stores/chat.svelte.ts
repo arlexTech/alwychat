@@ -1,6 +1,10 @@
 import {
   closeChat,
+  hasBackend,
+  isAndroid,
   loadNewer,
+  onChatTaken,
+  windowLabel,
   loadOlder,
   openChat,
   peekChat,
@@ -241,8 +245,8 @@ class Chat {
   async open(roomId: string) {
     const focus = this.#pendingFocus?.roomId === roomId ? this.#pendingFocus.eventId : null;
     this.#pendingFocus = null;
-    if (this.roomId === roomId && !focus) return;
-    await this.#load(roomId, null);
+    if (this.roomId === roomId && !focus && !this.#taken) return;
+    await this.#load(roomId, null, this.roomId === roomId);
     if (focus) await this.#show(roomId, focus);
   }
 
@@ -269,16 +273,21 @@ class Chat {
     if (this.roomId && this.focused) await this.#load(this.roomId, null);
   }
 
-  async #load(roomId: string, focus: string | null) {
+  async #load(roomId: string, focus: string | null, again = false) {
     const generation = ++this.#generation;
     const current = () => this.#generation === generation;
     const sameRoom = this.roomId === roomId;
+    this.#taken = false;
     if (!sameRoom) this.#keepSnapshot();
     this.roomId = roomId;
     this.focused = focus;
     this.atEnd = !focus;
-    // The snapshot (if any) until the first live batch.
-    const snapshot = focus ? undefined : (this.#snapshots ??= loadSnapshots()).get(roomId);
+    // The snapshot (if any) until the first live batch; opened again: what's on screen.
+    const snapshot = focus
+      ? undefined
+      : again
+        ? this.entries.filter((e) => e.type !== "read_marker")
+        : (this.#snapshots ??= loadSnapshots()).get(roomId);
     this.entries = snapshot?.map((e) => ({ ...e, key: snapKey(e) })) ?? [];
     this.loaded = !!snapshot?.length;
     // Messages by their event, the rest (day lines, "new messages") by the core's key, which
@@ -400,7 +409,21 @@ class Chat {
     return has();
   }
 
+  /** Another window (a chat bubble, or the app behind it) opened or closed a chat since ours
+   *  opened: the core's single open chat isn't ours any more. */
+  #taken = false;
+  taken() {
+    if (this.roomId) this.#taken = true;
+  }
+  /** Back on screen: open our chat again if another window took it meanwhile. */
+  async resume() {
+    if (!this.#taken || !this.roomId) return;
+    this.#taken = false;
+    await this.#load(this.roomId, null, true);
+  }
+
   close() {
+    this.#taken = false;
     if (!this.roomId) return;
     this.#keepSnapshot();
     this.#generation++;
@@ -416,7 +439,11 @@ class Chat {
 export const chat = new Chat();
 chatList.prepare = (chats) => chat.prepare(chats);
 if (typeof document !== "undefined")
-  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && chat.persist());
+  document.addEventListener("visibilitychange", () =>
+    document.visibilityState === "hidden" ? chat.persist() : void chat.resume(),
+  );
+// Android chat bubbles: two windows share the core's one open chat; the one on screen wins.
+if (isAndroid && hasBackend) void onChatTaken((label) => label !== windowLabel && chat.taken());
 
 // Dev builds only: lets the desktop test harness (WebDriver) read the open chat.
 if (import.meta.env.DEV) (globalThis as Record<string, unknown>).__chat = chat;

@@ -22,6 +22,8 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_opener::OpenerExt;
 
+#[cfg(target_os = "android")]
+mod bubbles;
 mod native_call;
 mod updates;
 // Windows APIs (window list, WebView2 shared buffers) are FFI.
@@ -112,7 +114,9 @@ async fn subscribe_chat_list(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command arguments
 async fn open_chat(
+    window: tauri::Window,
     core: State<'_, AppCore>,
     room_id: String,
     on_diffs: Channel<Vec<ListDiff<TimelineEntry>>>,
@@ -137,7 +141,15 @@ async fn open_chat(
         },
         focus.as_deref(),
     )
-    .await
+    .await?;
+    chat_taken(&window);
+    Ok(())
+}
+
+/// The core shows one open chat at a time; with a chat bubble there are two windows. Tell the
+/// others theirs was replaced: each opens its chat again when it comes back on screen.
+fn chat_taken(window: &tauri::Window) {
+    let _ = window.emit("chat-taken", window.label());
 }
 
 /// Newer messages of a chat opened on a search result; true once the newest is loaded.
@@ -1606,6 +1618,7 @@ async fn edit_history(
 /// Save a message's media: photos and videos to ~/Pictures/AlwyChat, other files to Downloads.
 /// On Android they go through MediaStore so the Gallery sees them (see GalleryPlugin.kt).
 #[tauri::command]
+#[allow(clippy::needless_return)] // one return per platform
 async fn save_media(
     app: tauri::AppHandle,
     core: State<'_, AppCore>,
@@ -2192,8 +2205,10 @@ async fn peek_chat(
 }
 
 #[tauri::command]
-async fn close_chat(core: State<'_, AppCore>) -> alwy_core::Result<()> {
-    core.close_chat()
+async fn close_chat(window: tauri::Window, core: State<'_, AppCore>) -> alwy_core::Result<()> {
+    core.close_chat()?;
+    chat_taken(&window);
+    Ok(())
 }
 
 #[tauri::command]
@@ -2805,6 +2820,39 @@ fn launch_room(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
+/// Android chat bubbles (Bubbles.kt): `action` is one of the SystemPlugin's bubble commands.
+#[tauri::command]
+async fn bubble(
+    app: tauri::AppHandle,
+    action: String,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    const ACTIONS: [&str; 6] = [
+        "bubbleStatus",
+        "setBubbles",
+        "setChatBubble",
+        "openBubbleSettings",
+        "openBubble",
+        "leaveBubble",
+    ];
+    if !ACTIONS.contains(&action.as_str()) {
+        return Err(format!("unknown bubble action {action}"));
+    }
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>(&action, args)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, args);
+        Err("chat bubbles are Android only".into())
+    }
+}
+
 /// Remove this chat's notifications from the phone (it was just opened).
 #[tauri::command]
 async fn clear_notifications(app: tauri::AppHandle, room_id: String) -> Result<(), String> {
@@ -2909,8 +2957,17 @@ pub fn run() {
     let builder = builder.setup(|app| {
         #[cfg(target_os = "android")]
         init_android_tls()?;
+        // The window (tauri.conf.json has `create: false`): Android makes one per activity
+        // once each says it exists (bubbles.rs).
+        #[cfg(not(target_os = "android"))]
+        if let Some(config) = app.config().app.windows.first() {
+            tauri::WebviewWindowBuilder::from_config(app.handle(), config)?.build()?;
+        }
         #[cfg(target_os = "android")]
-        let _ = android::APP.set(app.handle().clone());
+        {
+            let _ = android::APP.set(app.handle().clone());
+            bubbles::ready(app.handle());
+        }
         #[cfg(target_os = "linux")]
         enable_media_capture(app)?;
         let data_dir = app.path().app_data_dir()?;
@@ -3199,6 +3256,7 @@ pub fn run() {
             bluetooth_names,
             ring_in_app,
             updates::update_check,
+            updates::updates_itself,
             updates::update_install,
             link_preview,
             pin_message,
@@ -3297,6 +3355,7 @@ pub fn run() {
             use_unified_push,
             launch_room,
             clear_notifications,
+            bubble,
             notification_labels,
             set_quick_reaction,
             set_theme,

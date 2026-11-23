@@ -124,6 +124,38 @@ class ClearArgs {
 }
 
 @InvokeArg
+class BubbleArgs {
+  lateinit var roomId: String
+  lateinit var name: String
+  var avatar: String? = null
+  var group: Boolean = false
+  /** Shown in the bubble's notification when the chat has none yet. */
+  var text: String = ""
+  var sender: String = ""
+}
+
+@InvokeArg
+class BubbleOnArgs {
+  var on: Boolean? = null
+  /** "All chats can bubble". */
+  var all: Boolean? = null
+}
+
+@InvokeArg
+class ChatBubbleArgs {
+  lateinit var roomId: String
+  var on: Boolean = true
+}
+
+@InvokeArg
+class BubbleLeaveArgs {
+  /** Fold the bubble, then open this link. */
+  var url: String? = null
+  /** Fold the bubble and open this chat in the app. */
+  var roomId: String? = null
+}
+
+@InvokeArg
 class LabelsArgs {
   var labels: Map<String, String> = emptyMap()
 }
@@ -139,7 +171,10 @@ class LabelsArgs {
     Permission(strings = [Manifest.permission.BLUETOOTH_CONNECT], alias = "bluetooth"),
   ],
 )
-class SystemPlugin(private val activity: Activity) : Plugin(activity) {
+class SystemPlugin(private val first: Activity) : Plugin(first) {
+  /** The activity in front, the app itself or a chat bubble ([Front]): pickers and windows act there. */
+  private val activity: Activity get() = Front.activity ?: first
+
   private val pkg get() = activity.packageName
 
   @Command
@@ -205,7 +240,7 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     val args = invoke.parseArgs(PipAllowedArgs::class.java)
     if (MainActivity.pipEnabled != args.on) {
       MainActivity.pipEnabled = args.on
-      (activity as? MainActivity)?.updatePip()
+      Front.main?.updatePip()
     }
     invoke.resolve()
   }
@@ -216,7 +251,7 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
   fun backgroundCamera(invoke: Invoke) {
     val args = invoke.parseArgs(BackgroundCameraArgs::class.java)
     activity.runOnUiThread {
-      val main = activity as? MainActivity
+      val main = Front.main
       val ok = if (!args.on) {
         BackgroundCamera.stop()
         true
@@ -236,7 +271,7 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     val args = invoke.parseArgs(PipShapeArgs::class.java)
     if (MainActivity.pipWide != args.wide) {
       MainActivity.pipWide = args.wide
-      (activity as? MainActivity)?.updatePip()
+      Front.main?.updatePip()
     }
     invoke.resolve()
   }
@@ -270,13 +305,13 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     if (args.mute.isNotEmpty()) MainActivity.muteLabel = args.mute
     if (args.unmute.isNotEmpty()) MainActivity.unmuteLabel = args.unmute
     if (args.hangUp.isNotEmpty()) MainActivity.hangUpLabel = args.hangUp
-    (activity as? MainActivity)?.updatePip()
+    Front.main?.updatePip()
     if (!args.active) {
       BackgroundCamera.stop()
-      (activity as? MainActivity)?.overLockScreen(false)
+      Front.main?.overLockScreen(false)
     }
     // Answered: the call's own screen rules take over (the proximity sensor on the earpiece).
-    else (activity as? MainActivity)?.keepScreenOn(false)
+    else Front.main?.keepScreenOn(false)
     if (args.active) {
       CallService.start(activity, args.title, args.text, args.hangUp, args.channel, args.roomId, args.muted, args.mute, args.unmute, args.camera)
     } else {
@@ -334,7 +369,7 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     // The ring ended: unless it was answered (the call starts within a moment), the app no
     // longer shows over the lock screen.
     if (!args.on) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-      if (!MainActivity.inCall) (activity as? MainActivity)?.overLockScreen(false)
+      if (!MainActivity.inCall) Front.main?.overLockScreen(false)
     }, 4000)
     invoke.resolve()
   }
@@ -744,10 +779,144 @@ class SystemPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve()
   }
 
+  /** Settings → Notifications → "Chat bubbles": ours and Android's (all / selected / none). */
+  @Command
+  fun bubbleStatus(invoke: Invoke) {
+    val context = activity.applicationContext
+    // Turned on while Android's setting said none: checked once that setting allows bubbles.
+    background(invoke) {
+      if (Bubbles.enabled(context) && !Bubbles.checked(context)) Bubbles.probe(context)
+      invoke.resolve(bubbleState(context))
+    }
+  }
+
+  private fun bubbleState(context: android.content.Context) = JSObject().apply {
+    put("supported", Bubbles.supported)
+    put("blocked", Bubbles.blocked(context))
+    put("on", Bubbles.enabled(context))
+    put("system", Bubbles.preference(context))
+    put("all", Bubbles.allChats(context))
+    put("rooms", app.tauri.plugin.JSArray().apply { Bubbles.chosen(context).forEach { put(it) } })
+  }
+
+  /** Settings switches; turning bubbles on checks the phone first (resolves the new state). */
+  @Command
+  fun setBubbles(invoke: Invoke) {
+    val args = invoke.parseArgs(BubbleOnArgs::class.java)
+    val context = activity.applicationContext
+    args.all?.let { Bubbles.setAllChats(context, it) }
+    background(invoke) {
+      when (args.on) {
+        true -> {
+          Bubbles.turnOn(context)
+          Bubbles.probe(context)
+        }
+        false -> Bubbles.setEnabled(context, false)
+        null -> {}
+      }
+      invoke.resolve(bubbleState(context))
+    }
+  }
+
+  /** Off the main thread; a failure rejects the call instead of closing the app. */
+  private fun background(invoke: Invoke, work: () -> Unit) {
+    Thread {
+      try {
+        work()
+      } catch (e: Exception) {
+        android.util.Log.w("AlwyChat", "bubbles: $e")
+        invoke.reject(e.toString())
+      }
+    }.start()
+  }
+
+  /** Chat settings → "Bubble this chat" (when not every chat bubbles). */
+  @Command
+  fun setChatBubble(invoke: Invoke) {
+    val args = invoke.parseArgs(ChatBubbleArgs::class.java)
+    Bubbles.setChosen(activity, args.roomId, args.on)
+    invoke.resolve()
+  }
+
+  @Command
+  fun openBubbleSettings(invoke: Invoke) {
+    Bubbles.openSettings(activity)
+    invoke.resolve()
+  }
+
+  /**
+   * "Open as a bubble" (chat menu): the chat's notification floats open as a bubble, hidden
+   * from the shade. Android only lets it float when the app isn't in front: the app steps back
+   * first. Resolves false when Android doesn't allow bubbles (its settings open instead).
+   */
+  @Command
+  fun openBubble(invoke: Invoke) {
+    val args = invoke.parseArgs(BubbleArgs::class.java)
+    val context = activity.applicationContext
+    // Opening one as a bubble picks it (it keeps bubbling when not every chat does).
+    Bubbles.setChosen(context, args.roomId, true)
+    if (!Bubbles.enabled(context) || Bubbles.preference(context) == "none") {
+      Bubbles.openSettings(activity)
+      invoke.resolve(JSObject().put("opened", false))
+      return
+    }
+    val style = PushService.conversation(context, args.roomId, if (args.group) args.name else null)
+    if (style.messages.isEmpty()) {
+      val who = androidx.core.app.Person.Builder().setName(args.sender.ifEmpty { args.name }).setKey(args.sender).build()
+      style.addMessage(args.text.ifEmpty { args.name }, System.currentTimeMillis(), who)
+    }
+    val post = { open: Boolean ->
+      PushService.post(
+        context, args.roomId, "", style, silent = true, onlyAlertOnce = true,
+        chat = PushService.Chat(args.name, args.avatar, args.group), openBubble = open,
+      )
+    }
+    val manager = context.getSystemService(android.app.NotificationManager::class.java)
+    val hadOne = manager.activeNotifications.any { it.tag == args.roomId && it.id == 1 }
+    // First a quiet try while the app is still in front: some phones (ColorOS) throw the bubble
+    // away, and then the app must neither step back nor leave a stray notification.
+    background(invoke) {
+      post(false)
+      val kept = Bubbles.kept(context, args.roomId)
+      if (kept == false) {
+        if (!hadOne) manager.cancel(args.roomId, 1)
+        Bubbles.setBlocked(context, true)
+        Bubbles.setEnabled(context, false)
+        invoke.resolve(JSObject().put("opened", false).put("blocked", true))
+        return@background
+      }
+      Bubbles.setBlocked(context, false)
+      val front = activity
+      if (front is MainActivity) {
+        front.runOnUiThread { front.moveTaskToBack(true) }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ post(true) }, 400)
+      } else {
+        post(true)
+      }
+      invoke.resolve(JSObject().put("opened", true))
+    }
+  }
+
+  /** From a bubble: fold it (then open a link, or the chat in the app). */
+  @Command
+  fun leaveBubble(invoke: Invoke) {
+    val args = invoke.parseArgs(BubbleLeaveArgs::class.java)
+    val room = args.roomId
+    if (room != null) {
+      val open = Intent(Intent.ACTION_VIEW, Uri.parse("io.github.arlextech.alwychat:/room?id=" + Uri.encode(room)))
+        .setClass(activity, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+      activity.startActivity(open)
+    } else {
+      MinimizeBubbleActivity.start(activity, args.url)
+    }
+    invoke.resolve()
+  }
+
   @Command
   fun clearNotifications(invoke: Invoke) {
     val args = invoke.parseArgs(ClearArgs::class.java)
-    NotificationManagerCompat.from(activity).cancel(args.roomId, 1)
+    Bubbles.clear(activity, args.roomId)
     invoke.resolve()
   }
 
