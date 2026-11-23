@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inBody } from "$lib/layout";
   import { coreTexts } from "$lib/coreText";
   import { tr, trc } from "$lib/i18n/index.svelte";
   import Settings from "@lucide/svelte/icons/settings";
@@ -33,6 +34,7 @@
   import { updates } from "$lib/stores/updates.svelte";
   import ProgressBar from "./ProgressBar.svelte";
   import { sidePanels } from "$lib/stores/panel.svelte";
+  import { prefs } from "$lib/stores/prefs.svelte";
   import { flip } from "svelte/animate";
   import { fade, fly } from "svelte/transition";
   import {
@@ -180,6 +182,23 @@
   /** The open chat's shared theme colours. */
   const theme = $derived(themeById(chat.style?.theme));
 
+  // Android: a chat's scenery runs on under the status and navigation bars (dark): light bar
+  // icons while it fills the phone's screen (one pane, no page over it).
+  let phone = $state(false);
+  $effect(() => {
+    const query = matchMedia("(max-width: 720px)");
+    phone = query.matches;
+    const changed = () => (phone = query.matches);
+    query.addEventListener("change", changed);
+    return () => query.removeEventListener("change", changed);
+  });
+  $effect(() => {
+    if (!isAndroid) return;
+    const scenic = !!selected && !selected.is_invite && (!!theme.scene || !!chat.style?.wallpaper);
+    prefs.setDarkBars(phone && scenic && sidePanels.pages === 0);
+  });
+  $effect(() => () => prefs.setDarkBars(false));
+
   // Android back: a full-screen call shrinks to its pill first.
   $effect(() => {
     if (call.active && !call.minimized) return onBack(() => (call.minimized = true));
@@ -252,11 +271,12 @@
   function openRowMenu(event: MouseEvent, room: RoomSummary, settings?: () => void) {
     event.preventDefault();
     const extra = settings ? (room.is_dm && room.dm_user ? 3 : 1) : 0;
+    const at = inBody(event);
     rowMenu = {
       room,
       settings,
-      x: Math.min(event.clientX, innerWidth - 220),
-      y: Math.max(8, Math.min(event.clientY, innerHeight - 200 - 40 * (spaces.prefs.folders.length + extra))),
+      x: Math.min(at.x, at.width - 220),
+      y: Math.max(8, Math.min(at.y, at.height - 200 - 40 * (spaces.prefs.folders.length + extra))),
     };
   }
 
@@ -732,7 +752,7 @@
     /* minmax(0, …): a bare 1fr won't shrink below its widest row (long previews). */
     grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
     height: 100vh;
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
   }
   .list-pane {
     min-width: 0;
@@ -748,6 +768,11 @@
     align-items: center;
     gap: 12px;
     padding: 16px 16px 8px;
+  }
+  /* Phones drawn edge to edge: the status bar already leaves room above, so the header sits
+     closer under it (like Messenger). */
+  :global(html.edges) header {
+    padding-top: 10px;
   }
   h1 {
     flex: 1;
@@ -814,6 +839,23 @@
     position: absolute;
     inset: 0;
     z-index: 0;
+  }
+  /* Phones drawn edge to edge: the chat's scenery goes on under the status bar and the home /
+     navigation bar (outside the body, see app.css), with the header's shade over it at the top,
+     so the bars match the chat. */
+  :global(html.edges) .scene-wrap,
+  :global(html.edges) .wallpaper {
+    top: calc(-1 * var(--edge-top));
+    bottom: calc(-1 * var(--edge-bottom));
+  }
+  :global(html.edges) .chat-pane.scenic > :global(header)::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0;
+    height: var(--edge-top);
+    background: rgb(0 0 0 / 0.3);
   }
   .wallpaper {
     background-position: center;

@@ -70,6 +70,7 @@
     editHistory,
     isAndroid,
     isBubble,
+    keyboardShown,
     leaveBubble,
     touchKeyboard,
     setSecureScreen,
@@ -674,7 +675,7 @@
 
   /** Buttons next to the field keep the focus in it (on a phone, losing it closes the keyboard). */
   /** Android shrinks the page while its keyboard is open (MainActivity's insets). */
-  const keyboardOpen = () => !isAndroid || window.innerHeight < screen.height * 0.75;
+  const keyboardOpen = () => !isAndroid || keyboardShown() || window.innerHeight < screen.height * 0.75;
   // Send and the quick reaction keep the keyboard as it is: open stays open (several messages
   // in a row), closed stays closed (Android's back gesture hides it but leaves the field
   // focused, and it would pop up again).
@@ -2214,6 +2215,11 @@
     gap: 12px;
     padding: 12px calc(16px + var(--window-controls)) 12px 16px;
     border-bottom: 1px solid var(--border);
+  }
+  /* Phones drawn edge to edge: the status bar already leaves room above, so the header sits
+     closer under it (like Messenger). */
+  :global(html.edges) .chat-header {
+    padding-top: 7px;
   }
   .title {
     display: flex;

@@ -1,5 +1,6 @@
 <script lang="ts">
   // Draws the app's right-click menu (stores/menu.svelte.ts), kept inside the window.
+  import { bodySize } from "$lib/layout";
   import { tr } from "$lib/i18n/index.svelte";
   import { contextMenu } from "$lib/stores/menu.svelte";
   import { forwardMessages, type RoomSummary } from "$lib/backend";
@@ -9,8 +10,8 @@
 
   const menu = $derived(contextMenu.open);
   let box = $state<HTMLElement>();
-  const left = $derived(menu ? Math.max(8, Math.min(menu.x, innerWidth - (box?.offsetWidth ?? 220) - 8)) : 0);
-  const top = $derived(menu ? Math.max(8, Math.min(menu.y, innerHeight - (box?.offsetHeight ?? 240) - 8)) : 0);
+  const left = $derived(menu ? Math.max(8, Math.min(menu.x, bodySize().width - (box?.offsetWidth ?? 220) - 8)) : 0);
+  const top = $derived(menu ? Math.max(8, Math.min(menu.y, bodySize().height - (box?.offsetHeight ?? 240) - 8)) : 0);
 
   $effect(() => {
     if (contextMenu.open) return onBack(() => contextMenu.close());

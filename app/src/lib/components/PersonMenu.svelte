@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bodySize } from "$lib/layout";
   import { tr } from "$lib/i18n/index.svelte";
   // Discord-style menu for someone in a call or a voice channel: right-click (or click) on a
   // computer opens it at the pointer, a tap on a phone opens it as a bottom sheet.
@@ -63,8 +64,8 @@
 
   // Kept inside the window at the pointer.
   let box = $state<HTMLElement>();
-  const left = $derived(Math.max(8, Math.min(menu.x, innerWidth - (box?.offsetWidth ?? 260) - 8)));
-  const top = $derived(Math.max(8, Math.min(menu.y, innerHeight - (box?.offsetHeight ?? 320) - 8)));
+  const left = $derived(Math.max(8, Math.min(menu.x, bodySize().width - (box?.offsetWidth ?? 260) - 8)));
+  const top = $derived(Math.max(8, Math.min(menu.y, bodySize().height - (box?.offsetHeight ?? 320) - 8)));
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->

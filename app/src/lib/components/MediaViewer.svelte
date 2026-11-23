@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inBody } from "$lib/layout";
   import { tr } from "$lib/i18n/index.svelte";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -76,6 +77,8 @@
   /** Zoom to `next` keeping the screen point (x, y) where it is. */
   function zoomAt(next: number, x: number, y: number) {
     next = Math.max(1, Math.min(MAX_ZOOM, next));
+    // Screen positions: the viewer fills the body, which may start below the status bar.
+    ({ x, y } = inBody({ clientX: x, clientY: y }));
     const mx = x - width / 2;
     const my = y - height / 2;
     const k = next / zoom;

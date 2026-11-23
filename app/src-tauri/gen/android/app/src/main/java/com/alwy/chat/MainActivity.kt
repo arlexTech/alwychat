@@ -18,6 +18,15 @@ import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
   companion object {
+    /** The bars around the page in CSS px (top, bottom incl. keyboard, left, right) and whether
+     *  the keyboard is open: the page keeps clear of them itself (app.css `html.edges`). */
+    @Volatile var edges = doubleArrayOf(0.0, 0.0, 0.0, 0.0)
+    @Volatile var keyboard = false
+    fun edgesJson(): app.tauri.plugin.JSArray = app.tauri.plugin.JSArray().apply {
+      edges.forEach { put(it) }
+      put(keyboard)
+    }
+
     /** On screen: pushes don't notify then (the app shows the message itself). */
     @Volatile var visible = false
 
@@ -208,15 +217,20 @@ class MainActivity : TauriActivity() {
     // Same colour as the app background (--bg in app.css), seen behind the system bars.
     window.decorView.setBackgroundColor(Color.parseColor("#0e1014"))
 
-    // Keep the web UI out from under the status bar, gesture bar, camera cutout and keyboard
-    // (edge-to-edge windows aren't resized for the keyboard on their own).
+    // The page covers the whole screen, under the status bar, gesture bar, camera cutout and
+    // keyboard, and keeps clear of them itself (so a chat's scenery runs on under the bars): it
+    // gets their sizes (edge-to-edge windows aren't resized for the keyboard on their own).
     val content = findViewById<View>(android.R.id.content)
-    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+    ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
       val bars = insets.getInsets(
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
       )
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-      view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+      val dp = resources.displayMetrics.density.toDouble()
+      edges = doubleArrayOf(bars.top / dp, maxOf(bars.bottom, ime.bottom) / dp, bars.left / dp, bars.right / dp)
+      keyboard = ime.bottom > 0
+      val (top, bottom, left, right) = edges.toList()
+      pageView()?.evaluateJavascript("window.__alwyEdges?.($top, $bottom, $left, $right, $keyboard)", null)
       WindowInsetsCompat.CONSUMED
     }
   }

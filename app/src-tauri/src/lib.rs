@@ -1323,6 +1323,26 @@ async fn system_clock(app: tauri::AppHandle) -> Result<SystemClock, String> {
     }
 }
 
+/// Android: the status / navigation bars' sizes (CSS px; bottom includes the keyboard) and
+/// whether the keyboard is open, as MainActivity last saw them (the page is drawn under the bars).
+#[tauri::command]
+async fn system_edges(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    #[cfg(target_os = "android")]
+    {
+        app.state::<android::System>()
+            .0
+            .run_mobile_plugin_async::<serde_json::Value>("edges", serde_json::json!({}))
+            .await
+            .map(|v| v.get("edges").cloned())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
 /// Android: system bar icons (dark on a light theme) and the colour behind them.
 #[tauri::command]
 async fn set_system_bars(
@@ -3340,6 +3360,7 @@ pub fn run() {
             search_status,
             start_search_backfill,
             set_system_bars,
+            system_edges,
             app_lock_state,
             set_app_lock,
             unlock_app,

@@ -13,7 +13,7 @@ export { isTauri, isWeb };
 export const isAndroid = /Android/.test(navigator.userAgent);
 /** iPhone / iPad (the app or the web version): `html.ios` styles (safe area, text size). */
 export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-if (isIOS) document.documentElement.classList.add("ios");
+if (isIOS) document.documentElement.classList.add("ios", "edges");
 /** Typing happens on an on-screen keyboard (phones, tablets, also the web version there): Enter
  *  adds a new line and the send button sends, like WhatsApp/Telegram/Signal/Element on mobile.
  *  Computers keep "Enter sends, Shift+Enter new line" (Discord, Slack, WhatsApp Web). */
@@ -26,6 +26,28 @@ export const touchKeyboard =
  *  sets it), not the whole app. */
 export const bubbleRoom: string | null = (globalThis as { __alwyBubble?: string }).__alwyBubble ?? null;
 export const isBubble = bubbleRoom !== null;
+
+/** Android app: MainActivity draws the page edge to edge, under the status and navigation bars,
+ *  and reports their sizes (CSS px; `bottom` includes the keyboard while it's open): the page
+ *  keeps clear of them itself (app.css `html.edges`), so a chat's scenery can run on under them. */
+function applyEdges(top: number, bottom: number, left: number, right: number, keyboard: boolean) {
+  const root = document.documentElement;
+  root.style.setProperty("--edge-top", `${top}px`);
+  root.style.setProperty("--edge-bottom", `${bottom}px`);
+  root.style.setProperty("--edge-left", `${left}px`);
+  root.style.setProperty("--edge-right", `${right}px`);
+  root.classList.add("edges");
+  root.classList.toggle("keyboard", keyboard);
+}
+if (isAndroid && isTauri && !isBubble) {
+  (globalThis as { __alwyEdges?: typeof applyEdges }).__alwyEdges = applyEdges;
+  // Sizes known before this page loaded (later changes arrive through __alwyEdges).
+  void invoke<[number, number, number, number, boolean] | null>("system_edges")
+    .then((e) => e && applyEdges(...e))
+    .catch(() => {});
+}
+/** The on-screen keyboard is open (Android app; elsewhere: unknown, false). */
+export const keyboardShown = () => document.documentElement.classList.contains("keyboard");
 if (isBubble) document.documentElement.classList.add("bubble");
 /** This window's name ("main", "bubble-…"). */
 export const windowLabel: string =

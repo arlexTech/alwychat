@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inBody } from "$lib/layout";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import { asList, stored } from "$lib/stored";
   import { onDestroy, untrack } from "svelte";
@@ -80,7 +81,8 @@
   let spaceMenu = $state<(Ref & { x: number; y: number }) | null>(null);
   function openSpaceMenu(event: MouseEvent, space: Ref) {
     event.preventDefault();
-    spaceMenu = { ...space, x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 140) };
+    const at = inBody(event);
+    spaceMenu = { ...space, x: Math.min(at.x, at.width - 240), y: Math.min(at.y, at.height - 140) };
   }
   $effect(() => {
     if (spaceMenu) return onBack(() => (spaceMenu = null));
@@ -98,7 +100,8 @@
   let groupMenu = $state<{ group: SpaceGroup; x: number; y: number } | null>(null);
   function openGroupMenu(event: MouseEvent, group: SpaceGroup) {
     event.preventDefault();
-    groupMenu = { group, x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 180) };
+    const at = inBody(event);
+    groupMenu = { group, x: Math.min(at.x, at.width - 240), y: Math.min(at.y, at.height - 180) };
   }
   $effect(() => {
     if (groupMenu) return onBack(() => (groupMenu = null));

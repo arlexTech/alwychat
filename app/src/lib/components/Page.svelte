@@ -49,6 +49,12 @@
   // from a chat closed the chat instead). Registered after its opener's layers, so it's on top.
   $effect(() => onBack(() => onClose()));
 
+  // Counted while open (Android's bars go back to the app's colour over a themed chat).
+  $effect(() => {
+    untrack(() => sidePanels.pages++);
+    return () => void sidePanels.pages--;
+  });
+
   // A side panel makes the chats layout narrower rather than covering the chat.
   $effect(() => {
     if (layout !== "panel") return;
@@ -92,12 +98,24 @@
     flex-direction: column;
     background: var(--bg);
   }
+  /* Phones drawn edge to edge: under the status and navigation bars (outside the body) the
+     page's colour too, over a chat's scenery that reaches there (ChatsScreen). */
+  :global(html.edges) .page {
+    box-shadow:
+      0 calc(-1 * var(--edge-top)) var(--bg),
+      0 var(--edge-bottom) var(--bg);
+  }
   header {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 10px calc(12px + var(--window-controls)) 10px 12px;
     border-bottom: 1px solid var(--border);
+  }
+  /* Phones drawn edge to edge: the status bar already leaves room above, so the header sits
+     closer under it (like Messenger). */
+  :global(html.edges) header {
+    padding-top: 6px;
   }
   .cancel {
     display: flex;

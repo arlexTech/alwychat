@@ -733,6 +733,12 @@ class SystemPlugin(private val first: Activity) : Plugin(first) {
     }
   }
 
+  /** The bars' sizes and the keyboard as MainActivity last saw them (backend `system_edges`). */
+  @Command
+  fun edges(invoke: Invoke) {
+    invoke.resolve(JSObject().put("edges", MainActivity.edgesJson()))
+  }
+
   /** The push test: a sample notification through the same code as real ones. */
   @Command
   fun testNotification(invoke: Invoke) {

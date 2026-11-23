@@ -57,8 +57,18 @@ class Prefs {
     document.documentElement.dataset.theme = theme;
     if (isAndroid) {
       const background = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
-      setSystemBars(theme === "light", background).catch(() => {});
+      // A themed chat's dark scenery under the bars: light icons.
+      setSystemBars(theme === "light" && !this.#darkBars, background).catch(() => {});
     }
+  }
+
+  #darkBars = false;
+  /** Android: something dark fills the screen under the status and navigation bars (a chat's
+   *  scenery): their icons turn light whatever the app theme. */
+  setDarkBars(dark: boolean) {
+    if (dark === this.#darkBars) return;
+    this.#darkBars = dark;
+    this.#applyTheme();
   }
 }
 

@@ -1,6 +1,7 @@
 // The call we're in: MatrixRTC signalling in the core, audio/video with livekit-client here,
 // or in Rust where the webview has no WebRTC (Linux desktop: `native`; pictures arrive as frames,
 // see nativeVideo.svelte.ts).
+import { inBody } from "$lib/layout";
 import { loudness, playCue, type CallCue } from "$lib/callSounds";
 import type { AudioCaptureOptions, LocalAudioTrack, LocalTrack, LocalVideoTrack, Participant, RemoteAudioTrack, RemoteParticipant, RemoteTrack, Room, Track as LkTrack } from "livekit-client";
 import type { MatrixKeyProvider as KeyProvider } from "$lib/callKeys";
@@ -1297,7 +1298,8 @@ class CallStore {
     const touch = (event as PointerEvent).pointerType
       ? (event as PointerEvent).pointerType !== "mouse"
       : matchMedia("(pointer: coarse)").matches;
-    this.menu = { person, x: event.clientX, y: event.clientY, sheet: touch };
+    const at = inBody(event);
+    this.menu = { person, x: at.x, y: at.y, sheet: touch };
   }
 
   async toggleCamera() {

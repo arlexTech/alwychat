@@ -2,6 +2,7 @@
 // items; `ContextMenu.svelte` (in ChatsScreen) draws it, and also forwards messages and shows a
 // short message after an action ("Saved to …", "Copied").
 
+import { inBody } from "$lib/layout";
 import type { Component } from "svelte";
 import { tr } from "$lib/i18n/index.svelte";
 
@@ -34,7 +35,8 @@ class ContextMenu {
     }
     while (items[items.length - 1] === "-") items.pop();
     if (!items.length) return;
-    this.open = { x: event.clientX, y: event.clientY, title, items };
+    const at = inBody(event);
+    this.open = { x: at.x, y: at.y, title, items };
   }
 
   close() {

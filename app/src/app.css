@@ -60,33 +60,47 @@ html[data-emoji="twitter"] body {
   font-family: "Inter", "Twemoji", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* Notch and home bar. On iPhones the whole app sits inside the safe area (below), so pieces
-   that used to add these themselves get 0 there; Android's insets are applied natively. */
+/* Notch, status bar, home / navigation bar. Phones drawn edge to edge (`html.edges`: iPhones,
+   and the Android app, whose MainActivity reports the bars' sizes) put the whole app between
+   those bars (below), so pieces that used to add the insets themselves get 0 there. */
 :root {
   --safe-top: env(safe-area-inset-top);
   --safe-bottom: env(safe-area-inset-bottom);
   --safe-left: env(safe-area-inset-left);
   --safe-right: env(safe-area-inset-right);
+  --edge-top: 0px;
+  --edge-bottom: 0px;
+  --edge-left: 0px;
+  --edge-right: 0px;
 }
 html.ios {
+  --edge-top: env(safe-area-inset-top);
+  --edge-bottom: env(safe-area-inset-bottom);
+  --edge-left: env(safe-area-inset-left);
+  --edge-right: env(safe-area-inset-right);
+}
+html.edges {
+  /* The app's full height: the screen minus the bars (100dvh is the whole screen here). */
+  --app-height: calc(100dvh - var(--edge-top) - var(--edge-bottom));
   --safe-top: 0px;
   --safe-bottom: 0px;
   --safe-left: 0px;
   --safe-right: 0px;
-  /* The strips around the safe area (status bar, home bar) in the app's colour, not black. */
+  /* Behind the bars: the app's colour, not black. */
   background: var(--bg);
 }
-/* iPhone: the page covers the whole screen (viewport-fit=cover) and the body is the safe area.
-   Its transform makes it the box that fixed layers (pages, viewer, call) fill, so they stay
-   clear of the notch and the home bar too. */
-html.ios body {
+/* The page covers the whole screen and the body is the part between the bars. Its transform
+   makes it the box that fixed layers (pages, viewer, call) fill, so they stay clear of the bars
+   too (screen positions: lib/layout.ts). */
+html.edges body {
   position: fixed;
-  top: env(safe-area-inset-top);
-  right: env(safe-area-inset-right);
-  bottom: env(safe-area-inset-bottom);
-  left: env(safe-area-inset-left);
+  top: var(--edge-top);
+  right: var(--edge-right);
+  bottom: var(--edge-bottom);
+  left: var(--edge-left);
   height: auto;
-  overflow: hidden;
+  /* Not clipped: a chat's scenery paints on under the bars (ChatsScreen), like its header. */
+  overflow: visible;
   transform: translateZ(0);
 }
 /* iOS text is 17 pt by default (15 px looked small next to other apps). */
