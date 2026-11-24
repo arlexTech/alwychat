@@ -89,9 +89,10 @@ html.edges {
   /* Behind the bars: the app's colour, not black. */
   background: var(--bg);
 }
-/* The page covers the whole screen and the body is the part between the bars. Its transform
-   makes it the box that fixed layers (pages, viewer, call) fill, so they stay clear of the bars
-   too (screen positions: lib/layout.ts). */
+/* The page covers the whole screen and the body is the part between the bars. Layout
+   containment makes it the box that fixed layers (pages, viewer, call) fill, so they stay clear
+   of the bars too (screen positions: lib/layout.ts). Not a transform: that also turned the own
+   bubbles' fixed gradient (flowing down the screen) into a whole gradient in every bubble. */
 html.edges body {
   position: fixed;
   top: var(--edge-top);
@@ -101,14 +102,21 @@ html.edges body {
   height: auto;
   /* Not clipped: a chat's scenery paints on under the bars (ChatsScreen), like its header. */
   overflow: visible;
-  transform: translateZ(0);
+  contain: layout;
 }
-/* iOS text is 17 pt by default (15 px looked small next to other apps). */
-html.ios,
-html.ios body {
-  font-size: 17px;
+/* Text size: 15 px (iOS: 17 pt, 15 px looked small next to other apps) times the setting
+   (Settings → Appearance, `--text-scale` from prefs.svelte.ts). The body follows the root, so
+   everything sized in rem / em or inherited scales with it. */
+html {
+  font-size: calc(15px * var(--text-scale, 1));
+}
+html.ios {
+  font-size: calc(17px * var(--text-scale, 1));
 }
 
+body {
+  font-size: 1rem;
+}
 html,
 body {
   margin: 0;
@@ -116,7 +124,6 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   /* An app, not a document: nothing is selected by a long-press (buttons, emoji, labels…),

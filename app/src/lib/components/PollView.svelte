@@ -105,7 +105,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-width: min(260px, 70vw);
+    /* Narrower than the bubble can get on a phone (answers used to stick out of it). */
+    min-width: min(260px, 58vw);
     padding: 2px 0;
   }
   .question {

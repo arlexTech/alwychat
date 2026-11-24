@@ -46,6 +46,8 @@ pub struct Settings {
     /// Leave deleted messages out of chats ("Message deleted" rows). Chats can override it
     /// on this device.
     pub hide_deleted: bool,
+    /// Touch screens: scrolling a chat closes the on-screen keyboard (this device).
+    pub scroll_hides_keyboard: bool,
 }
 
 impl Default for Settings {
@@ -66,6 +68,7 @@ impl Default for Settings {
             message_layout: "auto".to_owned(),
             auto_save_rooms: Vec::new(),
             hide_deleted: false,
+            scroll_hides_keyboard: false,
         }
     }
 }

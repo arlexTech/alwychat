@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inBody } from "$lib/layout";
   import { prefetch } from "$lib/cache";
   import { tr, trn } from "$lib/i18n/index.svelte";
   import CallDock from "./CallDock.svelte";
@@ -615,6 +616,19 @@
     if (!scroller || tl.focused || Date.now() < jumpHold) return;
     if ((atBottom || Date.now() < followUntil) && Math.abs(scroller.scrollTop) > 1) scroller.scrollTop = 0;
   });
+
+  // Setting: dragging the chat up or down puts the on-screen keyboard away (only the user's own
+  // drag: the timeline also scrolls by itself when messages arrive).
+  let dragFrom: number | null = null;
+  function dragStart(e: TouchEvent) {
+    dragFrom = prefs.settings?.scroll_hides_keyboard ? e.touches[0].clientY : null;
+  }
+  function dragMove(e: TouchEvent) {
+    if (dragFrom === null || Math.abs(e.touches[0].clientY - dragFrom) < 24) return;
+    dragFrom = null;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLTextAreaElement && focused.closest(".composer")) focused.blur();
+  }
 
   function onScroll() {
     atBottom = Math.abs(scroller.scrollTop) < 40;
@@ -1285,6 +1299,14 @@
 
   function openFileInput(accept: string) {
     fileInput.accept = accept;
+    // iOS opens its Photo Library / Take Photo / Choose Files menu next to the input: put it on
+    // the composer's left buttons (hidden, it had no place and the menu floated mid-screen).
+    const bar = fileInput.closest(".composer")?.getBoundingClientRect();
+    if (bar) {
+      const at = inBody({ clientX: bar.left + 32, clientY: bar.top + 8 });
+      fileInput.style.left = `${at.x}px`;
+      fileInput.style.top = `${at.y}px`;
+    }
     fileInput.click();
   }
 
@@ -1751,6 +1773,8 @@
   class="scroller"
   bind:this={scroller}
   onscroll={onScroll}
+  ontouchstart={dragStart}
+  ontouchmove={dragMove}
   ondragover={onDragOver}
   ondragleave={(e) => e.currentTarget === e.target && (dragging = false)}
   ondrop={onDrop}
@@ -1985,8 +2009,10 @@
     <input
       bind:this={fileInput}
       type="file"
+      class="file-input"
       multiple
-      hidden
+      tabindex="-1"
+      aria-hidden="true"
       onchange={(e) => {
         addFiles(e.currentTarget.files ?? []);
         e.currentTarget.value = "";
@@ -2469,6 +2495,13 @@
     }
   }
 
+  .file-input {
+    position: fixed;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
   .composer {
     padding: 8px 12px 12px;
     border-top: 1px solid var(--border);

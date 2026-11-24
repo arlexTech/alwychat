@@ -900,7 +900,12 @@
     </button>
     <h3 class="section">{tr("Media")}</h3>
     {#each media as t (t.key)}{@render row(t)}{/each}
-    {#if !touchKeyboard}
+    {#if touchKeyboard}
+      <label class="toggle">
+        <span><strong>{tr("Scrolling closes the keyboard")}</strong><small>{tr("Scroll through a chat to put the keyboard away.")}</small></span>
+        <input type="checkbox" role="switch" checked={settings.scroll_hides_keyboard} onchange={() => toggle("scroll_hides_keyboard")} />
+      </label>
+    {:else}
       <label class="toggle">
         <span><strong>{tr("Enter sends")}</strong><small>{settings.enter_sends ? tr("Shift+Enter adds a new line.") : tr("Enter adds a new line, Ctrl+Enter sends.")}</small></span>
         <input type="checkbox" role="switch" checked={settings.enter_sends} onchange={() => toggle("enter_sends")} />

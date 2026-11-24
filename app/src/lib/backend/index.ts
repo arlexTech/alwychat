@@ -14,6 +14,28 @@ export const isAndroid = /Android/.test(navigator.userAgent);
 /** iPhone / iPad (the app or the web version): `html.ios` styles (safe area, text size). */
 export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 if (isIOS) document.documentElement.classList.add("ios", "edges");
+
+// iPhone keyboard: the web view isn't made smaller, iOS slides the visible part up instead (the
+// header went off the top, a gap stayed above the keyboard). While it's open, the body is fitted
+// to exactly the visible part (app.css `html.edges body` reads these).
+if (isIOS && window.visualViewport) {
+  const view = window.visualViewport;
+  const root = document.documentElement;
+  const fit = () => {
+    const covered = innerHeight - view.height;
+    const open = covered > 120;
+    root.classList.toggle("keyboard", open);
+    if (open) {
+      root.style.setProperty("--edge-top", `calc(env(safe-area-inset-top) + ${view.offsetTop}px)`);
+      root.style.setProperty("--edge-bottom", `${Math.max(0, innerHeight - view.offsetTop - view.height)}px`);
+    } else {
+      root.style.removeProperty("--edge-top");
+      root.style.removeProperty("--edge-bottom");
+    }
+  };
+  view.addEventListener("resize", fit);
+  view.addEventListener("scroll", fit);
+}
 /** Typing happens on an on-screen keyboard (phones, tablets, also the web version there): Enter
  *  adds a new line and the send button sends, like WhatsApp/Telegram/Signal/Element on mobile.
  *  Computers keep "Enter sends, Shift+Enter new line" (Discord, Slack, WhatsApp Web). */
@@ -1240,6 +1262,7 @@ export interface Settings {
   auto_save_rooms: string[];
   /** Leave deleted messages out of chats (chats can override it on this device). */
   hide_deleted: boolean;
+  scroll_hides_keyboard: boolean;
 }
 /** Android: dark system bar icons on a light theme, and the colour behind the bars. */
 export const setSystemBars = (light: boolean, background: string) =>

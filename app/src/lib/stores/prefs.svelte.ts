@@ -48,7 +48,7 @@ class Prefs {
   /** Text sized in rem/em (messages, most of the UI) follows the root font size. */
   #applyTextScale() {
     const scale = this.settings?.text_scale ?? 100;
-    document.documentElement.style.fontSize = scale === 100 ? "" : `${scale}%`;
+    document.documentElement.style.setProperty("--text-scale", String(scale / 100));
   }
 
   #applyTheme() {

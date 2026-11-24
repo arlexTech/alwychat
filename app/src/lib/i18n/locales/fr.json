@@ -1320,5 +1320,7 @@
   "Checking that this phone allows bubbles…": "Vérification que ce téléphone autorise les bulles…",
   "Chats can float over other apps as round heads, like Messenger.": "Les discussions peuvent flotter par-dessus les autres apps en têtes rondes, comme sur Messenger.",
   "Off: only the chats you pick (chat settings → Bubble this chat).": "Désactivé : seulement les discussions que tu choisis (paramètres de la discussion → Discussion en bulle).",
-  "Privacy policy": "Politique de confidentialité"
+  "Privacy policy": "Politique de confidentialité",
+  "Scrolling closes the keyboard": "Le défilement ferme le clavier",
+  "Scroll through a chat to put the keyboard away.": "Fais défiler une discussion pour ranger le clavier."
 }
