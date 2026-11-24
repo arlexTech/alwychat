@@ -338,7 +338,7 @@
     border-radius: 999px;
     background: rgb(0 0 0 / 0.6);
     color: white;
-    font-size: 11px;
+    font-size: 0.733rem;
   }
   .list {
     margin: 0;
@@ -415,7 +415,7 @@
     text-align: center;
   }
   .note.small {
-    font-size: 13px;
+    font-size: 0.867rem;
   }
   .note.error {
     color: var(--danger);

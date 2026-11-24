@@ -941,7 +941,7 @@
   .results-title {
     margin: 14px 12px 4px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.867rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -1018,7 +1018,7 @@
     border: none;
     background: none;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.8rem;
     cursor: pointer;
   }
   .tabbar button.active {
@@ -1047,7 +1047,7 @@
     border-radius: 999px;
     background: var(--accent);
     color: white;
-    font-size: 11px;
+    font-size: 0.733rem;
     font-weight: 600;
     line-height: 16px;
   }

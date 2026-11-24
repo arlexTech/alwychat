@@ -812,7 +812,7 @@
     border-radius: 999px;
     background: var(--accent);
     color: white;
-    font-size: 12px;
+    font-size: 0.8rem;
     font-weight: 600;
     text-align: center;
   }
@@ -942,7 +942,7 @@
   h4 {
     margin: 16px 12px 6px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.867rem;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -1005,7 +1005,7 @@
     border-radius: 9px;
     background: var(--accent);
     color: #fff;
-    font-size: 11px;
+    font-size: 0.733rem;
     text-align: center;
     text-transform: none;
   }

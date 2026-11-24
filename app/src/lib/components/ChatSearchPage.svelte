@@ -91,7 +91,7 @@
     border-radius: 999px;
     background: none;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 0.933rem;
   }
   .chips button.active {
     border-color: transparent;
@@ -105,7 +105,7 @@
   }
   .note.small {
     padding-top: 0;
-    font-size: 13px;
+    font-size: 0.867rem;
   }
   .note.error {
     color: var(--danger);

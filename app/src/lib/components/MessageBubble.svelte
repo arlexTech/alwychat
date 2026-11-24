@@ -846,10 +846,13 @@
     background-attachment: fixed;
     color: white;
   }
-  /* iOS WebKit doesn't support fixed backgrounds: bubbles were drawn without their colour at
-   * times. Each bubble carries the whole gradient there instead. */
+  /* iOS WebKit doesn't support fixed backgrounds (bubbles were drawn without their colour at
+   * times): the gradient is sized to the screen and each bubble shows its own slice of it, from
+   * its place on the screen (`--bubble-y`, set by ChatView while scrolling). */
   :global(html.ios) .own .bubble {
     background-attachment: scroll;
+    background-size: 100% var(--app-height, 100vh);
+    background-position: 0 calc(-1 * var(--bubble-y, 0px));
   }
   .own.first .bubble {
     border-top-right-radius: var(--r);

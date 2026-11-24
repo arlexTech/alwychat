@@ -22,12 +22,14 @@ if (isIOS && window.visualViewport) {
   const view = window.visualViewport;
   const root = document.documentElement;
   const fit = () => {
-    const covered = innerHeight - view.height;
-    const open = covered > 120;
+    // The page's full height (the layout viewport): innerHeight shrinks with the keyboard on
+    // iOS, so it can't tell the keyboard is there.
+    const full = root.clientHeight;
+    const open = full - view.height > 120;
     root.classList.toggle("keyboard", open);
     if (open) {
       root.style.setProperty("--edge-top", `calc(env(safe-area-inset-top) + ${view.offsetTop}px)`);
-      root.style.setProperty("--edge-bottom", `${Math.max(0, innerHeight - view.offsetTop - view.height)}px`);
+      root.style.setProperty("--edge-bottom", `${Math.max(0, full - view.offsetTop - view.height)}px`);
     } else {
       root.style.removeProperty("--edge-top");
       root.style.removeProperty("--edge-bottom");

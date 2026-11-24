@@ -71,6 +71,8 @@
     editHistory,
     isAndroid,
     isBubble,
+    isIOS,
+    isTauri,
     keyboardShown,
     leaveBubble,
     touchKeyboard,
@@ -630,7 +632,34 @@
     if (focused instanceof HTMLTextAreaElement && focused.closest(".composer")) focused.blur();
   }
 
+  // iPhone: WebKit there draws no screen-fixed backgrounds, so each of our bubbles gets its
+  // place on the screen and shows that slice of the chat's gradient (MessageBubble), which
+  // then flows down the screen across bubbles as elsewhere.
+  let bubblesFrame = 0;
+  function placeBubbles() {
+    if (!isIOS || bubblesFrame) return;
+    bubblesFrame = requestAnimationFrame(() => {
+      bubblesFrame = 0;
+      if (!scroller) return;
+      const top = document.body.getBoundingClientRect().top;
+      const bottom = scroller.getBoundingClientRect().bottom + 200;
+      for (const el of scroller.querySelectorAll<HTMLElement>(".own .bubble")) {
+        const r = el.getBoundingClientRect();
+        if (r.bottom < -200 || r.top > bottom) continue;
+        el.style.setProperty("--bubble-y", `${Math.round(r.top - top)}px`);
+      }
+    });
+  }
+  $effect(() => {
+    void shown;
+    if (!isIOS) return;
+    placeBubbles();
+    addEventListener("resize", placeBubbles);
+    return () => removeEventListener("resize", placeBubbles);
+  });
+
   function onScroll() {
+    placeBubbles();
     atBottom = Math.abs(scroller.scrollTop) < 40;
     // Back down at the newest: what we scrolled past is read now.
     if (Math.abs(scroller.scrollTop) < 40 && (room.unread_messages > 0 || room.marked_unread)) readSoon(300);
@@ -1296,6 +1325,9 @@
     attachOpen = false;
     void action();
   }
+
+  /** Phones' own pickers (Photos / Files): the web view's file input shows one menu for all. */
+  const nativePicker = isAndroid || (isTauri && isIOS);
 
   function openFileInput(accept: string) {
     fileInput.accept = accept;
@@ -2003,7 +2035,7 @@
       {#if isAndroid}
         <button type="button" class="attach spare" onclick={() => (cameraOpen = true)} aria-label={tr("Take a photo")}><Camera size={24} /></button>
       {/if}
-      <button type="button" class="attach spare" onclick={() => (isAndroid ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
+      <button type="button" class="attach spare" onclick={() => (nativePicker ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
       <button type="button" class="attach mic" onclick={startVoice} aria-label={tr("Record a voice message")}><Mic size={24} /></button>
     {/if}
     <input
@@ -2065,8 +2097,8 @@
       <button type="button" onclick={() => sheet(() => (cameraOpen = true))}><Camera size={22} />{tr("Take photo")}</button>
       <button type="button" onclick={() => sheet(() => takePhoto("video"))}><Video size={22} />{tr("Record video")}</button>
     {/if}
-    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />{tr("Photo & video library")}</button>
-    <button type="button" onclick={() => sheet(() => (isAndroid ? pick("files") : openFileInput("")))}><Paperclip size={22} />{tr("File")}</button>
+    <button type="button" onclick={() => sheet(() => (nativePicker ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />{tr("Photo & video library")}</button>
+    <button type="button" onclick={() => sheet(() => (nativePicker ? pick("files") : openFileInput("")))}><Paperclip size={22} />{tr("File")}</button>
     <button type="button" onclick={() => sheet(startLocation)}><MapPin size={22} />{tr("Share location")}</button>
     <button type="button" onclick={() => sheet(() => (pollOpen = true))}><ChartBar size={22} />{tr("Poll")}</button>
     <button type="button" onclick={() => sheet(() => (formatting = !formatting))}><Type size={22} />{formatting ? tr("Hide text formatting") : tr("Text formatting")}</button>
@@ -3175,7 +3207,7 @@
     right: auto;
     bottom: 3px;
     left: 3px;
-    font-size: 11px;
+    font-size: 0.733rem;
     font-weight: 700;
     border: 1.5px dashed rgb(255 255 255 / 0.85);
   }

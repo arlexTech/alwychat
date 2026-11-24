@@ -207,7 +207,7 @@ input[type="checkbox"][role="switch"]:checked::after {
 .m-section {
   margin: 26px 4px 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.867rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;

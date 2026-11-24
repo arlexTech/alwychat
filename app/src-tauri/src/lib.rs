@@ -1962,10 +1962,19 @@ async fn pick_files(app: tauri::AppHandle, kind: String) -> Result<Vec<Picked>, 
             .map_err(|e| e.to_string())?;
         Ok(result.files)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        #[derive(serde::Deserialize)]
+        struct PickResult {
+            files: Vec<Picked>,
+        }
+        let result: PickResult = tauri_plugin_photos::pick(&app, &kind, &picked_dir(&app)?).await?;
+        Ok(result.files)
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = (app, kind);
-        Err("the system picker is only used on Android".into())
+        Err("the system picker is only used on phones".into())
     }
 }
 

@@ -314,7 +314,7 @@
     top: 62px;
     left: 0;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 0.667rem;
     white-space: nowrap;
   }
   .strip {

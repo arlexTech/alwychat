@@ -22,7 +22,7 @@
   import FolderPage from "./FolderPage.svelte";
   import PinPad from "./PinPad.svelte";
   import { appLock } from "$lib/stores/applock.svelte";
-  import { setAppLock, unlockApp, autostartGet, autostartSet, isWeb } from "$lib/backend";
+  import { setAppLock, unlockApp, autostartGet, autostartSet, isIOS, isWeb } from "$lib/backend";
   import { ALL_DOWNLOADS, nativeApp } from "$lib/nativeApp.svelte";
   import ChevronUp from "@lucide/svelte/icons/chevron-up";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -448,7 +448,7 @@
 
   onMount(() => {
     if (!prefs.settings) prefs.load().catch((e) => (error = String(e)));
-    if (isTauri && !isAndroid) autostartGet().then((on) => (autostart = on), () => {});
+    if (isTauri && !isAndroid && !isIOS) autostartGet().then((on) => (autostart = on), () => {});
     void refreshSystem();
     // Coming back from Android's settings pages: show what the user changed there.
     const onVisible = () => document.visibilityState === "visible" && refreshSystem();
@@ -1119,7 +1119,7 @@
     border-radius: 14px;
     background: var(--surface-2);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 0.867rem;
   }
   .themes button.on {
     border-color: var(--accent-a);

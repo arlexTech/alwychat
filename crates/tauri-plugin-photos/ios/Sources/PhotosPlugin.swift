@@ -2,9 +2,11 @@
 // Also the app's one native iOS plugin, so it hides the web view's keyboard bar (below).
 
 import Photos
+import PhotosUI
 import SwiftRs
 import Tauri
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
 
 struct SaveArgs: Decodable {
@@ -12,9 +14,53 @@ struct SaveArgs: Decodable {
   let video: Bool
 }
 
+struct PickArgs: Decodable {
+  /// "media": the Photos picker (photos and videos); anything else: the Files app.
+  let kind: String
+  /// Where the chosen files are copied (the app's `picked` folder).
+  let dir: String
+}
+
 class PhotosPlugin: Plugin {
+  /// The picker answering now (its delegate must stay alive while it's on screen).
+  private var picking: FilePicker?
+
   override func load(webview: WKWebView) {
     KeyboardBar.hide(in: webview)
+  }
+
+  /// Opens the system's photo or file picker and copies what was chosen into `dir`:
+  /// `{files: [{path, name, mime, size}]}` (empty when cancelled), like Android's picker.
+  @objc public func pick(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(PickArgs.self)
+    let dir = URL(fileURLWithPath: args.dir, isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    DispatchQueue.main.async {
+      guard let presenter = self.manager.viewController else {
+        invoke.reject("no window to show the picker in")
+        return
+      }
+      let picker = FilePicker(dir: dir) { files in
+        self.picking = nil
+        invoke.resolve(["files": files])
+      }
+      self.picking = picker
+      if args.kind == "media" {
+        var config = PHPickerConfiguration()
+        config.selectionLimit = 0
+        config.filter = .any(of: [.images, .videos])
+        // JPEG / H.264 rather than HEIC / HEVC: every other app can show what we send.
+        config.preferredAssetRepresentationMode = .compatible
+        let controller = PHPickerViewController(configuration: config)
+        controller.delegate = picker
+        presenter.present(controller, animated: true)
+      } else {
+        let controller = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        controller.allowsMultipleSelection = true
+        controller.delegate = picker
+        presenter.present(controller, animated: true)
+      }
+    }
   }
 
   @objc public func save(_ invoke: Invoke) throws {
@@ -49,6 +95,63 @@ class PhotosPlugin: Plugin {
         }
       }
     }
+  }
+}
+
+/// Answers the photo and file pickers: copies each chosen item into `dir` under a unique name.
+class FilePicker: NSObject, PHPickerViewControllerDelegate, UIDocumentPickerDelegate {
+  private let dir: URL
+  private let done: ([[String: Any]]) -> Void
+
+  init(dir: URL, done: @escaping ([[String: Any]]) -> Void) {
+    self.dir = dir
+    self.done = done
+  }
+
+  /// Copies (or moves, for the document picker's own copies) `url` into `dir`.
+  private func keep(_ url: URL, name: String, move: Bool) -> [String: Any]? {
+    let target = dir.appendingPathComponent("\(UUID().uuidString.prefix(8))-\(name)")
+    do {
+      if move {
+        try FileManager.default.moveItem(at: url, to: target)
+      } else {
+        try FileManager.default.copyItem(at: url, to: target)
+      }
+    } catch {
+      return nil
+    }
+    let size = (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.uint64Value ?? 0
+    let mime = UTType(filenameExtension: target.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+    return ["path": target.path, "name": name, "mime": mime, "size": size]
+  }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true)
+    var files = [[String: Any]?](repeating: nil, count: results.count)
+    let group = DispatchGroup()
+    for (i, result) in results.enumerated() {
+      let provider = result.itemProvider
+      let type: UTType = provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ? .movie : .image
+      group.enter()
+      // The file only exists during the callback: copied at once.
+      provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+        if let url {
+          let base = provider.suggestedName ?? (type == .movie ? "video" : "photo")
+          let name = url.pathExtension.isEmpty ? base : "\(base).\(url.pathExtension)"
+          files[i] = self.keep(url, name: name, move: false)
+        }
+        group.leave()
+      }
+    }
+    group.notify(queue: .main) { self.done(files.compactMap { $0 }) }
+  }
+
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    done(urls.compactMap { keep($0, name: $0.lastPathComponent, move: true) })
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    done([])
   }
 }
 

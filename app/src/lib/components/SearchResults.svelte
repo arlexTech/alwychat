@@ -106,13 +106,13 @@
   }
   .time {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.8rem;
   }
   .snippet {
     display: -webkit-box;
     overflow: hidden;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 0.933rem;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
