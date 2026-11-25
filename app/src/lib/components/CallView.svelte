@@ -530,7 +530,19 @@
     {#if featured}
       {@const f = featured.tile}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="featured" class:immersive class:shaped={!sideStrip && spotRatio} style:--spot-ratio={spotRatio} bind:this={spot} ondblclick={toggleFullscreen}>
+      <div
+        class="featured"
+        class:immersive
+        class:shaped={!sideStrip && spotRatio}
+        style:--spot-ratio={spotRatio}
+        bind:this={spot}
+        ondblclick={toggleFullscreen}
+        onpointerdown={(e) => pressStart(e, f)}
+        onpointerup={pressEnd}
+        onpointercancel={pressEnd}
+        onpointerleave={pressEnd}
+        oncontextmenu={(e) => (e.preventDefault(), (e as unknown as PointerEvent).pointerType !== "touch" && call.openMenu(person(f), e))}
+      >
         <!-- svelte-ignore a11y_media_has_caption -->
         {#if featured.what === "screen"}
           {@render screenCard(f, true)}
@@ -595,9 +607,9 @@
           {/if}
         </div>
       {:else}
-        <div class="screen-card">
-          <Avatar name={t.name} mxc={t.avatar} size={big ? 56 : 36} />
-          <strong>{tr("{name} is sharing their screen", { name: t.name })}</strong>
+        <div class="screen-card hidden-share" class:big>
+          <span class="card-face"><Avatar name={t.name} mxc={t.avatar} size={big ? 64 : 36} /><span class="card-badge"><MonitorUp size={big ? 14 : 11} /></span></span>
+          <strong>{big ? tr("{name} is sharing their screen", { name: t.name }) : tr("{name}'s screen", { name: t.name })}</strong>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div class="card-controls" onclick={(e) => e.stopPropagation()} onpointerdown={(e) => e.stopPropagation()}>
             <button class="primary" onclick={() => call.watchScreen(t.id, true)}><Eye size={16} />{tr("Watch")}</button>
@@ -1054,10 +1066,15 @@
   .featured.immersive {
     border-radius: 0;
   }
+  /* The whole screen, under the (hidden) system bars too: the body stops at them. Not shaped
+     like the picture (that sized it to the width and left it at the top on a phone). */
   .featured.immersive {
     position: fixed;
-    inset: 0;
+    inset: calc(-1 * var(--edge-top, 0px)) calc(-1 * var(--edge-right, 0px)) calc(-1 * var(--edge-bottom, 0px)) calc(-1 * var(--edge-left, 0px));
     z-index: 80;
+    width: auto;
+    height: auto;
+    aspect-ratio: auto;
   }
   .featured > :global(canvas),
   .featured video.contain {
@@ -1471,6 +1488,62 @@
   .screen-card .card-controls {
     position: static;
     margin-top: 4px;
+    /* (The floating version's centring shift would push it off centre here.) */
+    transform: none;
+  }
+  /* Someone's share we don't watch: a calm card that fits any tile size (the avatar goes
+     first when the tile is short). */
+  .screen-card.hidden-share {
+    container-type: size;
+    padding: 10px;
+    gap: 6px;
+    background:
+      radial-gradient(circle at 50% 38%, rgb(124 92 240 / 0.22), transparent 62%),
+      linear-gradient(160deg, #1d1b2a, #121318);
+    color: #fff;
+  }
+  .screen-card.hidden-share.big {
+    gap: 10px;
+  }
+  .screen-card.hidden-share strong {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .screen-card.hidden-share:not(.big) strong {
+    font-size: 0.8rem;
+  }
+  .screen-card.hidden-share:not(.big) .card-controls button {
+    height: 28px;
+    padding: 0 10px;
+    font-size: 0.78rem;
+  }
+  .card-face {
+    position: relative;
+    display: inline-flex;
+  }
+  .card-badge {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    display: grid;
+    place-items: center;
+    padding: 4px;
+    border-radius: 999px;
+    background: var(--accent, #7c5cf0);
+    color: #fff;
+    box-shadow: 0 0 0 2px #121318;
+  }
+  @container (max-height: 130px) {
+    .screen-card.hidden-share .card-face {
+      display: none;
+    }
+  }
+  @container (max-height: 70px) {
+    .screen-card.hidden-share strong {
+      display: none;
+    }
   }
   .card-controls {
     position: absolute;

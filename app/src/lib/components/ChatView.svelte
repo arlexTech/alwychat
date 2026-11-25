@@ -1328,6 +1328,8 @@
 
   /** Phones' own pickers (Photos / Files): the web view's file input shows one menu for all. */
   const nativePicker = isAndroid || (isTauri && isIOS);
+  /** iPhone app: iOS's own camera (photo or video) straight into the composer. */
+  const nativeCamera = isTauri && isIOS;
 
   function openFileInput(accept: string) {
     fileInput.accept = accept;
@@ -2034,6 +2036,8 @@
       </button>
       {#if isAndroid}
         <button type="button" class="attach spare" onclick={() => (cameraOpen = true)} aria-label={tr("Take a photo")}><Camera size={24} /></button>
+      {:else if nativeCamera}
+        <button type="button" class="attach spare" onclick={() => takePhoto("photo")} aria-label={tr("Take a photo")}><Camera size={24} /></button>
       {/if}
       <button type="button" class="attach spare" onclick={() => (nativePicker ? pick("media") : openFileInput("image/*,video/*"))} aria-label={tr("Photos and videos")}><Image size={24} /></button>
       <button type="button" class="attach mic" onclick={startVoice} aria-label={tr("Record a voice message")}><Mic size={24} /></button>
@@ -2093,8 +2097,8 @@
   <div class="sheet-backdrop" transition:fade={{ duration: 120 }} onclick={() => (attachOpen = false)}></div>
   <div class="attach-sheet" role="menu" transition:fly={{ y: 40, duration: 200 }}>
     <span class="grabber"></span>
-    {#if isAndroid}
-      <button type="button" onclick={() => sheet(() => (cameraOpen = true))}><Camera size={22} />{tr("Take photo")}</button>
+    {#if isAndroid || nativeCamera}
+      <button type="button" onclick={() => sheet(() => (isAndroid ? (cameraOpen = true) : takePhoto("photo")))}><Camera size={22} />{tr("Take photo")}</button>
       <button type="button" onclick={() => sheet(() => takePhoto("video"))}><Video size={22} />{tr("Record video")}</button>
     {/if}
     <button type="button" onclick={() => sheet(() => (nativePicker ? pick("media") : openFileInput("image/*,video/*")))}><Image size={22} />{tr("Photo & video library")}</button>

@@ -21,9 +21,18 @@ struct PickArgs: Decodable {
   let dir: String
 }
 
+struct CaptureArgs: Decodable {
+  /// "photo" or "video".
+  let kind: String
+  /// Where the shot is written (the app's `picked` folder).
+  let dir: String
+}
+
 class PhotosPlugin: Plugin {
   /// The picker answering now (its delegate must stay alive while it's on screen).
   private var picking: FilePicker?
+  /// The camera answering now (same reason).
+  private var shooting: CameraCapture?
   private var keyboard: KeyboardFit?
 
   override func load(webview: WKWebView) {
@@ -65,6 +74,42 @@ class PhotosPlugin: Plugin {
     }
   }
 
+  /// The system camera (like Android's camera app): one photo or one video, written into
+  /// `dir`. `{files: [{path, name, mime, size}]}`, empty when cancelled.
+  @objc public func capture(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(CaptureArgs.self)
+    let dir = URL(fileURLWithPath: args.dir, isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    DispatchQueue.main.async {
+      guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+        invoke.reject("this device has no camera")
+        return
+      }
+      guard let presenter = self.manager.viewController else {
+        invoke.reject("no window to show the camera in")
+        return
+      }
+      let camera = CameraCapture(dir: dir) { files in
+        self.shooting = nil
+        invoke.resolve(["files": files])
+      }
+      self.shooting = camera
+      let controller = UIImagePickerController()
+      controller.sourceType = .camera
+      if args.kind == "video" {
+        controller.mediaTypes = [UTType.movie.identifier]
+        controller.cameraCaptureMode = .video
+        controller.videoQuality = .typeHigh
+        controller.videoMaximumDuration = 600
+      } else {
+        controller.mediaTypes = [UTType.image.identifier]
+        controller.cameraCaptureMode = .photo
+      }
+      controller.delegate = camera
+      presenter.present(controller, animated: true)
+    }
+  }
+
   @objc public func save(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SaveArgs.self)
     let url = URL(fileURLWithPath: args.path)
@@ -97,6 +142,53 @@ class PhotosPlugin: Plugin {
         }
       }
     }
+  }
+}
+
+/// Answers the system camera: writes the photo as JPEG, or moves the recorded video, into `dir`.
+class CameraCapture: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+  private let dir: URL
+  private let done: ([[String: Any]]) -> Void
+
+  init(dir: URL, done: @escaping ([[String: Any]]) -> Void) {
+    self.dir = dir
+    self.done = done
+  }
+
+  func imagePickerController(
+    _ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+  ) {
+    picker.dismiss(animated: true)
+    let stamp = UUID().uuidString.prefix(8)
+    var file: [String: Any]?
+    if let video = info[.mediaURL] as? URL {
+      let ext = video.pathExtension.isEmpty ? "mov" : video.pathExtension.lowercased()
+      let name = "video.\(ext)"
+      let target = dir.appendingPathComponent("\(stamp)-\(name)")
+      if (try? FileManager.default.moveItem(at: video, to: target)) != nil
+        || (try? FileManager.default.copyItem(at: video, to: target)) != nil
+      {
+        file = describe(target, name: name)
+      }
+    } else if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.92) {
+      let name = "photo.jpg"
+      let target = dir.appendingPathComponent("\(stamp)-\(name)")
+      if (try? data.write(to: target)) != nil {
+        file = describe(target, name: name)
+      }
+    }
+    done(file.map { [$0] } ?? [])
+  }
+
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    picker.dismiss(animated: true)
+    done([])
+  }
+
+  private func describe(_ target: URL, name: String) -> [String: Any] {
+    let size = (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.uint64Value ?? 0
+    let mime = UTType(filenameExtension: target.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+    return ["path": target.path, "name": name, "mime": mime, "size": size]
   }
 }
 

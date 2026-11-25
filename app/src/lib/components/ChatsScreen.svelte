@@ -355,7 +355,12 @@
     messageSearch.start();
     // Tapped notifications open their chat (cold start, or while running).
     launchRoom().then((id) => id && showChat(id), () => {});
-    const stopOpenRoom = onOpenRoom(showChat);
+    // A notification click: the chat must come up even during a call (the call view covered
+    // it), so the call shrinks to its pill / dock like "Back to chats".
+    const stopOpenRoom = onOpenRoom((id) => {
+      if (call.active && !call.sideChat) call.minimized = true;
+      showChat(id);
+    });
     // Re-register push each start: the token may have changed since. A new install asks
     // once for permission to show notifications (Android 13+), right after signing in;
     // after that, only the switch in Settings asks again.

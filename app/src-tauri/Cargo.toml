@@ -45,6 +45,8 @@ alwy-call = { path = "../../crates/alwy-call" }
 # Microphone / camera permission answers in the main webview (see `enable_media_capture`).
 # Same version as wry's.
 webkit2gtk = "2.0.2"
+# Bringing the window forward with a notification click's activation token (`show_window`).
+gtk = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 # Screen sharing that follows an app across its windows (a game and its launcher), as

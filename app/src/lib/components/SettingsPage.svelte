@@ -22,7 +22,9 @@
   import FolderPage from "./FolderPage.svelte";
   import PinPad from "./PinPad.svelte";
   import { appLock } from "$lib/stores/applock.svelte";
-  import { setAppLock, unlockApp, autostartGet, autostartSet, isIOS, isWeb } from "$lib/backend";
+  import { setAppLock, unlockApp, autostartGet, autostartSet, isIOS, isWeb, restartApp, quitApp } from "$lib/backend";
+  import RotateCw from "@lucide/svelte/icons/rotate-cw";
+  import Power from "@lucide/svelte/icons/power";
   import { ALL_DOWNLOADS, nativeApp } from "$lib/nativeApp.svelte";
   import ChevronUp from "@lucide/svelte/icons/chevron-up";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -932,6 +934,11 @@
     </div>
     <button class="m-btn" onclick={() => (reporting = true)}><Bug size={18} />{tr("Report a problem")}</button>
     <p class="m-hint">{tr("Something doesn't work? Send what happened and the app's technical log to someone who can help.")}</p>
+    {#if isTauri && !isAndroid && !isIOS}
+      <button class="m-btn" onclick={() => void restartApp()}><RotateCw size={18} />{tr("Restart AlwyChat")}</button>
+      <button class="m-btn" onclick={() => void quitApp()}><Power size={18} />{tr("Quit AlwyChat")}</button>
+      <p class="m-hint">{tr("Closing the window keeps AlwyChat running so you still get notifications.")}</p>
+    {/if}
     {#if isWeb}
       {@const app = nativeApp()}
       <h3 class="section">{tr("Apps")}</h3>

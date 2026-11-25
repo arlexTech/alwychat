@@ -1937,10 +1937,20 @@ async fn capture(app: tauri::AppHandle, kind: String) -> Result<Vec<Picked>, Str
             .map_err(|e| e.to_string())?;
         Ok(result.files)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        #[derive(serde::Deserialize)]
+        struct CaptureResult {
+            files: Vec<Picked>,
+        }
+        let result: CaptureResult =
+            tauri_plugin_photos::capture(&app, &kind, &picked_dir(&app)?).await?;
+        Ok(result.files)
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = (app, kind);
-        Err("the camera app is only used on Android".into())
+        Err("the camera app is only used on phones".into())
     }
 }
 
@@ -2830,6 +2840,20 @@ fn launch_call(app: tauri::AppHandle) -> Option<CallLink> {
 }
 
 /// The chat whose notification launched the app, if any.
+/// Settings → About "Restart AlwyChat": closing the window only hides it (it keeps notifying).
+#[cfg(desktop)]
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
+/// Settings → About "Quit AlwyChat" (also in the tray menu when there's a tray).
+#[cfg(desktop)]
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 fn launch_room(app: tauri::AppHandle) -> Option<String> {
     #[cfg(mobile)]
@@ -2962,7 +2986,14 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         // (Autostart's own launch while already running shows nothing.)
         if !args.iter().any(|a| a == STARTUP_ARG) {
+            tracing::info!("second launch: {args:?}");
             show_window(app);
+            // Windows: a click on a notification that already went to the Action Center
+            // starts AlwyChat again (the running one isn't told which): open the chat of the
+            // notification not looked at yet, like a click on the toast itself does.
+            if let Some(room) = notified::take() {
+                let _ = app.emit("open-room", room);
+            }
         }
     }));
     let builder = builder
@@ -3107,6 +3138,9 @@ pub fn run() {
                 .show()
             {
                 tracing::warn!("couldn't show notification: {e}");
+            } else {
+                #[cfg(desktop)]
+                notified::set(&n.room_id);
             }
         });
         // A click on a message notification brings the window forward on that chat (Windows:
@@ -3115,12 +3149,16 @@ pub fn run() {
         #[cfg(desktop)]
         {
             let handle = app.handle().clone();
+            #[cfg(target_os = "linux")]
+            notified::watch_activation_tokens();
             app.notification().on_action(move |performed| {
                 let room = performed
                     .notification()
                     .and_then(|n| n.extra().get("room_id"))
                     .and_then(|v| v.as_str())
                     .map(ToOwned::to_owned);
+                tracing::info!("notification clicked: {:?}", room.is_some());
+                notified::take();
                 show_window(&handle);
                 if let Some(room) = room {
                     let _ = handle.emit("open-room", room);
@@ -3183,6 +3221,10 @@ pub fn run() {
         // Closing the window keeps AlwyChat running (and notifying): hidden in the tray when
         // the desktop has one, otherwise minimised so it can't get lost. Quit from the tray.
         .on_window_event(|window, event| {
+            if let WindowEvent::Focused(true) = event {
+                // Looked at: a later second launch is no notification click.
+                notified::take();
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if window.state::<TrayHost>().0 {
@@ -3384,6 +3426,10 @@ pub fn run() {
             unified_push,
             use_unified_push,
             launch_room,
+            #[cfg(desktop)]
+            restart_app,
+            #[cfg(desktop)]
+            quit_app,
             clear_notifications,
             bubble,
             notification_labels,
@@ -3464,8 +3510,9 @@ fn init_android_tls() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(desktop)]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Open AlwyChat", true, None::<&str>)?;
+    let restart = MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &restart, &quit])?;
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("bundled icon"))
         .tooltip("AlwyChat")
@@ -3473,6 +3520,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_window(app),
+            "restart" => app.restart(),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -3546,10 +3594,96 @@ fn has_tray_library() -> bool {
 
 #[cfg(desktop)]
 fn show_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    // Linux (Wayland): GNOME/KDE only let a window come forward with the activation token the
+    // notification server handed over with the click; without it the window stays behind
+    // ("AlwyChat is ready").
+    #[cfg(target_os = "linux")]
+    if let Some(token) = notified::activation_token() {
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if let Ok(gtk) = target.gtk_window() {
+                use gtk::prelude::GtkWindowExt;
+                gtk.set_startup_id(&token);
+                gtk.present();
+            }
+        });
+    }
+    let _ = window.set_focus();
+    // Windows: `set_focus` does nothing while the window still counts as hidden or minimised,
+    // and show/unminimise take effect a moment later: focus again once they have.
+    #[cfg(desktop)]
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
         let _ = window.set_focus();
+    });
+}
+
+/// The chat of the last notification shown (computers), until the window is looked at, and on
+/// Linux the activation token of the last notification click.
+#[cfg(desktop)]
+mod notified {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    static LAST: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+
+    pub fn set(room: &str) {
+        *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((room.to_owned(), Instant::now()));
+    }
+
+    /// The last notification's chat if it's under an hour old; forgets it.
+    pub fn take() -> Option<String> {
+        let last = LAST.lock().unwrap_or_else(|e| e.into_inner()).take()?;
+        (last.1.elapsed() < Duration::from_secs(3600)).then_some(last.0)
+    }
+
+    #[cfg(target_os = "linux")]
+    static TOKEN: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+
+    /// The token sent with a notification click in the last few seconds; used once.
+    #[cfg(target_os = "linux")]
+    pub fn activation_token() -> Option<String> {
+        let token = TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()?;
+        (token.1.elapsed() < Duration::from_secs(10)).then_some(token.0)
+    }
+
+    /// Notification servers send `ActivationToken(id, token)` right before `ActionInvoked`
+    /// (Desktop Notifications 1.2): kept for `show_window`.
+    #[cfg(target_os = "linux")]
+    pub fn watch_activation_tokens() {
+        std::thread::Builder::new()
+            .name("notification-tokens".into())
+            .spawn(|| {
+                let Ok(connection) = zbus::blocking::Connection::session() else {
+                    return;
+                };
+                let Some(rule) = zbus::MatchRule::builder()
+                    .msg_type(zbus::message::Type::Signal)
+                    .interface("org.freedesktop.Notifications")
+                    .and_then(|b| b.member("ActivationToken"))
+                    .ok()
+                    .map(|b| b.build())
+                else {
+                    return;
+                };
+                let Ok(signals) =
+                    zbus::blocking::MessageIterator::for_match_rule(rule, &connection, None)
+                else {
+                    return;
+                };
+                for signal in signals.flatten() {
+                    if let Ok((_, token)) = signal.body().deserialize::<(u32, String)>() {
+                        *TOKEN.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some((token, Instant::now()));
+                    }
+                }
+            })
+            .ok();
     }
 }
 

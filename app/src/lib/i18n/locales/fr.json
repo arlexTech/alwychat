@@ -1322,5 +1322,8 @@
   "Off: only the chats you pick (chat settings → Bubble this chat).": "Désactivé : seulement les discussions que tu choisis (paramètres de la discussion → Discussion en bulle).",
   "Privacy policy": "Politique de confidentialité",
   "Scrolling closes the keyboard": "Le défilement ferme le clavier",
-  "Scroll through a chat to put the keyboard away.": "Fais défiler une discussion pour ranger le clavier."
+  "Scroll through a chat to put the keyboard away.": "Fais défiler une discussion pour ranger le clavier.",
+  "Restart AlwyChat": "Redémarrer AlwyChat",
+  "Quit AlwyChat": "Quitter AlwyChat",
+  "Closing the window keeps AlwyChat running so you still get notifications.": "Fermer la fenêtre laisse AlwyChat tourner pour que tu reçoives toujours les notifications."
 }

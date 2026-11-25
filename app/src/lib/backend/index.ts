@@ -271,6 +271,9 @@ export const onDraft = (handler: (change: { room_id: string; draft: Draft | null
 /** A notification was tapped: open this chat. */
 export const onOpenRoom = (handler: (roomId: string) => void) =>
   listen<string>("open-room", (e) => handler(e.payload));
+/** Computers: start AlwyChat again / close it for good (the window's ✕ only hides it). */
+export const restartApp = () => invoke<void>("restart_app");
+export const quitApp = () => invoke<void>("quit_app");
 /** The chat whose notification launched the app, if any (asked once at start). */
 export const launchRoom = () => invoke<string | null>("launch_room");
 /** Push on/off for this device (Android); resolves to whether push is in use. */

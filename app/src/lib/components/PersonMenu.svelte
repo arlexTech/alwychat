@@ -140,14 +140,15 @@
   .catcher {
     position: fixed;
     inset: 0;
-    z-index: 70;
+    /* Above a call's full-screen picture (80) and its floating controls (81). */
+    z-index: 90;
   }
   .catcher.dim {
     background: rgb(0 0 0 / 0.45);
   }
   .menu {
     position: fixed;
-    z-index: 71;
+    z-index: 91;
     display: flex;
     flex-direction: column;
     width: 260px;

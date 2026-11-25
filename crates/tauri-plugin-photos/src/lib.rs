@@ -54,6 +54,33 @@ pub async fn pick<R: Runtime, T: serde::de::DeserializeOwned>(
         .map_err(|e| e.to_string())
 }
 
+/// The system camera: `kind` = "photo" or "video"; the shot is written into `dir`. Answers
+/// `{files: [...]}` like [`pick`] (empty when cancelled).
+#[cfg(target_os = "ios")]
+pub async fn capture<R: Runtime, T: serde::de::DeserializeOwned>(
+    app: &tauri::AppHandle<R>,
+    kind: &str,
+    dir: &std::path::Path,
+) -> Result<T, String> {
+    use tauri::Manager;
+    #[derive(serde::Serialize)]
+    struct Args {
+        kind: String,
+        dir: String,
+    }
+    app.state::<Handle<R>>()
+        .0
+        .run_mobile_plugin_async::<T>(
+            "capture",
+            Args {
+                kind: kind.to_owned(),
+                dir: dir.display().to_string(),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Moves the file at `path` into Photos (as a video when `video`).
 #[cfg(target_os = "ios")]
 pub async fn save<R: Runtime>(
