@@ -157,23 +157,38 @@ class FilePicker: NSObject, PHPickerViewControllerDelegate, UIDocumentPickerDele
   }
 }
 
-/// The keyboard shortens the web view (like Android and native apps) instead of iOS sliding the
-/// whole page up under the status bar and back down when it closes: the page is laid out in the
-/// space left above the keyboard, so the chat header never moves and the message bar sits right
-/// on the keyboard (no home-bar gap: the web view no longer reaches the bottom edge).
+/// The keyboard is handled like Android and native apps: the web view keeps its full size (the
+/// chat's background doesn't move) and WebKit's own keyboard handling is switched off — it slid
+/// the whole page up under the status bar and back, and shrank the visible part. Instead the page
+/// is told how much of it the keyboard covers (`window.__alwyKeyboard(px, seconds)`, backend
+/// index.ts), lays itself out above it, and the header never moves.
 final class KeyboardFit: NSObject {
   private weak var webview: WKWebView?
+  private var offsetWatch: NSKeyValueObservation?
+  private var shown: CGFloat = -1
 
   init(webview: WKWebView) {
     self.webview = webview
     super.init()
     let center = NotificationCenter.default
+    // What Capacitor's Keyboard plugin does: WKWebView stops reacting to the keyboard itself
+    // (no obscured insets, no scrolling the focused field into view).
+    for name in [
+      UIResponder.keyboardWillHideNotification, UIResponder.keyboardWillShowNotification,
+      UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardDidChangeFrameNotification,
+    ] {
+      center.removeObserver(webview, name: name, object: nil)
+    }
     center.addObserver(
       self, selector: #selector(change(_:)),
       name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
     center.addObserver(
       self, selector: #selector(hide(_:)),
       name: UIResponder.keyboardWillHideNotification, object: nil)
+    // The page itself never scrolls (its body is fixed): whatever still tries to move it is undone.
+    offsetWatch = webview.scrollView.observe(\.contentOffset, options: [.new]) { view, _ in
+      if view.contentOffset != .zero { view.contentOffset = .zero }
+    }
   }
 
   deinit {
@@ -182,26 +197,26 @@ final class KeyboardFit: NSObject {
 
   @objc private func change(_ note: Notification) {
     guard
-      let webview, let host = webview.superview,
+      let webview,
       let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
     else { return }
-    // The keyboard's frame is in screen coordinates; what of it covers the host view.
-    let keyboard = host.convert(end, from: nil)
-    let covered = max(0, host.bounds.maxY - keyboard.minY)
-    fit(webview, in: host, covered: covered)
+    // The keyboard's frame is in screen coordinates: how much of the web view it covers.
+    let keyboard = webview.convert(end, from: nil)
+    let covered = max(0, webview.bounds.maxY - keyboard.minY)
+    tell(webview, covered: covered, note: note)
   }
 
   @objc private func hide(_ note: Notification) {
-    guard let webview, let host = webview.superview else { return }
-    fit(webview, in: host, covered: 0)
+    guard let webview else { return }
+    tell(webview, covered: 0, note: note)
   }
 
-  private func fit(_ webview: WKWebView, in host: UIView, covered: CGFloat) {
-    var frame = host.bounds
-    frame.size.height -= covered
-    if webview.frame != frame { webview.frame = frame }
-    // Nothing left for iOS to slide into view.
-    webview.scrollView.contentOffset = .zero
+  private func tell(_ webview: WKWebView, covered: CGFloat, note: Notification) {
+    let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+    if webview.scrollView.contentOffset != .zero { webview.scrollView.contentOffset = .zero }
+    guard covered != shown else { return }
+    shown = covered
+    webview.evaluateJavaScript("window.__alwyKeyboard?.(\(Double(covered)), \(duration))")
   }
 }
 

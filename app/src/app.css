@@ -104,6 +104,11 @@ html.edges body {
   overflow: visible;
   contain: layout;
 }
+/* iPhone app: the body's end follows the keyboard's slide (its time from iOS, curve close to
+   the keyboard's), only while it moves. */
+html.ios.keyboard-moving body {
+  transition: bottom var(--keyboard-time, 0.25s) cubic-bezier(0.38, 0.7, 0.125, 1);
+}
 /* Text size: 15 px (iOS: 17 pt, 15 px looked small next to other apps) times the setting
    (Settings → Appearance, `--text-scale` from prefs.svelte.ts). The body follows the root, so
    everything sized in rem / em or inherited scales with it. */

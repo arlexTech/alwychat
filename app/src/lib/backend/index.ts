@@ -18,7 +18,7 @@ if (isIOS) document.documentElement.classList.add("ios", "edges");
 // iPhone keyboard in Safari (the web version): the page isn't made smaller, iOS slides the
 // visible part up instead (the header went off the top, a gap stayed above the keyboard). While
 // it's open, the body is fitted to exactly the visible part (app.css `html.edges body` reads
-// these). The iPhone app shortens its web view natively instead (PhotosPlugin.swift KeyboardFit).
+// these). The iPhone app gets the keyboard's height from Swift instead (below).
 if (isIOS && !isTauri && window.visualViewport) {
   const view = window.visualViewport;
   const root = document.documentElement;
@@ -38,6 +38,29 @@ if (isIOS && !isTauri && window.visualViewport) {
   };
   view.addEventListener("resize", fit);
   view.addEventListener("scroll", fit);
+}
+// iPhone app: WebKit's own keyboard handling is off (PhotosPlugin.swift KeyboardFit), the web
+// view keeps its full size and reports how much of it the keyboard covers. The body then ends
+// above the keyboard (app.css `html.edges body`), moving with the keyboard's slide; the chat's
+// scenery keeps running on under it, so the background and the header stay still.
+if (isIOS && isTauri) {
+  const root = document.documentElement;
+  let settle = 0;
+  (globalThis as { __alwyKeyboard?: (px: number, seconds: number) => void }).__alwyKeyboard = (px, seconds) => {
+    root.style.setProperty("--keyboard-time", `${Math.max(0, seconds)}s`);
+    root.classList.add("keyboard-moving");
+    clearTimeout(settle);
+    settle = window.setTimeout(() => {
+      root.classList.remove("keyboard-moving");
+      // The window itself keeps its size: what measures the page (own bubbles' gradient
+      // slices in ChatView) listens to resize.
+      dispatchEvent(new Event("resize"));
+    }, seconds * 1000 + 80);
+    const open = px > 0;
+    root.classList.toggle("keyboard", open);
+    if (open) root.style.setProperty("--edge-bottom", `${px}px`);
+    else root.style.removeProperty("--edge-bottom");
+  };
 }
 /** Typing happens on an on-screen keyboard (phones, tablets, also the web version there): Enter
  *  adds a new line and the send button sends, like WhatsApp/Telegram/Signal/Element on mobile.

@@ -1011,7 +1011,7 @@
   }
   /* iPhone: the tabs go down into the home bar's strip (like iOS's own tab bars), which left a
      wide empty band under them. */
-  :global(html.ios) .tabbar {
+  :global(html.ios:not(.keyboard)) .tabbar {
     margin-bottom: calc(14px - var(--edge-bottom));
   }
   .tabbar button {
