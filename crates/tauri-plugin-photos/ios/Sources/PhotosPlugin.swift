@@ -24,9 +24,11 @@ struct PickArgs: Decodable {
 class PhotosPlugin: Plugin {
   /// The picker answering now (its delegate must stay alive while it's on screen).
   private var picking: FilePicker?
+  private var keyboard: KeyboardFit?
 
   override func load(webview: WKWebView) {
     KeyboardBar.hide(in: webview)
+    keyboard = KeyboardFit(webview: webview)
   }
 
   /// Opens the system's photo or file picker and copies what was chosen into `dir`:
@@ -152,6 +154,54 @@ class FilePicker: NSObject, PHPickerViewControllerDelegate, UIDocumentPickerDele
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
     done([])
+  }
+}
+
+/// The keyboard shortens the web view (like Android and native apps) instead of iOS sliding the
+/// whole page up under the status bar and back down when it closes: the page is laid out in the
+/// space left above the keyboard, so the chat header never moves and the message bar sits right
+/// on the keyboard (no home-bar gap: the web view no longer reaches the bottom edge).
+final class KeyboardFit: NSObject {
+  private weak var webview: WKWebView?
+
+  init(webview: WKWebView) {
+    self.webview = webview
+    super.init()
+    let center = NotificationCenter.default
+    center.addObserver(
+      self, selector: #selector(change(_:)),
+      name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    center.addObserver(
+      self, selector: #selector(hide(_:)),
+      name: UIResponder.keyboardWillHideNotification, object: nil)
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+  }
+
+  @objc private func change(_ note: Notification) {
+    guard
+      let webview, let host = webview.superview,
+      let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+    else { return }
+    // The keyboard's frame is in screen coordinates; what of it covers the host view.
+    let keyboard = host.convert(end, from: nil)
+    let covered = max(0, host.bounds.maxY - keyboard.minY)
+    fit(webview, in: host, covered: covered)
+  }
+
+  @objc private func hide(_ note: Notification) {
+    guard let webview, let host = webview.superview else { return }
+    fit(webview, in: host, covered: 0)
+  }
+
+  private func fit(_ webview: WKWebView, in host: UIView, covered: CGFloat) {
+    var frame = host.bounds
+    frame.size.height -= covered
+    if webview.frame != frame { webview.frame = frame }
+    // Nothing left for iOS to slide into view.
+    webview.scrollView.contentOffset = .zero
   }
 }
 

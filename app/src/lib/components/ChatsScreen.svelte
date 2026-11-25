@@ -1009,6 +1009,11 @@
     border-top: 1px solid var(--border);
     background: inherit;
   }
+  /* iPhone: the tabs go down into the home bar's strip (like iOS's own tab bars), which left a
+     wide empty band under them. */
+  :global(html.ios) .tabbar {
+    margin-bottom: calc(14px - var(--edge-bottom));
+  }
   .tabbar button {
     display: flex;
     flex-direction: column;

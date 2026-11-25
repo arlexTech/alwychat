@@ -15,10 +15,11 @@ export const isAndroid = /Android/.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 if (isIOS) document.documentElement.classList.add("ios", "edges");
 
-// iPhone keyboard: the web view isn't made smaller, iOS slides the visible part up instead (the
-// header went off the top, a gap stayed above the keyboard). While it's open, the body is fitted
-// to exactly the visible part (app.css `html.edges body` reads these).
-if (isIOS && window.visualViewport) {
+// iPhone keyboard in Safari (the web version): the page isn't made smaller, iOS slides the
+// visible part up instead (the header went off the top, a gap stayed above the keyboard). While
+// it's open, the body is fitted to exactly the visible part (app.css `html.edges body` reads
+// these). The iPhone app shortens its web view natively instead (PhotosPlugin.swift KeyboardFit).
+if (isIOS && !isTauri && window.visualViewport) {
   const view = window.visualViewport;
   const root = document.documentElement;
   const fit = () => {
